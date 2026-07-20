@@ -19,7 +19,7 @@ export async function updateCategory(key: string, fields: CategoryUpdate) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || user.email !== process.env.ALLOWED_EMAIL) throw new Error("unauthorized");
   if (![1, 2].includes(fields.buffer_account)) throw new Error("buffer_account must be 1 or 2");
-  if (fields.images_per_carousel < 1 || fields.images_per_carousel > 10) {
+  if (!Number.isInteger(fields.images_per_carousel) || fields.images_per_carousel < 1 || fields.images_per_carousel > 10) {
     throw new Error("images_per_carousel must be 1-10");
   }
   const { error } = await supabase.from("categories").update(fields).eq("key", key);
