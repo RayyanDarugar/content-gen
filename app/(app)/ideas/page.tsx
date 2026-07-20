@@ -1,5 +1,6 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { IdeaCard } from "./idea-card";
+import { GenerateImagesButton } from "./generate-images-button";
 import type { Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
@@ -19,7 +20,14 @@ export default async function IdeasPage() {
       {ideas.length === 0 && <p>No ideas yet — go to Generate.</p>}
       {[...byCategory.entries()].map(([key, group]) => (
         <section key={key} className="space-y-3">
-          <h2 className="text-lg font-semibold">{key} ({group.length})</h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-semibold">{key} ({group.length})</h2>
+            {group.some((i) => i.status === "approved") && (
+              <GenerateImagesButton
+                ideaIds={group.filter((i) => i.status === "approved").map((i) => i.id)}
+              />
+            )}
+          </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {group.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
           </div>
