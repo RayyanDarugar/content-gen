@@ -39,6 +39,7 @@ export interface Generation {
   poll_count: number;
   kie_style_url: string;
   full_prompt: string;
+  refinement_notes: string;
   image_path: string;
   public_url: string;
   error: string;
