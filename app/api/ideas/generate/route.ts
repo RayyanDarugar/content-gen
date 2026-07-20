@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerSupabase } from "@/lib/supabase/server";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
+import { requireAllowedUser } from "@/lib/auth/require-user";
 
 export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
-  const supabase = await createServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.email !== process.env.ALLOWED_EMAIL) {
+  try {
+    await requireAllowedUser();
+  } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
