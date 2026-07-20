@@ -103,7 +103,7 @@ Row-level security: all tables locked to the authenticated user; API routes use 
 
 ### Claude (idea generation) — `/api/ideas/generate`
 - TypeScript SDK `@anthropic-ai/sdk`, server-side only.
-- Model: env `CLAUDE_MODEL`, default `claude-opus-4-8`. Adaptive thinking (`thinking: {type: "adaptive"}`); streaming with `.finalMessage()`.
+- Model: env `CLAUDE_MODEL`, default `claude-sonnet-5`. Adaptive thinking (`thinking: {type: "adaptive"}`); streaming with `.finalMessage()`.
 - System prompt: ported from the n8n **Build Claude Prompt Request** node (brand rules, Beagle mascot, parent audience, category style guides pulled from `categories`).
 - Two-step flow preserved: (1) generate N ideas per selected category, (2) self-filter pass (ported from **Build Filter Request** / **Merge Filter Decisions**); only AI-approved ideas are inserted, with `ai_filter_reason`.
 - Structured outputs (`output_config.format` with a JSON schema) replace the fragile "Parse Ideas JSON" step.
@@ -153,7 +153,7 @@ Each phase is independently usable and verified end-to-end before the next start
 | var | purpose |
 |---|---|
 | ANTHROPIC_API_KEY | idea generation |
-| CLAUDE_MODEL | default `claude-opus-4-8` |
+| CLAUDE_MODEL | default `claude-sonnet-5` |
 | KIE_API_KEY | image generation |
 | BUFFER_TOKEN_1 / BUFFER_TOKEN_2 | posting, per Buffer account |
 | NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY | client |
