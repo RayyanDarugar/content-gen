@@ -1,0 +1,490 @@
+{
+  "name": "Athena A — Complete Idea & Prompt Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Run Athena Content Batch",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Number of ideas to generate",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Category focus (leave blank for All)",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "All"
+                  },
+                  {
+                    "option": "SAT_MYTH"
+                  },
+                  {
+                    "option": "BRAIN_TEASER"
+                  },
+                  {
+                    "option": "NOTES_APP"
+                  },
+                  {
+                    "option": "COMIC"
+                  },
+                  {
+                    "option": "BEAGLE_EXPLAINS"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3e6d90bc-fe72-4697-96ce-d23b8521ec93",
+      "name": "Batch Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        480
+      ],
+      "webhookId": "f36663c7-5f26-4145-9ce0-52b5481f2509"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b324c8d9-fdb8-4b8c-9e38-292f334fdfe1",
+      "name": "Read Config Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        720,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Read Config Sheet').all();\nconst configMap = {};\nconfig.forEach(item => { configMap[item.json.category] = item.json; });\n\nconst batchSize = parseInt($('Batch Form Trigger').first().json['Number of ideas to generate']) || 10;\nconst categoryFocus = $('Batch Form Trigger').first().json['Category focus (leave blank for All)'] || 'All';\nconst allCats = ['SAT_MYTH', 'BRAIN_TEASER', 'NOTES_APP', 'COMIC', 'BEAGLE_EXPLAINS'];\nconst active = categoryFocus === 'All' ? allCats : [categoryFocus];\n\nconst guides = active.map(cat => {\n  const guide = (configMap[cat] || {}).style_guide || '[No style guide — fill in Config sheet]';\n  return '=== ' + cat + ' ===\\n' + guide;\n}).join('\\n\\n');\n\nconst system = [\n  'You are the creative content strategist for Athena, an SAT prep platform.',\n  '',\n  'NON-NEGOTIABLE BRAND RULES:',\n  '- Athena is a personalized TEACHER, never an AI product, dashboard, or analytics tool',\n  '- Core outcome: Ohhhh... now I get it.',\n  '- Mascot: A cute Beagle dog — curious, friendly, slightly goofy. The Beagle is the guide/student in content, never the product.',\n  '- Primary audience: Parents aged 35-55 worried about SAT scores, college admissions, tutoring costs, their kid feeling stuck.',\n  '- NEVER lead with: AI-powered, adaptive learning, algorithms, analytics, dashboards.',\n  '',\n  'CATEGORY STYLE GUIDES (for context only — do NOT repeat these back in your output, they are already stored separately):',\n  guides,\n  '',\n  'CRITICAL INSTRUCTION FOR concept:',\n  'Do NOT write a full image-generation prompt. Do NOT restate or summarize the style guide.',\n  'Just write the specific creative content for this one idea — detailed enough that someone could generate the image from it later, but nothing about general style, palette, or layout (that already lives in the style guide).',\n  'For multi-panel/carousel categories (COMIC, BEAGLE_EXPLAINS), write out each panel/beat in sequence, with the exact text/dialogue for each panel.',\n  'For SAT_MYTH, include: the myth statement, the visual scene, and the insight line.',\n  'For NOTES_APP, include the full note text verbatim.',\n  'For BRAIN_TEASER, include the actual puzzle and its answer.',\n  '',\n  'CRITICAL JSON SAFETY: Since your output must be valid JSON, NEVER use double quotes (\") for emphasis, sarcasm, or scare-quotes within concept text. Use single quotes for any inline emphasis instead. Reserve double quotes only for JSON string delimiters.',\n  'OUTPUT: Respond with ONLY a raw JSON array. No markdown fences. No preamble. Each object must have exactly two fields: category (one of the active categories), concept (the detailed specific content described above — can be multiple sentences/paragraphs, but never the style guide itself).'\n].join('\\n');\n\nconst user = categoryFocus === 'All'\n  ? 'Generate exactly ' + batchSize + ' content ideas distributed roughly evenly across: ' + active.join(', ') + '.'\n  : 'Generate exactly ' + batchSize + ' content ideas for the ' + categoryFocus + ' category.';\n\nreturn [{ json: { body: {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 8000,\n  system,\n  messages: [{ role: 'user', content: user }]\n} } }];"
+      },
+      "id": "2f4fd9dc-8d74-4ccf-982c-06281d399f63",
+      "name": "Build Claude Prompt Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "e8d8e917-5878-4dd9-b6b9-b23630a546c9",
+      "name": "Generate Ideas - Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1216,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "M8I22KcQuH3PnsSi",
+          "name": "Header Auth account 4"
+        },
+        "anthropicApi": {
+          "id": "m68suvcU3EXkZJhh",
+          "name": "Anthropic account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.content[0].text;\n\nfunction safeParse(text) {\n  let s = text.trim();\n  s = s.replace(/^```json\\s*/i, '').replace(/^```\\s*/, '').replace(/\\s*```$/, '').trim();\n  try {\n    return JSON.parse(s);\n  } catch (e) {\n    // Repair pass: find unescaped \" characters that appear INSIDE a JSON string value\n    // (i.e. not immediately preceded by \\, and not adjacent to : , { } [ ] whitespace)\n    // by escaping any \" that isn't functioning as a structural JSON quote.\n    const repaired = s.replace(/(?<!\\\\)\"(?=(?:[^\"\\\\]|\\\\.)*\"(?:\\s*[,\\]}]))/g, (match, offset, str) => {\n      // Only escape quotes that are clearly mid-word (surrounded by letters), not structural\n      const before = str[offset - 1];\n      const after = str[offset + 1];\n      if (/[a-zA-Z]/.test(before) || /[a-zA-Z]/.test(after)) {\n        return '\\\\\"';\n      }\n      return match;\n    });\n    return JSON.parse(repaired);\n  }\n}\n\nlet ideas;\ntry {\n  ideas = safeParse(raw);\n} catch(e) {\n  const match = e.message.match(/position (\\d+)/);\n  const pos = match ? parseInt(match[1]) : null;\n  let context = 'position not found in error';\n  if (pos !== null) {\n    const start = Math.max(0, pos - 80);\n    const end = Math.min(raw.length, pos + 80);\n    context = raw.substring(start, end);\n  }\n  throw new Error('PARSE FAILED: ' + e.message + ' || CONTEXT AROUND ERROR: ' + context);\n}\n\nif (!Array.isArray(ideas)) throw new Error('Expected JSON array from Claude, got: ' + typeof ideas);\n\nreturn ideas.map((idea, i) => ({\n  json: Object.assign({}, idea, {\n    idea_id: (idea.category || 'idea').toLowerCase() + '_' + Date.now() + '_' + i\n  })\n}));"
+      },
+      "id": "776aae0c-e517-4a52-aac1-e7b81f1f5f29",
+      "name": "Parse Ideas JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allIdeas = $input.all().map(i => i.json);\n\nconst system = [\n  'You are a strict content quality reviewer for Athena SAT prep content. For each idea evaluate:',\n  '2. Does it align with the Athena brand — personalized teacher, not AI product?',\n  '3. Would it genuinely resonate with parents of high-schoolers or students feeling stuck?',\n  '4. Is it fresh and not a tired SAT prep cliche?',\n  '',\n  'Return ONLY a raw JSON array, same length and same order as input. Each object: {idea_id, keep (boolean), reason (brief string)}. No markdown. No preamble.'\n].join('\\n');\n\nreturn [{ json: { body: {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 2000,\n  system,\n  messages: [{ role: 'user', content: 'Review and filter these ideas:\\n' + JSON.stringify(allIdeas, null, 2) }]\n} } }];"
+      },
+      "id": "0654e739-1730-4ab1-8cf1-d39da03009e8",
+      "name": "Build Filter Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "a5d97da3-0440-4afa-8821-f57eb95ce2e1",
+      "name": "Filter Ideas - Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1968,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "M8I22KcQuH3PnsSi",
+          "name": "Header Auth account 4"
+        },
+        "anthropicApi": {
+          "id": "m68suvcU3EXkZJhh",
+          "name": "Anthropic account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.content[0].text;\n\nfunction safeParse(text) {\n  let s = text.trim();\n  s = s.replace(/^```json\\s*/i, '').replace(/^```\\s*/, '').replace(/\\s*```$/, '').trim();\n  return JSON.parse(s);\n}\n\nlet decisions;\ntry {\n  decisions = safeParse(raw);\n} catch(e) {\n  throw new Error('Filter response parse failed: ' + e.message);\n}\n\nconst map = {};\ndecisions.forEach(d => { map[d.idea_id] = d; });\n\nconst originals = $('Parse Ideas JSON').all().map(i => i.json);\n\nreturn originals.map(idea => {\n  const d = map[idea.idea_id] || { keep: true, reason: 'no decision returned — defaulting to keep' };\n  return { json: Object.assign({}, idea, { ai_keep: d.keep, ai_filter_reason: d.reason }) };\n});"
+      },
+      "id": "d7d94796-4ab5-4283-8524-fe8a6256921f",
+      "name": "Merge Filter Decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ai_keep }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "id": "773c21af-d751-42a9-925b-ea2b0c06167f"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9938fc44-9cf3-43b1-a2ec-545728271ca0",
+      "name": "Keep AI Approved",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Staging",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "category": "={{ $json.category }}",
+            "concept": "={{ $json.concept }}",
+            "ai_filter_reason": "={{ $json.ai_filter_reason }}",
+            "your_approval": false,
+            "status": "pending_review",
+            "timestamp": "={{ $now.toISO() }}",
+            "idea_id ": "={{ $json.idea_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "concept",
+              "displayName": "concept",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_prompt",
+              "displayName": "final_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_filter_reason",
+              "displayName": "ai_filter_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "your_approval",
+              "displayName": "your_approval",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "40a2cbb6-d7d7-4b37-8c68-c970c1e41369",
+      "name": "Append to Staging Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2720,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Batch Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Config Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Config Sheet": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Prompt Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Prompt Request": {
+      "main": [
+        [
+          {
+            "node": "Generate Ideas - Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Ideas - Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas JSON": {
+      "main": [
+        [
+          {
+            "node": "Build Filter Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Filter Request": {
+      "main": [
+        [
+          {
+            "node": "Filter Ideas - Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Ideas - Claude": {
+      "main": [
+        [
+          {
+            "node": "Merge Filter Decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Filter Decisions": {
+      "main": [
+        [
+          {
+            "node": "Keep AI Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep AI Approved": {
+      "main": [
+        [
+          {
+            "node": "Append to Staging Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "ad15cea2-ad7d-4d43-983e-2f7d2a315d2f",
+  "meta": {
+    "instanceId": "d6108346ea3eff253d2f594042772a3f74c702fa1c47a44609362609adbe7f30"
+  },
+  "nodeGroups": [],
+  "id": "yf0xb8aFmBA1KVfn",
+  "tags": []
+}

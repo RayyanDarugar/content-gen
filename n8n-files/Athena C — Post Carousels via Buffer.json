@@ -1,0 +1,567 @@
+{
+  "name": "Athena C — Post Carousels via Buffer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "53ced31b-96c7-42db-af15-0078e6711fcc",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1312,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b5d46fb5-760a-46cc-a165-ef19c47ab768",
+      "name": "Read Config Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1088,
+        128
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "bff098f9-3180-4bf3-afbe-801c640aec72",
+      "name": "Read Review Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -880,
+        128
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const CHANNEL_MAP = {\n  SAT_MYTH:        { channelId: '6a5517eb80cc80cdcaac2ddf', account: 1, name: 'athenalearns' },\n  BRAIN_TEASER:    { channelId: '6a551bc880cc80cdcaac4e2d', account: 1, name: 'athenastudy' },\n  COMIC:           { channelId: '6a5518d580cc80cdcaac30f5', account: 1, name: 'athenastudies_' },\n  NOTES_APP:       { channelId: '6a552a2280cc80cdcaac9e06', account: 2, name: 'athena.study' },\n  BEAGLE_EXPLAINS: { channelId: '6a555a1e80cc80cdcaad980f', account: 2, name: 'athena_study' }\n};\n\nconst IMAGES_PER_CATEGORY = {\n  SAT_MYTH: 5,\n  BRAIN_TEASER: 5,\n  COMIC: 5,\n  NOTES_APP: 1,\n  BEAGLE_EXPLAINS: 5\n};\n\nconst config = $('Read Config Sheet').all();\nconst configMap = {};\nconfig.forEach(item => { configMap[item.json.category] = item.json; });\n\nconst review = $('Read Review Sheet').all();\n\nconst postable = review.filter(i => {\n  const status = String(i.json.status || '').trim().toLowerCase();\n  const hasLink = (i.json.drive_link || '').includes('drive.google.com');\n  return status === 'post' && hasLink;\n});\n\nconst byCategory = {};\npostable.forEach(i => {\n  const cat = i.json.category;\n  if (!byCategory[cat]) byCategory[cat] = [];\n  byCategory[cat].push(i.json);\n});\n\nconst out = [];\n\nObject.keys(byCategory).forEach(cat => {\n  const rows = byCategory[cat];\n  const needed = IMAGES_PER_CATEGORY[cat] || 5;\n  if (rows.length < needed) return; // skip — not enough marked yet\n\n  const channel = CHANNEL_MAP[cat];\n  if (!channel) return; // unknown category — skip rather than post to wrong account\n\n  const rawCaption = (configMap[cat] || {}).post_caption || '';\n  const variants = rawCaption.split('||').map(s => s.trim()).filter(Boolean);\n  const caption = variants.length > 0\n    ? variants[Math.floor(Math.random() * variants.length)]\n    : '';\n\n  rows.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));\n  const selected = rows.slice(0, needed);\n\n  selected.forEach((row, idx) => {\n    const m = String(row.drive_link || '').match(/[?&]id=([A-Za-z0-9_-]+)/);\n    const driveFileId = m ? m[1] : null;\n    if (!driveFileId) return;\n\n    out.push({\n      json: {\n        category: cat,\n        buffer_channel_id: channel.channelId,\n        buffer_account: channel.account,\n        channel_name: channel.name,\n        post_caption: caption,\n        idea_id: row['idea_id '] || row.idea_id || '',\n        drive_file_id: driveFileId,\n        image_order: idx\n      }\n    });\n  });\n});\n\nif (out.length === 0) {\n  throw new Error('No categories have enough rows marked Post in the Review sheet. Mark enough rows in one category (status column = Post) and re-run.');\n}\n\nreturn out;"
+      },
+      "id": "da22dee4-700f-4732-b8db-25729a206142",
+      "name": "Select Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "d0e61f1e-e5e6-4643-8edd-b4e86b594829",
+      "name": "Post Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -432,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.drive_file_id }}",
+          "mode": "id"
+        },
+        "options": {
+          "binaryPropertyName": "image"
+        }
+      },
+      "id": "54eab7d1-4dd6-4f6b-b38c-9290f1f0234e",
+      "name": "Download From Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -192,
+        -32
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "zGBrXnVwzZ9qhg7f",
+          "name": "Google Drive OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/bt91nfzl/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "image"
+            },
+            {
+              "name": "upload_preset",
+              "value": "n8n-uploader"
+            },
+            {
+              "name": "folder",
+              "value": "athena-posts"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "596f69c6-993c-4939-984e-168515c4890d",
+      "name": "Upload To Cloudinary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        32,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Post Loop').item.json;\nconst resp = $json;\n\nconst url = resp.secure_url || resp.url;\nif (!url) throw new Error('Cloudinary upload failed — no secure_url in response: ' + JSON.stringify(resp).substring(0, 300));\n\nreturn [{ json: Object.assign({}, original, { cloudinary_url: url }) }];"
+      },
+      "id": "12752184-e00a-4bda-876a-152f6bb45dd7",
+      "name": "Attach Cloudinary URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const IMAGES_PER_CATEGORY = {\n  SAT_MYTH: 5,\n  BRAIN_TEASER: 5,\n  COMIC: 5,\n  NOTES_APP: 1,\n  BEAGLE_EXPLAINS: 5\n};\n\nconst items = $input.all().map(i => i.json);\n\nconst byCategory = {};\nitems.forEach(it => {\n  if (!byCategory[it.category]) byCategory[it.category] = [];\n  byCategory[it.category].push(it);\n});\n\nconst out = [];\nObject.keys(byCategory).forEach(cat => {\n  const group = byCategory[cat].sort((a, b) => a.image_order - b.image_order);\n  const needed = IMAGES_PER_CATEGORY[cat] || 5;\n  if (group.length < needed) return; // an upload failed somewhere — don't post an incomplete set\n\n  const first = group[0];\n\n  const caption = String(first.post_caption || '')\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\"/g, '\\\\\"')\n    .replace(/\\n/g, '\\\\n');\n\n  const assetsBlock = group.map(g =>\n    '{ image: { url: \"' + g.cloudinary_url + '\" } }'\n  ).join('\\n        ');\n\n  const mutation = `mutation CreatePost {\n  createPost(\n    input: {\n      text: \"${caption}\"\n      channelId: \"${first.buffer_channel_id}\"\n      schedulingType: automatic\n      mode: addToQueue\n      assets: [\n        ${assetsBlock}\n      ]\n    }\n  ) {\n    ... on PostActionSuccess {\n      post { id }\n    }\n    ... on MutationError {\n      message\n    }\n  }\n}`;\n\n  out.push({\n    json: {\n      category: cat,\n      buffer_account: first.buffer_account,\n      channel_name: first.channel_name,\n      idea_ids: group.map(g => g.idea_id),\n      graphql_body: { query: mutation }\n    }\n  });\n});\n\nif (out.length === 0) {\n  throw new Error('No complete image groups survived the upload step. Check Cloudinary upload results.');\n}\n\nreturn out;"
+      },
+      "id": "2f2ea198-531c-43a2-8c4e-e2ccc113409e",
+      "name": "Group Into Carousels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.buffer_account }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "id": "acct-route"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ea655db3-7f5c-4931-b1a7-6c21fbf28660",
+      "name": "Which Buffer Account?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        32,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.buffer.com",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.graphql_body) }}",
+        "options": {}
+      },
+      "id": "652d6315-ed80-4755-95d4-780574c7bd95",
+      "name": "Post To Buffer (Account 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        192
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SLNZI15TnbJv50Qr",
+          "name": "Buffer Account 1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.buffer.com",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.graphql_body) }}",
+        "options": {}
+      },
+      "id": "480cdfc5-5a67-479a-88cb-24658f8bc358",
+      "name": "Post To Buffer (Account 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        416
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3zfjW4evWn5jyfW0",
+          "name": "Buffer Account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $('Which Buffer Account?').all();\nconst responses = $input.all();\n\nconst allResults = [];\n\nresponses.forEach((item, idx) => {\n  const resp = item.json.data;\n  const postResult = (resp && resp.createPost) || {};\n  const success = !!(postResult.post && postResult.post.id);\n  const errorMsg = postResult.message || '';\n\n  const original = originalItems[idx] ? originalItems[idx].json : {};\n\n  if (!success) {\n    throw new Error('Buffer post failed for ' + (original.channel_name || 'unknown channel') + ': ' + (errorMsg || 'unknown error'));\n  }\n\n  const ids = original.idea_ids || [];\n  ids.filter(id => id && id.trim() !== '').forEach(id => {\n  allResults.push({\n    json: {\n      idea_id: id,\n      category: original.category,\n      buffer_post_id: postResult.post.id,\n      new_status: 'Posted'\n    }\n  });\n});\n  ids.forEach(id => {\n    allResults.push({\n      json: {\n        idea_id: id,\n        category: original.category,\n        buffer_post_id: postResult.post.id,\n        new_status: 'Posted'\n      }\n    });\n  });\n});\n\nreturn allResults;"
+      },
+      "id": "65fbf410-290d-456b-9dab-e648e604bf11",
+      "name": "Check Response A1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        192
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $('Which Buffer Account?').all();\nconst responses = $input.all();\n\nconst allResults = [];\n\nresponses.forEach((item, idx) => {\n  const resp = item.json.data;\n  const postResult = (resp && resp.createPost) || {};\n  const success = !!(postResult.post && postResult.post.id);\n  const errorMsg = postResult.message || '';\n\n  const original = originalItems[idx] ? originalItems[idx].json : {};\n\n  if (!success) {\n    throw new Error('Buffer post failed for ' + (original.channel_name || 'unknown channel') + ': ' + (errorMsg || 'unknown error'));\n  }\n\n  const ids = original.idea_ids || [];\n  ids.filter(id => id && id.trim() !== '').forEach(id => {\n  allResults.push({\n    json: {\n      idea_id: id,\n      category: original.category,\n      buffer_post_id: postResult.post.id,\n      new_status: 'Posted'\n    }\n  });\n});\n  ids.forEach(id => {\n    allResults.push({\n      json: {\n        idea_id: id,\n        category: original.category,\n        buffer_post_id: postResult.post.id,\n        new_status: 'Posted'\n      }\n    });\n  });\n});\n\nreturn allResults;"
+      },
+      "id": "9b06ad19-48f1-40c8-a719-0870c62bab20",
+      "name": "Check Response A2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        416
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "idea_id "
+          ],
+          "value": {
+            "idea_id ": "={{ $json.idea_id }}",
+            "status": "={{ $json.new_status }}"
+          },
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "61afcdae-ab5f-43aa-bf6e-f64226614bb2",
+      "name": "Mark Rows Posted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        688,
+        288
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Config Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Config Sheet": {
+      "main": [
+        [
+          {
+            "node": "Read Review Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Review Sheet": {
+      "main": [
+        [
+          {
+            "node": "Select Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Posts": {
+      "main": [
+        [
+          {
+            "node": "Post Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Loop": {
+      "main": [
+        [
+          {
+            "node": "Group Into Carousels",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download From Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download From Drive": {
+      "main": [
+        [
+          {
+            "node": "Upload To Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload To Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Attach Cloudinary URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Cloudinary URL": {
+      "main": [
+        [
+          {
+            "node": "Post Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Into Carousels": {
+      "main": [
+        [
+          {
+            "node": "Which Buffer Account?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which Buffer Account?": {
+      "main": [
+        [
+          {
+            "node": "Post To Buffer (Account 1)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post To Buffer (Account 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post To Buffer (Account 1)": {
+      "main": [
+        [
+          {
+            "node": "Check Response A1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post To Buffer (Account 2)": {
+      "main": [
+        [
+          {
+            "node": "Check Response A2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Response A1": {
+      "main": [
+        [
+          {
+            "node": "Mark Rows Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Response A2": {
+      "main": [
+        [
+          {
+            "node": "Mark Rows Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "336d79b9-5293-4ec0-95b8-d2547f61e529",
+  "meta": {
+    "instanceId": "d6108346ea3eff253d2f594042772a3f74c702fa1c47a44609362609adbe7f30"
+  },
+  "nodeGroups": [],
+  "id": "AikgSxt79hT1ihcV",
+  "tags": []
+}

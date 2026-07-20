@@ -1,0 +1,1855 @@
+{
+  "name": "Athena B — Complete Image Generation via Kie.ai",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b9e1248b-a339-4f77-838e-5e1ec7fee612",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3296,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ace149d4-4be5-4a9c-add8-aaa1c8bed930",
+      "name": "Read Config Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -3056,
+        832
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Staging",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "50e14357-3385-4af3-acb7-064d84da86bf",
+      "name": "Read Staging Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -2816,
+        832
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "8ea2c618-7090-4445-ae59-511ccf611fde",
+      "name": "Read Review Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -2576,
+        832
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b4a4ccfd-f6a4-49e7-8599-a9f0236114e5",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -2096,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://kieai.redpandaai.co/api/file-url-upload",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "fileUrl",
+              "value": "={{ $json.style_ref_url }}"
+            },
+            {
+              "name": "uploadPath",
+              "value": "athena-refs"
+            },
+            {
+              "name": "fileName",
+              "value": "style_ref.jpg"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a14194a6-71d2-473d-9639-26deb7478898",
+      "name": "Upload Style Ref",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1744,
+        672
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Z92MZdAl7QI8qWFS",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Split In Batches').item.json;\nconst kieStyleUrl = $json.data.downloadUrl;\nif (!kieStyleUrl) throw new Error('Style ref upload failed — no downloadUrl in response: ' + JSON.stringify($json).substring(0, 300));\nreturn [{ json: Object.assign({}, original, { kie_style_url: kieStyleUrl }) }];"
+      },
+      "id": "8f8fe237-d324-4660-a119-0e46939bb720",
+      "name": "Attach Style URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1472,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst refs = [];\nif (item.kie_style_url) refs.push(item.kie_style_url);\n\nconst fullPrompt = (item.style_guide || '') +\n  '\\n\\nSPECIFIC CONTENT FOR THIS IMAGE:\\n' + item.resolved_prompt +\n  '\\n\\nReference the provided style image to maintain visual consistency in palette, illustration style, and layout.';\n\nreturn [{ json: Object.assign({}, item, {\n  full_prompt: fullPrompt,\n  kie_body: {\n    model: 'gpt-image-2-image-to-image',\n    input: {\n      prompt: fullPrompt,\n      input_urls: refs,\n      aspect_ratio: '4:5'\n    }\n  }\n}) }];"
+      },
+      "id": "f602d073-94ee-455f-8332-ac190c4aec94",
+      "name": "Build Kie Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.kie.ai/api/v1/jobs/createTask",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.kie_body) }}",
+        "options": {}
+      },
+      "id": "88a01714-24dc-4eea-9390-7709ce400a27",
+      "name": "Submit to Kie AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -896,
+        672
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Z92MZdAl7QI8qWFS",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "category": "={{ $json.category }}",
+            "concept": "={{ $json.concept }}",
+            "final_prompt": "={{ $json.full_prompt }}",
+            "status": "={{ $json.final_status }}",
+            "timestamp": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "concept",
+              "displayName": "concept",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_prompt",
+              "displayName": "final_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_link",
+              "displayName": "drive_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_preview",
+              "displayName": "image_preview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "refinement_notes",
+              "displayName": "refinement_notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "a72b9245-7d18-4453-9700-1b9288434dea",
+      "name": "Append Failure to Review",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        304,
+        912
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.result_image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "image"
+            }
+          }
+        }
+      },
+      "id": "08c94a99-0154-47d4-bed8-4015b09f88a3",
+      "name": "Download Generated Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -176,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "image",
+        "name": "={{ $('Evaluate Poll Status').item.json.taskId }}.png",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1HKeCLnWobr9L5A5CARJHEtqBNagpEDkw",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "6f1e9c97-9f5f-469a-a5e9-2333a5ac9c07",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        80,
+        224
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "zGBrXnVwzZ9qhg7f",
+          "name": "Google Drive OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "share",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "permissionsUi": {
+          "permissionsValues": {
+            "role": "reader",
+            "type": "anyone"
+          }
+        },
+        "options": {}
+      },
+      "id": "c6191805-bd84-4080-b685-15ee5980fa39",
+      "name": "Make Image Public",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        304,
+        224
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "zGBrXnVwzZ9qhg7f",
+          "name": "Google Drive OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileId       = $('Upload to Drive').item.json.id;\nconst originalItem = $('Evaluate Poll Status').item.json;\nconst directLink   = 'https://drive.google.com/uc?id=' + fileId;\n\nreturn [{ json: Object.assign({}, originalItem, {\n  drive_file_id:  fileId,\n  drive_link:     directLink,\n  image_formula:  '=IMAGE(\"' + directLink + '\")',\n  final_status:   'Pending Review',\n  status:         'done'\n}) }];"
+      },
+      "id": "4a9cd078-9515-406b-94e0-d000aa4913b5",
+      "name": "Build Drive Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "category": "={{ $json.category }}",
+            "concept": "={{ $json.concept }}",
+            "final_prompt": "={{ $json.full_prompt }}",
+            "drive_link": "={{ $json.drive_link }}",
+            "image_preview": "={{ $json.image_formula }}",
+            "status": "Pending Review",
+            "timestamp": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "concept",
+              "displayName": "concept",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_prompt",
+              "displayName": "final_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_link",
+              "displayName": "drive_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_preview",
+              "displayName": "image_preview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "refinement_notes",
+              "displayName": "refinement_notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_filter_reason",
+              "displayName": "ai_filter_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "your_approval",
+              "displayName": "your_approval",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resolved_prompt",
+              "displayName": "resolved_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "style_ref_url",
+              "displayName": "style_ref_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_style_url",
+              "displayName": "kie_style_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resume_url",
+              "displayName": "resume_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_body",
+              "displayName": "kie_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "result_image_url",
+              "displayName": "result_image_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "image_formula",
+              "displayName": "image_formula",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "taskId",
+              "displayName": "taskId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_count",
+              "displayName": "poll_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_status",
+              "displayName": "poll_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6c6cb941-88b7-4446-bdb8-371a6ccf01a2",
+      "name": "Append Success to Review",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1024,
+        432
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Build Drive Link').item.json.source }}",
+              "rightValue": "new",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "id": "8da4ba6c-7c77-4a32-825f-80077075540b"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0a1f242-3f9e-4575-aa2c-1bcdb513c7e7",
+      "name": "Is New Generation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1264,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Staging",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "status": "done",
+            "row_number": 0
+          },
+          "matchingColumns": [
+            "idea_id "
+          ],
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "concept",
+              "displayName": "concept",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_prompt",
+              "displayName": "final_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ai_filter_reason",
+              "displayName": "ai_filter_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "your_approval",
+              "displayName": "your_approval",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resolved_prompt",
+              "displayName": "resolved_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "style_ref_url",
+              "displayName": "style_ref_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_style_url",
+              "displayName": "kie_style_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_body",
+              "displayName": "kie_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "taskId",
+              "displayName": "taskId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_count",
+              "displayName": "poll_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "result_image_url",
+              "displayName": "result_image_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_status",
+              "displayName": "poll_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "drive_file_id",
+              "displayName": "drive_file_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "drive_link",
+              "displayName": "drive_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "image_formula",
+              "displayName": "image_formula",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "style_guide",
+              "displayName": "style_guide",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "full_prompt",
+              "displayName": "full_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "221aa035-d2f5-4241-9e94-99a929c4197e",
+      "name": "Update Staging Done",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1600,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1SD7iCvtXWlVgawV5YlLICp-Ff84Dzdn2wKghzQd4b80",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "status": "Refined",
+            "row_number": 0
+          },
+          "matchingColumns": [
+            "taskId"
+          ],
+          "schema": [
+            {
+              "id": "idea_id ",
+              "displayName": "idea_id ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "concept",
+              "displayName": "concept",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_prompt",
+              "displayName": "final_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "drive_link",
+              "displayName": "drive_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "image_preview",
+              "displayName": "image_preview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "refinement_notes",
+              "displayName": "refinement_notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ai_filter_reason",
+              "displayName": "ai_filter_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "your_approval",
+              "displayName": "your_approval",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resolved_prompt",
+              "displayName": "resolved_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "style_ref_url",
+              "displayName": "style_ref_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_style_url",
+              "displayName": "kie_style_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resume_url",
+              "displayName": "resume_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kie_body",
+              "displayName": "kie_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "result_image_url",
+              "displayName": "result_image_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "image_formula",
+              "displayName": "image_formula",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "taskId",
+              "displayName": "taskId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_count",
+              "displayName": "poll_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poll_status",
+              "displayName": "poll_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2bdf6471-7683-40ab-b2ed-270ec2af5e7a",
+      "name": "Update Review Refined",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1504,
+        272
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qjHjbvAvw8nJ9fHL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "1fbcff82-f21a-4a3e-8126-979ac8e5b9ff",
+      "name": "Throttle Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1744,
+        432
+      ],
+      "webhookId": "athena-throttle-b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Read Config Sheet').all();\nconst configMap = {};\nconfig.forEach(item => { configMap[item.json.category] = item.json; });\n\nconst staging = $('Read Staging Sheet').all();\nconst review  = $('Read Review Sheet').all();\n\nconst approvedStaging = staging.filter(i => {\n  const approved = i.json.your_approval === true || String(i.json.your_approval).toUpperCase() === 'TRUE';\n  const pending  = (i.json.status || '').toLowerCase() === 'pending_review';\n  return approved && pending;\n});\n\nconst needsRefinement = review.filter(i =>\n  (i.json.status || '').toLowerCase() === 'needs refinement'\n);\n\nconst merged = [];\n\napprovedStaging.forEach(item => {\n  const cfg = configMap[item.json.category] || {};\n  const content = item.json.concept || item.json.final_prompt || '';\n  merged.push(Object.assign({}, item.json, {\n    source: 'new',\n    resolved_prompt: content,\n    style_guide: cfg.style_guide || '',\n    style_ref_url: cfg.style_ref_url || ''\n  }));\n});\n\nneedsRefinement.forEach(item => {\n  const cfg     = configMap[item.json.category] || {};\n  const notes   = item.json.refinement_notes || '';\n  const content = item.json.concept || item.json.final_prompt || '';\n  const prompt  = content + (notes ? '\\n\\nRefinement notes: ' + notes : '');\n  merged.push(Object.assign({}, item.json, {\n    source: 'refinement',\n    resolved_prompt: prompt,\n    style_guide: cfg.style_guide || '',\n    style_ref_url: cfg.style_ref_url || ''\n  }));\n});\n\nif (merged.length === 0) {\n  throw new Error('Nothing to process. Approve rows in Staging or mark rows as Needs Refinement in Review.');\n}\n\nreturn merged.map(item => ({ json: item }));"
+      },
+      "id": "30f06a53-3933-4ca0-8063-c7baa2b3f435",
+      "name": "Merge and Resolve Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2336,
+        832
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const submit = $json;\nconst item   = $('Build Kie Request').item.json;\n\nconst taskId = (submit.data && submit.data.taskId) || submit.taskId;\nif (!taskId) throw new Error('No taskId in Kie response: ' + JSON.stringify(submit).substring(0, 300));\n\nreturn [{ json: Object.assign({}, item, {\n  taskId,\n  poll_count: 0,\n  next_action: 'retry',\n  result_image_url: null\n}) }];"
+      },
+      "id": "829d8d3b-3ef9-4ff9-b1ea-709c3069e003",
+      "name": "Init Poll State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 45
+      },
+      "id": "92b5f118-790c-4f9f-a7b2-30f3e07c201e",
+      "name": "Wait Before Poll",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -928,
+        352
+      ],
+      "webhookId": "athena-poll-wait"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.kie.ai/api/v1/jobs/recordInfo?taskId={{ $json.taskId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5d7246b4-7e76-4bb7-b575-7be2c3586c4e",
+      "name": "Poll Kie AI Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -720,
+        352
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Z92MZdAl7QI8qWFS",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusData = $json;\nconst prior      = $('Wait Before Poll').item.json;\nconst polls      = (prior.poll_count || 0) + 1;\n\nconst d     = (statusData && statusData.data) || {};\nconst state = d.state;\n\n// Try both known result URL paths\nconst result          = JSON.parse(d.resultJson || '{\"resultUrls\":[]}');\nconst result_image_url = result.resultUrls[0] || null;\n\n\nlet nextAction;\nif (state === 'success') nextAction = 'continue';\nelse if (state === 'fail') nextAction = 'fail';\nelse                     nextAction = 'retry';\n\nreturn [{ json: Object.assign({}, prior, {\n  poll_count:       polls,\n  next_action:      nextAction,\n  result_image_url: result_image_url,\n  poll_status:      state || 'unknown'\n}) }];"
+      },
+      "id": "c30fc707-3d46-4e05-bfc3-9ed0168478bc",
+      "name": "Evaluate Poll Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7c0598c1-0cb9-4b6f-a689-ab9ab681dcf5",
+              "leftValue": "={{ $json.next_action }}",
+              "rightValue": "continue",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "dcc556b1-6272-45dc-a9a7-4f472f3fb768",
+      "name": "Is Generation Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -352,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.next_action }}",
+              "rightValue": "retry",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "id": "should-retry-cond"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f76df712-cbf1-47f5-b5ed-03224c8dfa86",
+      "name": "Should Retry Poll?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -176,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: Object.assign({}, item, {\n  drive_link:    '',\n  image_formula: '',\n  final_status:  'Generation Failed (polls: ' + item.poll_count + ', status: ' + (item.poll_status || 'unknown') + ')'\n}) }];"
+      },
+      "id": "d22c67fd-e2c9-43a1-b8a9-98853624c411",
+      "name": "Build Failure Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        688
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Config Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Config Sheet": {
+      "main": [
+        [
+          {
+            "node": "Read Staging Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Staging Sheet": {
+      "main": [
+        [
+          {
+            "node": "Read Review Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Review Sheet": {
+      "main": [
+        [
+          {
+            "node": "Merge and Resolve Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Upload Style Ref",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Style Ref": {
+      "main": [
+        [
+          {
+            "node": "Attach Style URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Style URL": {
+      "main": [
+        [
+          {
+            "node": "Build Kie Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Kie Request": {
+      "main": [
+        [
+          {
+            "node": "Submit to Kie AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit to Kie AI": {
+      "main": [
+        [
+          {
+            "node": "Init Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Failure to Review": {
+      "main": [
+        [
+          {
+            "node": "Throttle Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Generated Image": {
+      "main": [
+        [
+          {
+            "node": "Upload to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Drive": {
+      "main": [
+        [
+          {
+            "node": "Make Image Public",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Image Public": {
+      "main": [
+        [
+          {
+            "node": "Build Drive Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Drive Link": {
+      "main": [
+        [
+          {
+            "node": "Append Success to Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Success to Review": {
+      "main": [
+        [
+          {
+            "node": "Is New Generation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Generation?": {
+      "main": [
+        [
+          {
+            "node": "Update Staging Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Review Refined",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Staging Done": {
+      "main": [
+        [
+          {
+            "node": "Throttle Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Review Refined": {
+      "main": [
+        [
+          {
+            "node": "Throttle Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle Wait": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge and Resolve Items": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Poll State": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Poll": {
+      "main": [
+        [
+          {
+            "node": "Poll Kie AI Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Kie AI Status": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Poll Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Poll Status": {
+      "main": [
+        [
+          {
+            "node": "Is Generation Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Generation Complete?": {
+      "main": [
+        [
+          {
+            "node": "Download Generated Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Should Retry Poll?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Retry Poll?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Poll",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Failure Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure Row": {
+      "main": [
+        [
+          {
+            "node": "Append Failure to Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9af0a27f-73de-44a2-896f-88844b10def3",
+  "meta": {
+    "instanceId": "d6108346ea3eff253d2f594042772a3f74c702fa1c47a44609362609adbe7f30"
+  },
+  "nodeGroups": [],
+  "id": "lvE0qhVJb7KgggmE",
+  "tags": []
+}
