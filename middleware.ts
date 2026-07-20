@@ -25,11 +25,15 @@ export async function middleware(request: NextRequest) {
   const isPublic = pathname.startsWith("/login") || pathname.startsWith("/auth");
 
   if (!user && !isPublic) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const redirectResponse = NextResponse.redirect(new URL("/login", request.url));
+    response.cookies.getAll().forEach((c) => redirectResponse.cookies.set(c));
+    return redirectResponse;
   }
   if (user && user.email !== process.env.ALLOWED_EMAIL && !isPublic) {
     await supabase.auth.signOut();
-    return NextResponse.redirect(new URL("/login?error=unauthorized", request.url));
+    const redirectResponse = NextResponse.redirect(new URL("/login?error=unauthorized", request.url));
+    response.cookies.getAll().forEach((c) => redirectResponse.cookies.set(c));
+    return redirectResponse;
   }
   return response;
 }
