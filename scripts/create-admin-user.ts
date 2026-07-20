@@ -13,7 +13,7 @@ async function main() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
-  const { data: listData, error: listError } = await supabase.auth.admin.listUsers();
+  const { data: listData, error: listError } = await supabase.auth.admin.listUsers({ perPage: 1000 });
   if (listError) throw new Error(`Failed to list users: ${listError.message}`);
 
   const existing = listData.users.find((u) => u.email === email);
