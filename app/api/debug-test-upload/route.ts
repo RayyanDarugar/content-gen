@@ -15,7 +15,7 @@ export async function GET() {
   const path = `debug-nextjs-test-${Date.now()}.jpg`;
   const { error: upErr } = await supabase.storage
     .from("images")
-    .upload(path, jpeg, { contentType: "image/jpeg", upsert: true });
+    .upload(path, new Blob([jpeg], { type: "image/jpeg" }), { contentType: "image/jpeg", upsert: true });
 
   if (upErr) {
     return NextResponse.json({ error: upErr.message }, { status: 500 });
