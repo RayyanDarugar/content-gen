@@ -134,9 +134,15 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-  await supabase.from("post_images").insert(
+  const { error: imagesErr } = await supabase.from("post_images").insert(
     ordered.map((g, idx) => ({ post_id: postRow.id, generation_id: g.id, sort_order: idx })),
   );
+  if (imagesErr) {
+    return NextResponse.json(
+      { error: `posted to Buffer (${result.postId}) but failed to record images: ${imagesErr.message}` },
+      { status: 500 },
+    );
+  }
   const { error: ideaErr } = await supabase
     .from("ideas").update({ status: "posted" }).in("id", ideaIds);
   if (ideaErr) {
