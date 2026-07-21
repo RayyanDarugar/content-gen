@@ -1,46 +1,33 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
-import { createAdminSupabase } from "@/lib/supabase/admin";
+
+function countReplacementChar(buf: Buffer): number {
+  let count = 0;
+  for (let i = 0; i < buf.length - 2; i++) {
+    if (buf[i] === 0xef && buf[i + 1] === 0xbf && buf[i + 2] === 0xbd) count++;
+  }
+  return count;
+}
 
 export async function GET() {
-  const supabase = createAdminSupabase();
-
   const original = await sharp({
     create: { width: 200, height: 200, channels: 3, background: { r: 255, g: 0, b: 0 } },
   }).jpeg().toBuffer();
 
+  const originalReplacementCount = countReplacementChar(original);
+  const originalMagicBytes = original.subarray(0, 3).toString("hex");
+
   const jpeg = await sharp(original).jpeg({ quality: 90 }).toBuffer();
-  const magicBytesBeforeUpload = jpeg.subarray(0, 3).toString("hex");
-
-  const path = `debug-nextjs-test-${Date.now()}.jpg`;
-  const { error: upErr } = await supabase.storage
-    .from("images")
-    .upload(path, new Blob([jpeg], { type: "image/jpeg" }), { contentType: "image/jpeg", upsert: true });
-
-  if (upErr) {
-    return NextResponse.json({ error: upErr.message }, { status: 500 });
-  }
-
-  const { data: pub } = supabase.storage.from("images").getPublicUrl(path);
-  const res = await fetch(pub.publicUrl);
-  const downloaded = Buffer.from(await res.arrayBuffer());
-  const magicBytesAfterDownload = downloaded.subarray(0, 3).toString("hex");
-
-  let replacementCount = 0;
-  for (let i = 0; i < downloaded.length - 2; i++) {
-    if (downloaded[i] === 0xef && downloaded[i + 1] === 0xbf && downloaded[i + 2] === 0xbd) {
-      replacementCount++;
-    }
-  }
-
-  await supabase.storage.from("images").remove([path]);
+  const jpegReplacementCount = countReplacementChar(jpeg);
+  const jpegMagicBytes = jpeg.subarray(0, 3).toString("hex");
 
   return NextResponse.json({
-    uploadedLength: jpeg.length,
-    downloadedLength: downloaded.length,
-    magicBytesBeforeUpload,
-    magicBytesAfterDownload,
-    bytesMatch: Buffer.compare(downloaded, jpeg) === 0,
-    replacementCharCount: replacementCount,
+    originalLength: original.length,
+    originalMagicBytes,
+    originalReplacementCount,
+    jpegLength: jpeg.length,
+    jpegMagicBytes,
+    jpegReplacementCount,
+    jpegFirst40Hex: jpeg.subarray(0, 40).toString("hex"),
   });
 }
