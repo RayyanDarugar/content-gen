@@ -46,3 +46,14 @@ export interface Generation {
   created_at: string;
   updated_at: string;
 }
+
+export interface Post {
+  id: string;
+  category_key: string;
+  buffer_update_id: string;
+  caption: string;
+  status: "created" | "queued" | "failed";
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
