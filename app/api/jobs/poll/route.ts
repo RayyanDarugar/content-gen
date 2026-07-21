@@ -18,6 +18,26 @@ function authorized(request: NextRequest): boolean {
   return header.length === expected.length && timingSafeEqual(header, expected);
 }
 
+async function uploadToCloudinary(jpeg: Buffer): Promise<{ publicId: string; url: string }> {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
+  if (!cloudName || !preset) throw new Error("Cloudinary env vars not configured");
+
+  // Send as a base64 data URI in a plain URL-encoded body (pure ASCII) rather
+  // than a binary multipart upload — Vercel's runtime was found to mangle
+  // raw binary request bodies regardless of HTTP client used.
+  const dataUri = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  const body = new URLSearchParams({ file: dataUri, upload_preset: preset });
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) throw new Error(`cloudinary upload failed: HTTP ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { public_id: string; secure_url: string };
+  return { publicId: json.public_id, url: json.secure_url };
+}
+
 async function ingestImage(
   supabase: SupabaseClient,
   gen: Generation,
@@ -27,15 +47,10 @@ async function ingestImage(
   if (!res.ok) throw new Error(`image download failed (HTTP ${res.status})`);
   const original = Buffer.from(await res.arrayBuffer());
   const jpeg = await sharp(original).jpeg({ quality: 90 }).toBuffer();
-  const path = `${gen.id}.jpg`;
-  const { error: upErr } = await supabase.storage
-    .from("images")
-    .upload(path, jpeg, { contentType: "image/jpeg", upsert: true });
-  if (upErr) throw new Error(`storage upload failed: ${upErr.message}`);
-  const { data: pub } = supabase.storage.from("images").getPublicUrl(path);
+  const { publicId, url } = await uploadToCloudinary(jpeg);
   const { error: rowErr } = await supabase
     .from("generations")
-    .update({ status: "succeeded", image_path: path, public_url: pub.publicUrl })
+    .update({ status: "succeeded", image_path: publicId, public_url: url })
     .eq("id", gen.id);
   if (rowErr) throw new Error(`generation update failed: ${rowErr.message}`);
   await supabase.from("ideas").update({ status: "generated" }).eq("id", gen.idea_id);
