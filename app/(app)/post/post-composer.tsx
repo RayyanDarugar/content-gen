@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +28,22 @@ export function PostComposer({
     () => new Map(postables.map((p) => [p.generation_id, p])),
     [postables],
   );
+
+  useEffect(() => {
+    setSelectedIds((ids) => {
+      const stillValid = ids.filter((id) => byId.has(id));
+      if (stillValid.length === ids.length) return ids;
+      const need = n - stillValid.length;
+      if (need <= 0) return stillValid;
+      const usedIds = new Set(stillValid);
+      const fillIns = selectAutoFill(
+        postables.filter((p) => !usedIds.has(p.generation_id)),
+        need,
+      ).map((p) => p.generation_id);
+      return [...stillValid, ...fillIns];
+    });
+  }, [byId, postables, n]);
+
   const selected = selectedIds.map((id) => byId.get(id)!).filter(Boolean);
   const pool = postables.filter((p) => !selectedIds.includes(p.generation_id));
   const ready = postables.length >= n;
