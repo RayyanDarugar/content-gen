@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
+import { createClient } from "@supabase/supabase-js";
+import { fetch as undiciFetch } from "undici";
 
 function countReplacementChar(buf: Buffer): number {
   let count = 0;
@@ -10,24 +12,40 @@ function countReplacementChar(buf: Buffer): number {
 }
 
 export async function GET() {
-  const original = await sharp({
+  // Supabase client with an explicit, unpatched fetch (bypassing Next.js's
+  // globalThis.fetch patch, which is the suspected corruption source).
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    // @ts-expect-error - undici's fetch type is close enough to the global fetch type for this test
+    { global: { fetch: undiciFetch } },
+  );
+
+  const jpeg = await sharp({
     create: { width: 200, height: 200, channels: 3, background: { r: 255, g: 0, b: 0 } },
-  }).jpeg().toBuffer();
+  }).jpeg({ quality: 90 }).toBuffer();
 
-  const originalReplacementCount = countReplacementChar(original);
-  const originalMagicBytes = original.subarray(0, 3).toString("hex");
+  const path = `debug-undici-test-${Date.now()}.jpg`;
+  const { error: upErr } = await supabase.storage
+    .from("images")
+    .upload(path, jpeg, { contentType: "image/jpeg", upsert: true });
 
-  const jpeg = await sharp(original).jpeg({ quality: 90 }).toBuffer();
-  const jpegReplacementCount = countReplacementChar(jpeg);
-  const jpegMagicBytes = jpeg.subarray(0, 3).toString("hex");
+  if (upErr) {
+    return NextResponse.json({ error: upErr.message }, { status: 500 });
+  }
+
+  const { data: pub } = supabase.storage.from("images").getPublicUrl(path);
+  const res = await fetch(pub.publicUrl);
+  const downloaded = Buffer.from(await res.arrayBuffer());
+
+  await supabase.storage.from("images").remove([path]);
 
   return NextResponse.json({
-    originalLength: original.length,
-    originalMagicBytes,
-    originalReplacementCount,
-    jpegLength: jpeg.length,
-    jpegMagicBytes,
-    jpegReplacementCount,
-    jpegFirst40Hex: jpeg.subarray(0, 40).toString("hex"),
+    uploadedLength: jpeg.length,
+    downloadedLength: downloaded.length,
+    magicBytesBeforeUpload: jpeg.subarray(0, 3).toString("hex"),
+    magicBytesAfterDownload: downloaded.subarray(0, 3).toString("hex"),
+    bytesMatch: Buffer.compare(downloaded, jpeg) === 0,
+    replacementCharCount: countReplacementChar(downloaded),
   });
 }
