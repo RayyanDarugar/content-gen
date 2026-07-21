@@ -1,14 +1,15 @@
 "use client";
 import { useState, useTransition } from "react";
+import { Check, X } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { setIdeaDecision } from "./actions";
 import type { Idea } from "@/lib/types";
 
-const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  pending_review: "outline", approved: "default", rejected: "destructive",
-  generating: "secondary", generated: "default", posted: "secondary", failed: "destructive",
+const statusVariant: Record<string, "outline" | "pending" | "destructive" | "success" | "queued"> = {
+  pending_review: "outline", approved: "pending", rejected: "destructive",
+  generating: "pending", generated: "success", posted: "queued", failed: "destructive",
 };
 
 export function IdeaCard({ idea }: { idea: Idea }) {
@@ -17,19 +18,28 @@ export function IdeaCard({ idea }: { idea: Idea }) {
   const reviewable = ["pending_review", "approved", "rejected"].includes(idea.status);
 
   return (
-    <Card>
+    <Card className="transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-primary/30">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <Badge variant={statusVariant[idea.status] ?? "outline"}>{idea.status}</Badge>
         {reviewable && (
-          <div className="flex gap-1">
-            <Button size="sm" variant={idea.approved ? "default" : "outline"} disabled={pending}
-              onClick={() => startTransition(() => setIdeaDecision(idea.id, "approved"))}>
-              ✓
-            </Button>
-            <Button size="sm" variant={idea.status === "rejected" ? "destructive" : "outline"}
+          <div className="flex gap-1.5">
+            <Button
+              size="icon-sm"
+              className="rounded-full"
+              variant={idea.approved ? "default" : "outline"}
               disabled={pending}
-              onClick={() => startTransition(() => setIdeaDecision(idea.id, "rejected"))}>
-              ✗
+              onClick={() => startTransition(() => setIdeaDecision(idea.id, "approved"))}
+            >
+              <Check className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-sm"
+              className="rounded-full"
+              variant={idea.status === "rejected" ? "destructive" : "outline"}
+              disabled={pending}
+              onClick={() => startTransition(() => setIdeaDecision(idea.id, "rejected"))}
+            >
+              <X className="size-3.5" />
             </Button>
           </div>
         )}

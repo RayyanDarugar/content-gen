@@ -1,7 +1,12 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { PostComposer } from "./post-composer";
+import { Badge } from "@/components/ui/badge";
 import type { Postable } from "@/lib/athena/carousel";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
+
+const statusVariant: Record<string, "outline" | "queued" | "destructive"> = {
+  created: "outline", queued: "queued", failed: "destructive",
+};
 
 type IdeaWithGenerations = Idea & { generations: Generation[] };
 
@@ -74,9 +79,7 @@ export default async function PostPage() {
                     </td>
                     <td className="py-2 pr-4">{p.category_key}</td>
                     <td className="py-2 pr-4">
-                      {p.status === "failed" ? (
-                        <span className="text-red-500">failed</span>
-                      ) : p.status}
+                      <Badge variant={statusVariant[p.status] ?? "outline"}>{p.status}</Badge>
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs">{p.buffer_update_id || "—"}</td>
                     <td className="py-2 max-w-md truncate" title={p.error || p.caption}>

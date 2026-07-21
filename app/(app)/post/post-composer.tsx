@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { pickCaption, selectAutoFill, type Postable } from "@/lib/athena/carousel";
+import { categoryColor } from "@/lib/category-colors";
 import type { Category } from "@/lib/types";
 
 export function PostComposer({
@@ -89,10 +90,19 @@ export function PostComposer({
   }
 
   return (
-    <section className="rounded-lg border p-4 space-y-3">
+    <section
+      className="rounded-2xl bg-card ring-1 ring-foreground/10 border-l-4 p-4 space-y-3 transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-primary/30"
+      style={{ borderLeftColor: categoryColor(category.key) }}
+    >
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{category.name}</h2>
-        <span className="text-sm text-muted-foreground">
+        <h2 className="text-lg">{category.name}</h2>
+        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="relative h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+            <span
+              className="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+              style={{ width: `${Math.min(100, (postables.length / n) * 100)}%` }}
+            />
+          </span>
           {Math.min(postables.length, n)} of {n} ready
         </span>
       </div>
@@ -110,7 +120,7 @@ export function PostComposer({
                 <img
                   src={p.public_url}
                   alt={p.concept.slice(0, 60)}
-                  className="h-28 w-28 cursor-pointer rounded border object-cover"
+                  className="h-28 w-28 cursor-pointer rounded-xl border object-cover transition-transform hover:scale-95"
                   onClick={() => remove(p.generation_id)}
                   title="Click to remove"
                 />
@@ -135,7 +145,7 @@ export function PostComposer({
                     key={p.generation_id}
                     src={p.public_url}
                     alt={p.concept.slice(0, 60)}
-                    className="h-16 w-16 cursor-pointer rounded border object-cover opacity-70 hover:opacity-100"
+                    className="h-16 w-16 cursor-pointer rounded-xl border object-cover opacity-70 transition-all hover:scale-105 hover:opacity-100"
                     onClick={() => add(p.generation_id)}
                   />
                 ))}
@@ -150,11 +160,11 @@ export function PostComposer({
             placeholder="Caption"
           />
           <div className="flex items-center gap-3">
-            <Button onClick={post} disabled={busy || selectedIds.length !== n}>
+            <Button onClick={post} disabled={busy || selectedIds.length !== n} className="rounded-full">
               {busy ? "Posting…" : `Post ${n === 1 ? "image" : "carousel"} to Buffer`}
             </Button>
             {message && (
-              <span className={`text-sm ${message.ok ? "text-green-600" : "text-red-500"}`}>
+              <span className={`text-sm ${message.ok ? "text-status-success" : "text-destructive"}`}>
                 {message.text}
               </span>
             )}

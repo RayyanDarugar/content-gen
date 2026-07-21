@@ -1,6 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
+import { categoryColor } from "@/lib/category-colors";
 import type { Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
@@ -21,7 +22,13 @@ export default async function IdeasPage() {
       {[...byCategory.entries()].map(([key, group]) => (
         <section key={key} className="space-y-3">
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold">{key} ({group.length})</h2>
+            <h2 className="flex items-center gap-2 text-lg">
+              <span
+                className="size-2.5 rounded-full"
+                style={{ backgroundColor: categoryColor(key) }}
+              />
+              {key} ({group.length})
+            </h2>
             {group.some((i) => i.status === "approved") && (
               <GenerateImagesButton
                 ideaIds={group.filter((i) => i.status === "approved").map((i) => i.id)}

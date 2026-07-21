@@ -1,6 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { GalleryCard } from "./gallery-card";
 import { RealtimeRefresher } from "./realtime-refresher";
+import { categoryColor } from "@/lib/category-colors";
 import type { Generation, Idea } from "@/lib/types";
 
 export type IdeaWithGenerations = Idea & { generations: Generation[] };
@@ -32,7 +33,13 @@ export default async function GalleryPage() {
       )}
       {[...byCategory.entries()].map(([key, group]) => (
         <section key={key} className="space-y-3">
-          <h2 className="text-lg font-semibold">{key} ({group.length})</h2>
+          <h2 className="flex items-center gap-2 text-lg">
+            <span
+              className="size-2.5 rounded-full"
+              style={{ backgroundColor: categoryColor(key) }}
+            />
+            {key} ({group.length})
+          </h2>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {group.map((idea) => <GalleryCard key={idea.id} idea={idea} />)}
           </div>

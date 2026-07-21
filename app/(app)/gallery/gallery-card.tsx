@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Loader2, TriangleAlert } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,8 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import type { IdeaWithGenerations } from "./page";
 
-const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  submitted: "outline", polling: "secondary", succeeded: "default", failed: "destructive",
+const statusVariant: Record<string, "pending" | "success" | "destructive" | "outline"> = {
+  submitted: "pending", polling: "pending", succeeded: "success", failed: "destructive",
 };
 
 export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
@@ -45,18 +46,46 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
   }
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <Badge variant={statusVariant[latest.status] ?? "outline"}>{latest.status}</Badge>
-        <div className="flex gap-2">
+    <Card className="overflow-hidden py-0 transition-all hover:-translate-y-1 hover:shadow-xl hover:ring-primary/40">
+      <div className="relative aspect-square">
+        {latest.status === "succeeded" && latest.public_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={latest.public_url} alt={idea.concept.slice(0, 80)}
+            className="h-full w-full object-cover" />
+        ) : latest.status === "failed" ? (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-destructive/10 p-4 text-center">
+            <TriangleAlert className="size-6 text-destructive" />
+            <p className="text-xs text-destructive break-words line-clamp-3">
+              {latest.error || "failed"}
+            </p>
+          </div>
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-status-pending/10">
+            <Loader2 className="size-6 animate-spin text-status-pending" />
+            <p className="text-xs text-muted-foreground">polls: {latest.poll_count}</p>
+          </div>
+        )}
+        <Badge
+          variant={statusVariant[latest.status] ?? "outline"}
+          className="absolute top-2 right-2 backdrop-blur-sm bg-background/70"
+        >
+          {latest.status}
+        </Badge>
+      </div>
+      <CardContent className="space-y-2 pt-3 pb-4">
+        <p className="text-xs text-muted-foreground line-clamp-2">{idea.concept}</p>
+        {latest.refinement_notes && (
+          <p className="text-xs text-muted-foreground">Notes: {latest.refinement_notes}</p>
+        )}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           {latest.status === "failed" && (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => submit()}>
+            <Button size="sm" variant="outline" className="rounded-full" disabled={busy} onClick={() => submit()}>
               Retry
             </Button>
           )}
           {latest.status === "succeeded" && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger render={<Button size="sm" variant="outline" />}>
+              <DialogTrigger render={<Button size="sm" variant="outline" className="rounded-full" />}>
                 Regenerate…
               </DialogTrigger>
               <DialogContent>
@@ -75,55 +104,38 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
               </DialogContent>
             </Dialog>
           )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {latest.status === "succeeded" && latest.public_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={latest.public_url} alt={idea.concept.slice(0, 80)}
-            className="w-full rounded border object-cover" />
-        ) : latest.status === "failed" ? (
-          <p className="text-sm text-red-500 break-words">{latest.error || "failed"}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground animate-pulse">
-            Generating… (polls: {latest.poll_count})
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground line-clamp-2">{idea.concept}</p>
-        {latest.refinement_notes && (
-          <p className="text-xs text-muted-foreground">Notes: {latest.refinement_notes}</p>
-        )}
-        {idea.generations.length > 1 && (
-          <Dialog>
-            <DialogTrigger
-              render={<button className="text-xs underline text-muted-foreground" />}
-            >
-              history ({idea.generations.length})
-            </DialogTrigger>
-            <DialogContent className="max-h-[80vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>Generation history</DialogTitle></DialogHeader>
-              {idea.generations.map((g) => (
-                <div key={g.id} className="space-y-1 border-b pb-3">
-                  <div className="flex items-center gap-2">
-                    <Badge variant={statusVariant[g.status] ?? "outline"}>{g.status}</Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(g.created_at).toLocaleString()}
-                    </span>
+          {idea.generations.length > 1 && (
+            <Dialog>
+              <DialogTrigger
+                render={<button className="text-xs underline text-muted-foreground" />}
+              >
+                history ({idea.generations.length})
+              </DialogTrigger>
+              <DialogContent className="max-h-[80vh] overflow-y-auto">
+                <DialogHeader><DialogTitle>Generation history</DialogTitle></DialogHeader>
+                {idea.generations.map((g) => (
+                  <div key={g.id} className="space-y-1 border-b pb-3">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={statusVariant[g.status] ?? "outline"}>{g.status}</Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(g.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    {g.public_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={g.public_url} alt="" className="h-40 rounded-xl object-cover" />
+                    )}
+                    {g.refinement_notes && (
+                      <p className="text-xs text-muted-foreground">Notes: {g.refinement_notes}</p>
+                    )}
+                    {g.error && <p className="text-xs text-destructive">{g.error}</p>}
                   </div>
-                  {g.public_url && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={g.public_url} alt="" className="h-40 rounded border object-cover" />
-                  )}
-                  {g.refinement_notes && (
-                    <p className="text-xs text-muted-foreground">Notes: {g.refinement_notes}</p>
-                  )}
-                  {g.error && <p className="text-xs text-red-500">{g.error}</p>}
-                </div>
-              ))}
-            </DialogContent>
-          </Dialog>
-        )}
-        {msg && <p className="text-xs text-red-500">{msg}</p>}
+                ))}
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
+        {msg && <p className="text-xs text-destructive">{msg}</p>}
       </CardContent>
     </Card>
   );
