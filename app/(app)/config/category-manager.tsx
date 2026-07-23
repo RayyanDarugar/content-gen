@@ -11,20 +11,22 @@ import {
   createCategory, updateCategory, deleteCategory, uploadStyleRefImage,
   type CategoryFields,
 } from "./actions";
-import type { Category } from "@/lib/types";
+import type { BufferChannel, Category } from "@/lib/types";
 
 const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
+  post_caption: "", buffer_channel_id: "",
   images_per_carousel: 5, aspect_ratio: "4:5", active: true,
 };
 
-function CategoryEditor({ category }: { category?: Category }) {
+function CategoryEditor({ category, channels }: { category?: Category; channels: BufferChannel[] }) {
   const router = useRouter();
   const [form, setForm] = useState<CategoryFields>(
     category
       ? {
           name: category.name, style_guide: category.style_guide,
           output_format: category.output_format, style_ref_url: category.style_ref_url,
+          post_caption: category.post_caption, buffer_channel_id: category.buffer_channel_id,
           images_per_carousel: category.images_per_carousel,
           aspect_ratio: category.aspect_ratio, active: category.active,
         }
@@ -104,6 +106,23 @@ function CategoryEditor({ category }: { category?: Category }) {
         <div><Label>Aspect ratio</Label>
           <Input value={form.aspect_ratio} onChange={(e) => set("aspect_ratio", e.target.value)} /></div>
       </div>
+      <div><Label>Post caption (use || to separate rotating variants)</Label>
+        <Textarea rows={3} value={form.post_caption}
+          onChange={(e) => set("post_caption", e.target.value)} /></div>
+      <div><Label>Buffer channel</Label>
+        {channels.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Connect Buffer above to choose a channel.</p>
+        ) : (
+          <select className="block w-full rounded-md border bg-background p-2 text-sm"
+            value={form.buffer_channel_id}
+            onChange={(e) => set("buffer_channel_id", e.target.value)}>
+            <option value="">— none —</option>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id}>{c.displayName || c.name} ({c.service})</option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="flex items-center gap-3">
         <Button onClick={save} disabled={pending || uploading}>
           {pending ? "Saving…" : category ? "Save" : "Add category"}
@@ -114,15 +133,15 @@ function CategoryEditor({ category }: { category?: Category }) {
   );
 }
 
-export function CategoryManager({ categories }: { categories: Category[] }) {
+export function CategoryManager({ categories, channels }: { categories: Category[]; channels: BufferChannel[] }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        {categories.map((c) => <CategoryEditor key={c.id} category={c} />)}
+        {categories.map((c) => <CategoryEditor key={c.id} category={c} channels={channels} />)}
         <div>
           <p className="mb-2 text-sm font-medium">Add a new category</p>
-          <CategoryEditor />
+          <CategoryEditor channels={channels} />
         </div>
       </CardContent>
     </Card>

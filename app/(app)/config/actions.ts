@@ -11,6 +11,8 @@ export interface CategoryFields {
   style_guide: string;
   output_format: string;
   style_ref_url: string;
+  post_caption: string;
+  buffer_channel_id: string;
   images_per_carousel: number;
   aspect_ratio: string;
   active: boolean;
@@ -38,6 +40,8 @@ export async function createCategory(fields: CategoryFields) {
     style_guide: fields.style_guide,
     output_format: fields.output_format,
     style_ref_url: fields.style_ref_url,
+    post_caption: fields.post_caption,
+    buffer_channel_id: fields.buffer_channel_id,
     images_per_carousel: fields.images_per_carousel,
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
@@ -58,6 +62,8 @@ export async function updateCategory(id: string, fields: CategoryFields) {
     style_guide: fields.style_guide,
     output_format: fields.output_format,
     style_ref_url: fields.style_ref_url,
+    post_caption: fields.post_caption,
+    buffer_channel_id: fields.buffer_channel_id,
     images_per_carousel: fields.images_per_carousel,
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
