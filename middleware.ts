@@ -22,16 +22,13 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
   const { pathname } = request.nextUrl;
-  const isPublic = pathname.startsWith("/login") || pathname.startsWith("/auth");
+  const isPublic =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/auth");
 
   if (!user && !isPublic) {
     const redirectResponse = NextResponse.redirect(new URL("/login", request.url));
-    response.cookies.getAll().forEach((c) => redirectResponse.cookies.set(c));
-    return redirectResponse;
-  }
-  if (user && user.email !== process.env.ALLOWED_EMAIL && !isPublic) {
-    await supabase.auth.signOut();
-    const redirectResponse = NextResponse.redirect(new URL("/login?error=unauthorized", request.url));
     response.cookies.getAll().forEach((c) => redirectResponse.cookies.set(c));
     return redirectResponse;
   }

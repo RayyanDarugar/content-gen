@@ -1,6 +1,7 @@
 "use client";
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,11 +43,11 @@ function LoginForm() {
           <Input type="password" placeholder="Password" value={password}
             onChange={(e) => setPassword(e.target.value)} required />
           <Button type="submit" className="w-full">Sign in</Button>
-          {params.get("error") === "unauthorized" && (
-            <p className="text-sm text-destructive">That email is not allowed.</p>
-          )}
           {err && <p className="text-sm text-destructive">{err}</p>}
         </form>
+        <p className="mt-3 text-sm text-muted-foreground">
+          No account? <Link href="/signup" className="underline">Sign up</Link>
+        </p>
       </CardContent>
     </Card>
   );
