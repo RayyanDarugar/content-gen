@@ -50,10 +50,3 @@ export function buildCreatePostMutation(
 }`;
   return { query, variables: { text: caption } };
 }
-
-export function bufferTokenFor(account: 1 | 2): string {
-  const name = account === 1 ? "BUFFER_TOKEN_1" : "BUFFER_TOKEN_2";
-  const token = process.env[name];
-  if (!token) throw new Error(`${name} is not set`);
-  return token;
-}

@@ -12,7 +12,6 @@ export interface Category {
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
-  buffer_account: 1 | 2;
   images_per_carousel: number;
   aspect_ratio: string;
   active: boolean;

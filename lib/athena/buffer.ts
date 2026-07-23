@@ -1,5 +1,5 @@
 import "server-only";
-import { buildCreatePostMutation, bufferTokenFor } from "./carousel";
+import { buildCreatePostMutation } from "./carousel";
 
 export interface BufferResult {
   success: boolean;
@@ -9,12 +9,11 @@ export interface BufferResult {
 }
 
 export async function postToBuffer(
-  account: 1 | 2,
+  token: string,
   channelId: string,
   imageUrls: string[],
   caption: string,
 ): Promise<BufferResult> {
-  const token = bufferTokenFor(account);
   const body = buildCreatePostMutation(channelId, imageUrls, caption);
   const res = await fetch("https://api.buffer.com", {
     method: "POST",

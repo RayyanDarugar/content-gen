@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { postToBuffer } from "@/lib/athena/buffer";
+import { getValidBufferToken } from "@/lib/settings/buffer";
 import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -105,7 +106,8 @@ export async function POST(request: NextRequest) {
 
   let result;
   try {
-    result = await postToBuffer(cat.buffer_account, cat.buffer_channel_id, imageUrls, caption);
+    const token = await getValidBufferToken(user.id);
+    result = await postToBuffer(token, cat.buffer_channel_id, imageUrls, caption);
   } catch (e) {
     result = { success: false, postId: "", error: e instanceof Error ? e.message : String(e), rawBody: "" };
   }

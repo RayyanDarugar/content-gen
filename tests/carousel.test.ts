@@ -1,6 +1,6 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  pickCaption, selectAutoFill, buildCreatePostMutation, bufferTokenFor,
+  pickCaption, selectAutoFill, buildCreatePostMutation,
   type Postable,
 } from "@/lib/athena/carousel";
 
@@ -65,21 +65,5 @@ describe("buildCreatePostMutation", () => {
     expect(query).toContain("MutationError");
     // caption must never be interpolated into the query body
     expect(query).not.toContain("my ");
-  });
-});
-
-describe("bufferTokenFor", () => {
-  afterEach(() => {
-    delete process.env.BUFFER_TOKEN_1;
-    delete process.env.BUFFER_TOKEN_2;
-  });
-  it("routes account to the matching env token", () => {
-    process.env.BUFFER_TOKEN_1 = "t1";
-    process.env.BUFFER_TOKEN_2 = "t2";
-    expect(bufferTokenFor(1)).toBe("t1");
-    expect(bufferTokenFor(2)).toBe("t2");
-  });
-  it("throws when the token is unset", () => {
-    expect(() => bufferTokenFor(1)).toThrow(/BUFFER_TOKEN_1/);
   });
 });
