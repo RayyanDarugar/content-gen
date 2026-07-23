@@ -8,6 +8,7 @@ export interface Category {
   key: string;
   name: string;
   style_guide: string;
+  output_format: string;
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
@@ -58,6 +59,17 @@ export interface Post {
   caption: string;
   status: "created" | "queued" | "failed";
   error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrandProfile {
+  user_id: string;
+  business_name: string;
+  business_description: string;
+  audience: string;
+  voice: string;
+  avoid: string;
   created_at: string;
   updated_at: string;
 }
