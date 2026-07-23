@@ -68,7 +68,7 @@ export async function submitGenerations(
         refinement_notes: refinementNotes,
       });
       if (insErr) throw new Error(`generation insert failed: ${insErr.message}`);
-      await supabase.from("ideas").update({ status: "generating" }).eq("id", idea.id);
+      await supabase.from("ideas").update({ status: "generating" }).eq("id", idea.id).eq("user_id", userId);
       result.submitted++;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -79,7 +79,7 @@ export async function submitGenerations(
         idea_id: idea.id, status: "failed", error: message,
         refinement_notes: refinementNotes,
       });
-      await supabase.from("ideas").update({ status: "failed" }).eq("id", idea.id);
+      await supabase.from("ideas").update({ status: "failed" }).eq("id", idea.id).eq("user_id", userId);
     }
   }
   return result;

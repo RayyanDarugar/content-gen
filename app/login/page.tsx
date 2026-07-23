@@ -1,6 +1,6 @@
 "use client";
-import { useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,6 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
-  const params = useSearchParams();
   const router = useRouter();
 
   async function signIn(e: React.FormEvent) {
@@ -56,7 +55,7 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
-      <Suspense><LoginForm /></Suspense>
+      <LoginForm />
     </main>
   );
 }

@@ -4,6 +4,7 @@ export type IdeaStatus =
 
 export interface Category {
   id: string;
+  user_id: string;
   key: string;
   name: string;
   style_guide: string;
@@ -20,6 +21,7 @@ export interface Category {
 
 export interface Idea {
   id: string;
+  user_id: string;
   category_key: string;
   concept: string;
   resolved_prompt: string;
@@ -33,6 +35,7 @@ export interface Idea {
 
 export interface Generation {
   id: string;
+  user_id: string;
   idea_id: string;
   kie_task_id: string;
   status: "submitted" | "polling" | "succeeded" | "failed";
@@ -49,6 +52,7 @@ export interface Generation {
 
 export interface Post {
   id: string;
+  user_id: string;
   category_key: string;
   buffer_update_id: string;
   caption: string;
