@@ -16,11 +16,22 @@ create index generations_user_idx on generations(user_id);
 create index posts_user_idx       on posts(user_id);
 create index post_images_user_idx on post_images(user_id);
 
--- categories.key is no longer globally unique; it is unique per user.
+-- 2. categories.key becomes unique per user, not globally. ideas/posts hold
+--    foreign keys into categories(key) that depend on the old global unique
+--    constraint — drop those FKs first, then swap the unique constraint, then
+--    re-add the FKs as composite (user_id, key) so they stay valid per-tenant.
+alter table ideas drop constraint ideas_category_key_fkey;
+alter table posts drop constraint posts_category_key_fkey;
+
 alter table categories drop constraint categories_key_key;
 alter table categories add constraint categories_user_key_unique unique (user_id, key);
 
--- 2. Drop the old single-user policies (from 0001 "auth full access" replaced by
+alter table ideas add constraint ideas_category_fkey
+  foreign key (user_id, category_key) references categories(user_id, key);
+alter table posts add constraint posts_category_fkey
+  foreign key (user_id, category_key) references categories(user_id, key);
+
+-- 3. Drop the old single-user policies (from 0001 "auth full access" replaced by
 --    0002 "allowed user only") and replace with per-user isolation.
 drop policy "allowed user only" on categories;
 drop policy "allowed user only" on ideas;
