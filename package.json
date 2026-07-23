@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "seed": "tsx scripts/seed-categories.ts",
-    "create-admin": "tsx scripts/create-admin-user.ts"
+    "create-admin": "tsx scripts/create-admin-user.ts",
+    "verify-isolation": "tsx scripts/verify-isolation.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",
