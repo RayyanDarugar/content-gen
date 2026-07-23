@@ -3,7 +3,6 @@ import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import Link from "next/link";
-import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { signUp } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
