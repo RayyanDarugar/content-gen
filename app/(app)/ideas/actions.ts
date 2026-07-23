@@ -1,10 +1,10 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { requireAllowedUser } from "@/lib/auth/require-user";
+import { requireUser } from "@/lib/auth/require-user";
 
 export async function setIdeaDecision(id: string, decision: "approved" | "rejected") {
-  await requireAllowedUser();
+  await requireUser();
   const supabase = await createServerSupabase();
 
   const { error } = await supabase

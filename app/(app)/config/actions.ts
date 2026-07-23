@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { requireAllowedUser } from "@/lib/auth/require-user";
+import { requireUser } from "@/lib/auth/require-user";
 
 export interface CategoryUpdate {
   name: string;
@@ -16,7 +16,7 @@ export interface CategoryUpdate {
 }
 
 export async function updateCategory(key: string, fields: CategoryUpdate) {
-  await requireAllowedUser();
+  await requireUser();
   const supabase = await createServerSupabase();
   if (![1, 2].includes(fields.buffer_account)) throw new Error("buffer_account must be 1 or 2");
   if (!Number.isInteger(fields.images_per_carousel) || fields.images_per_carousel < 1 || fields.images_per_carousel > 10) {

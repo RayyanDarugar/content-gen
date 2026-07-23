@@ -8,9 +8,3 @@ export async function requireUser(): Promise<User> {
   if (!user) throw new Error("unauthorized");
   return user;
 }
-
-// Temporary shim so existing call sites keep building while they are migrated
-// to requireUser across Tasks 6–9. Removed in Task 9.
-export async function requireAllowedUser(): Promise<User> {
-  return requireUser();
-}
