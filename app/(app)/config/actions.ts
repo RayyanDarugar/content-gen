@@ -4,6 +4,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { storeBufferToken, disconnectBuffer } from "@/lib/settings/buffer";
 
 export interface CategoryFields {
   name: string;
@@ -129,4 +130,26 @@ export async function saveBrandProfile(
   if (error) return { error: error.message };
   revalidatePath("/config");
   return { ok: true };
+}
+
+export async function saveBufferToken(
+  _prev: { error?: string; ok?: boolean } | undefined,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const user = await requireUser();
+  const token = String(formData.get("token") ?? "").trim();
+  if (!token) return { error: "Enter a Buffer personal key." };
+  try {
+    await storeBufferToken(user.id, token);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  revalidatePath("/config");
+  return { ok: true };
+}
+
+export async function disconnectBufferAction() {
+  const user = await requireUser();
+  await disconnectBuffer(user.id);
+  revalidatePath("/config");
 }
