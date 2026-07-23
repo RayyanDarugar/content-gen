@@ -12,13 +12,14 @@ export interface SubmitResult {
 }
 
 export async function submitGenerations(
+  userId: string,
   ideaIds: string[],
   refinementNotes = "",
 ): Promise<SubmitResult> {
   const supabase = createAdminSupabase();
 
   const { data: ideasData, error: ideasErr } = await supabase
-    .from("ideas").select("*").in("id", ideaIds);
+    .from("ideas").select("*").eq("user_id", userId).in("id", ideaIds);
   if (ideasErr) throw new Error(`ideas query failed: ${ideasErr.message}`);
   const ideas = (ideasData ?? []) as Idea[];
   if (!ideas.length) throw new Error("no matching ideas");
@@ -32,7 +33,7 @@ export async function submitGenerations(
   );
 
   const { data: catsData, error: catsErr } = await supabase
-    .from("categories").select("*")
+    .from("categories").select("*").eq("user_id", userId)
     .in("key", [...new Set(eligible.map((i) => i.category_key))]);
   if (catsErr) throw new Error(`categories query failed: ${catsErr.message}`);
   const catMap = new Map(((catsData ?? []) as Category[]).map((c) => [c.key, c]));
@@ -58,6 +59,7 @@ export async function submitGenerations(
         category.style_guide, idea.resolved_prompt, refinementNotes);
       const taskId = await createKieTask(fullPrompt, styleUrl, category.aspect_ratio);
       const { error: insErr } = await supabase.from("generations").insert({
+        user_id: userId,
         idea_id: idea.id,
         kie_task_id: taskId,
         status: "submitted",
@@ -73,6 +75,7 @@ export async function submitGenerations(
       result.failed++;
       result.errors.push(`${idea.id.slice(0, 8)}: ${message}`);
       await supabase.from("generations").insert({
+        user_id: userId,
         idea_id: idea.id, status: "failed", error: message,
         refinement_notes: refinementNotes,
       });

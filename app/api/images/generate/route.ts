@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAllowedUser } from "@/lib/auth/require-user";
+import { requireUser } from "@/lib/auth/require-user";
 import { submitGenerations } from "@/lib/athena/submit-generations";
 
 export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
+  let user;
   try {
-    await requireAllowedUser();
+    user = await requireUser();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await submitGenerations(ideaIds as string[], refinementNotes);
+    const result = await submitGenerations(user.id, ideaIds as string[], refinementNotes);
     return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
