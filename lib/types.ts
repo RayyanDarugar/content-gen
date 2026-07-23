@@ -73,3 +73,12 @@ export interface BrandProfile {
   created_at: string;
   updated_at: string;
 }
+
+export interface BufferChannel {
+  id: string;
+  name: string;
+  displayName: string;
+  service: string;
+  avatar: string;
+  isQueuePaused: boolean;
+}
