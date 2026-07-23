@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
     );
   }
   const { error: ideaErr } = await supabase
-    .from("ideas").update({ status: "posted" }).in("id", ideaIds);
+    .from("ideas").update({ status: "posted" }).in("id", ideaIds).eq("user_id", user.id);
   if (ideaErr) {
     return NextResponse.json(
       { error: `posted (${result.postId}) but failed to mark ideas: ${ideaErr.message}` },
