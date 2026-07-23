@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAllowedUser } from "@/lib/auth/require-user";
+import { requireUser } from "@/lib/auth/require-user";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { postToBuffer } from "@/lib/athena/buffer";
 import type { Category, Generation, Idea } from "@/lib/types";
@@ -7,8 +7,9 @@ import type { Category, Generation, Idea } from "@/lib/types";
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  let user;
   try {
-    await requireAllowedUser();
+    user = await requireUser();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
   const supabase = createAdminSupabase();
 
   const { data: category, error: catErr } = await supabase
-    .from("categories").select("*").eq("key", categoryKey).single();
+    .from("categories").select("*").eq("key", categoryKey).eq("user_id", user.id).single();
   if (catErr || !category || !(category as Category).active) {
     return NextResponse.json({ error: "unknown or inactive category" }, { status: 400 });
   }
@@ -48,7 +49,8 @@ export async function POST(request: NextRequest) {
   const { data: gensData, error: genErr } = await supabase
     .from("generations")
     .select("*, idea:ideas(*)")
-    .in("id", generationIds as string[]);
+    .in("id", generationIds as string[])
+    .eq("user_id", user.id);
   if (genErr) return NextResponse.json({ error: genErr.message }, { status: 500 });
   const gens = (gensData ?? []) as (Generation & { idea: Idea })[];
   if (gens.length !== generationIds.length) {
@@ -75,7 +77,8 @@ export async function POST(request: NextRequest) {
   const { data: siblingsData, error: sibErr } = await supabase
     .from("generations")
     .select("id, idea_id, status, created_at")
-    .in("idea_id", ideaIds);
+    .in("idea_id", ideaIds)
+    .eq("user_id", user.id);
   if (sibErr) return NextResponse.json({ error: sibErr.message }, { status: 500 });
   const newestByIdea = new Map<string, string>();
   for (const s of (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "status" | "created_at">[]) {
@@ -109,6 +112,7 @@ export async function POST(request: NextRequest) {
 
   if (!result.success) {
     await supabase.from("posts").insert({
+      user_id: user.id,
       category_key: categoryKey,
       caption,
       status: "failed",
@@ -121,6 +125,7 @@ export async function POST(request: NextRequest) {
   const { data: postRow, error: postErr } = await supabase
     .from("posts")
     .insert({
+      user_id: user.id,
       category_key: categoryKey,
       buffer_update_id: result.postId,
       caption,
@@ -135,7 +140,7 @@ export async function POST(request: NextRequest) {
     );
   }
   const { error: imagesErr } = await supabase.from("post_images").insert(
-    ordered.map((g, idx) => ({ post_id: postRow.id, generation_id: g.id, sort_order: idx })),
+    ordered.map((g, idx) => ({ user_id: user.id, post_id: postRow.id, generation_id: g.id, sort_order: idx })),
   );
   if (imagesErr) {
     return NextResponse.json(
