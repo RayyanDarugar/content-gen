@@ -1,17 +1,17 @@
 import "server-only";
 import type { KieRecord } from "@/lib/athena/poll-logic";
 
-function kieHeaders(): Record<string, string> {
+function kieHeaders(apiKey: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${process.env.KIE_API_KEY}`,
+    Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
   };
 }
 
-export async function uploadStyleRef(styleRefUrl: string): Promise<string> {
+export async function uploadStyleRef(apiKey: string, styleRefUrl: string): Promise<string> {
   const res = await fetch("https://kieai.redpandaai.co/api/file-url-upload", {
     method: "POST",
-    headers: kieHeaders(),
+    headers: kieHeaders(apiKey),
     body: JSON.stringify({
       fileUrl: styleRefUrl,
       uploadPath: "athena-refs",
@@ -29,13 +29,14 @@ export async function uploadStyleRef(styleRefUrl: string): Promise<string> {
 }
 
 export async function createKieTask(
+  apiKey: string,
   prompt: string,
   styleUrl: string,
   aspectRatio: string,
 ): Promise<string> {
   const res = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
     method: "POST",
-    headers: kieHeaders(),
+    headers: kieHeaders(apiKey),
     body: JSON.stringify({
       model: "gpt-image-2-image-to-image",
       input: { prompt, input_urls: [styleUrl], aspect_ratio: aspectRatio },
@@ -51,10 +52,10 @@ export async function createKieTask(
   return taskId as string;
 }
 
-export async function getKieRecord(taskId: string): Promise<KieRecord> {
+export async function getKieRecord(apiKey: string, taskId: string): Promise<KieRecord> {
   const res = await fetch(
     `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`,
-    { headers: kieHeaders() },
+    { headers: kieHeaders(apiKey) },
   );
   const json = await res.json().catch(() => null);
   if (!res.ok || !json?.data) {

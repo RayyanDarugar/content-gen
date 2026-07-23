@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
 import { buildImagePrompt } from "@/lib/athena/image-prompt";
+import { requireKieKey } from "@/lib/settings/user-secrets";
 import type { Category, Idea } from "@/lib/types";
 
 export interface SubmitResult {
@@ -17,6 +18,7 @@ export async function submitGenerations(
   refinementNotes = "",
 ): Promise<SubmitResult> {
   const supabase = createAdminSupabase();
+  const kieKey = await requireKieKey(userId);
 
   const { data: ideasData, error: ideasErr } = await supabase
     .from("ideas").select("*").eq("user_id", userId).in("id", ideaIds);
@@ -52,12 +54,12 @@ export async function submitGenerations(
       if (!category) throw new Error(`no category ${idea.category_key}`);
       let styleUrl = styleUrlCache.get(category.key);
       if (!styleUrl) {
-        styleUrl = await uploadStyleRef(category.style_ref_url);
+        styleUrl = await uploadStyleRef(kieKey, category.style_ref_url);
         styleUrlCache.set(category.key, styleUrl);
       }
       const fullPrompt = buildImagePrompt(
         category.style_guide, idea.resolved_prompt, refinementNotes);
-      const taskId = await createKieTask(fullPrompt, styleUrl, category.aspect_ratio);
+      const taskId = await createKieTask(kieKey, fullPrompt, styleUrl, category.aspect_ratio);
       const { error: insErr } = await supabase.from("generations").insert({
         user_id: userId,
         idea_id: idea.id,

@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getKieRecord } from "@/lib/athena/kie";
 import { decidePoll } from "@/lib/athena/poll-logic";
+import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import type { Generation } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -74,10 +75,18 @@ export async function GET(request: NextRequest) {
   let ingested = 0;
   let failed = 0;
 
+  const keyCache = new Map<string, string | null>();
+  async function kieKeyFor(uid: string): Promise<string | null> {
+    if (!keyCache.has(uid)) keyCache.set(uid, await getKieKeyOrNull(uid));
+    return keyCache.get(uid) ?? null;
+  }
+
   for (const gen of pending) {
     try {
+      const apiKey = await kieKeyFor(gen.user_id);
+      if (!apiKey) continue; // owner removed their key; leave the row for a later tick
       polled++;
-      const record = await getKieRecord(gen.kie_task_id);
+      const record = await getKieRecord(apiKey, gen.kie_task_id);
       const decision = decidePoll(record, gen.poll_count);
       if (decision.action === "wait") {
         await supabase
