@@ -6,11 +6,12 @@ interface SettingsRow { anthropic_key_enc: string; kie_key_enc: string; }
 
 async function fetchRow(userId: string): Promise<SettingsRow | null> {
   const supabase = createAdminSupabase();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("user_settings")
     .select("anthropic_key_enc, kie_key_enc")
     .eq("user_id", userId)
     .maybeSingle();
+  if (error) throw new Error(`user_settings query failed: ${error.message}`);
   return (data as SettingsRow) ?? null;
 }
 
