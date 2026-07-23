@@ -27,7 +27,9 @@ export async function signUp(
     // account is actually usable, gives a clear error if not, instead of
     // a silent false "success" that redirects to an unauthenticated page.
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) return { error: signInError.message };
+    if (signInError) {
+      return { error: "Couldn't sign you in automatically. If you already have an account, try logging in instead." };
+    }
   }
 
   return {};
