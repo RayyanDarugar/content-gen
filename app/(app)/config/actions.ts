@@ -5,26 +5,70 @@ import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 
-export interface CategoryUpdate {
+export interface CategoryFields {
   name: string;
   style_guide: string;
+  output_format: string;
   style_ref_url: string;
-  post_caption: string;
-  buffer_channel_id: string;
-  buffer_account: number;
   images_per_carousel: number;
   aspect_ratio: string;
   active: boolean;
 }
 
-export async function updateCategory(key: string, fields: CategoryUpdate) {
-  await requireUser();
-  const supabase = await createServerSupabase();
-  if (![1, 2].includes(fields.buffer_account)) throw new Error("buffer_account must be 1 or 2");
-  if (!Number.isInteger(fields.images_per_carousel) || fields.images_per_carousel < 1 || fields.images_per_carousel > 10) {
+function validateFields(f: CategoryFields) {
+  if (!f.name.trim()) throw new Error("Name is required");
+  if (!Number.isInteger(f.images_per_carousel) || f.images_per_carousel < 1 || f.images_per_carousel > 10) {
     throw new Error("images_per_carousel must be 1-10");
   }
-  const { error } = await supabase.from("categories").update(fields).eq("key", key);
+}
+
+function slugify(name: string): string {
+  return name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "CATEGORY";
+}
+
+export async function createCategory(fields: CategoryFields) {
+  const user = await requireUser();
+  validateFields(fields);
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from("categories").insert({
+    user_id: user.id,
+    key: slugify(fields.name),
+    name: fields.name,
+    style_guide: fields.style_guide,
+    output_format: fields.output_format,
+    style_ref_url: fields.style_ref_url,
+    images_per_carousel: fields.images_per_carousel,
+    aspect_ratio: fields.aspect_ratio || "4:5",
+    active: fields.active,
+  });
+  if (error) {
+    if (error.code === "23505") throw new Error("You already have a category with a similar name");
+    throw new Error(error.message);
+  }
+  revalidatePath("/config");
+}
+
+export async function updateCategory(id: string, fields: CategoryFields) {
+  await requireUser();
+  validateFields(fields);
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from("categories").update({
+    name: fields.name,
+    style_guide: fields.style_guide,
+    output_format: fields.output_format,
+    style_ref_url: fields.style_ref_url,
+    images_per_carousel: fields.images_per_carousel,
+    aspect_ratio: fields.aspect_ratio || "4:5",
+    active: fields.active,
+  }).eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/config");
+}
+
+export async function deleteCategory(id: string) {
+  await requireUser();
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from("categories").delete().eq("id", id);
   if (error) throw new Error(error.message);
   revalidatePath("/config");
 }

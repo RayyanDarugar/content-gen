@@ -1,7 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { getKeyStatus } from "@/lib/settings/user-secrets";
-import { ConfigForm } from "./config-form";
+import { CategoryManager } from "./category-manager";
 import { KeysSection } from "./keys-section";
 import { BrandSection } from "./brand-section";
 import type { BrandProfile, Category } from "@/lib/types";
@@ -18,7 +18,7 @@ export default async function ConfigPage() {
       <h1 className="text-2xl font-bold">Config</h1>
       <KeysSection status={status} />
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
-      {((data ?? []) as Category[]).map((c) => <ConfigForm key={c.key} category={c} />)}
+      <CategoryManager categories={(data ?? []) as Category[]} />
     </div>
   );
 }
