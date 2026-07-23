@@ -47,3 +47,25 @@ export async function saveApiKeys(
   revalidatePath("/config");
   return { ok: true };
 }
+
+export async function saveBrandProfile(
+  _prev: { error?: string; ok?: boolean } | undefined,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const user = await requireUser();
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from("brand_profiles").upsert(
+    {
+      user_id: user.id,
+      business_name: String(formData.get("business_name") ?? "").trim(),
+      business_description: String(formData.get("business_description") ?? "").trim(),
+      audience: String(formData.get("audience") ?? "").trim(),
+      voice: String(formData.get("voice") ?? "").trim(),
+      avoid: String(formData.get("avoid") ?? "").trim(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) return { error: error.message };
+  revalidatePath("/config");
+  return { ok: true };
+}
