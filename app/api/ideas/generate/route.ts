@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
-import { requireAllowedUser } from "@/lib/auth/require-user";
+import { requireUser } from "@/lib/auth/require-user";
 
 export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
+  let user;
   try {
-    await requireAllowedUser();
+    user = await requireUser();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await generateIdeas(categoryKey, count);
+    const result = await generateIdeas(user.id, categoryKey, count);
     return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

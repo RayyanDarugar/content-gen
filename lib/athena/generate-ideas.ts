@@ -12,11 +12,11 @@ import type { Category } from "@/lib/types";
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
-export async function generateIdeas(categoryKey: string, count: number) {
+export async function generateIdeas(userId: string, categoryKey: string, count: number) {
   const supabase = createAdminSupabase();
   const anthropic = new Anthropic();
 
-  let query = supabase.from("categories").select("*").eq("active", true);
+  let query = supabase.from("categories").select("*").eq("user_id", userId).eq("active", true);
   if (categoryKey !== "ALL") query = query.eq("key", categoryKey);
   const { data: categories, error: catErr } = await query;
   if (catErr) throw new Error(`categories query failed: ${catErr.message}`);
@@ -59,6 +59,7 @@ export async function generateIdeas(categoryKey: string, count: number) {
   if (kept.length) {
     const { error: insErr } = await supabase.from("ideas").insert(
       kept.map((i) => ({
+        user_id: userId,
         category_key: i.category,
         concept: i.concept,
         resolved_prompt: i.concept,
