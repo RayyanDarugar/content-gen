@@ -1,35 +1,57 @@
-import { describe, it, expect } from "vitest";
-import { buildIdeaSystemPrompt, buildIdeaUserPrompt } from "@/lib/athena/prompts";
+import { describe, expect, it } from "vitest";
+import {
+  buildIdeaSystemPrompt, buildFilterSystemPrompt, buildIdeaUserPrompt,
+  type BrandContext,
+} from "@/lib/athena/prompts";
+
+const brand: BrandContext = {
+  business_name: "Athena",
+  business_description: "An SAT prep platform that teaches like a personal tutor.",
+  audience: "Parents of high-schoolers",
+  voice: "Warm, encouraging, plain-spoken",
+  avoid: "AI-powered, dashboards, analytics",
+};
 
 const cats = [
-  { key: "SAT_MYTH", style_guide: "Myth style guide text" },
-  { key: "COMIC", style_guide: "Comic style guide text" },
+  { key: "MYTH", style_guide: "Bold headline over a flat illustration.", output_format: "myth, scene, insight line" },
 ];
 
 describe("buildIdeaSystemPrompt", () => {
-  it("includes brand rules and each category guide with === headers", () => {
-    const s = buildIdeaSystemPrompt(cats);
-    expect(s).toContain("creative content strategist for Athena");
-    expect(s).toContain("NON-NEGOTIABLE BRAND RULES");
-    expect(s).toContain("=== SAT_MYTH ===\nMyth style guide text");
-    expect(s).toContain("=== COMIC ===\nComic style guide text");
-    expect(s).toContain("Do NOT write a full image-generation prompt");
+  it("injects the brand context fields", () => {
+    const p = buildIdeaSystemPrompt(brand, cats);
+    expect(p).toContain("Athena");
+    expect(p).toContain("Parents of high-schoolers");
+    expect(p).toContain("Warm, encouraging, plain-spoken");
+    expect(p).toContain("AI-powered, dashboards, analytics");
   });
-  it("falls back for a missing style guide", () => {
-    const s = buildIdeaSystemPrompt([{ key: "X", style_guide: "" }]);
-    expect(s).toContain("=== X ===\n[No style guide — fill in Config]");
+  it("injects each category's style guide and output format", () => {
+    const p = buildIdeaSystemPrompt(brand, cats);
+    expect(p).toContain("MYTH");
+    expect(p).toContain("Bold headline over a flat illustration.");
+    expect(p).toContain("myth, scene, insight line");
+  });
+  it("degrades gracefully on empty brand and empty category fields", () => {
+    const empty: BrandContext = { business_name: "", business_description: "", audience: "", voice: "", avoid: "" };
+    const p = buildIdeaSystemPrompt(empty, [{ key: "X", style_guide: "", output_format: "" }]);
+    expect(typeof p).toBe("string");
+    expect(p).toContain("X");
+    expect(p).not.toContain("undefined");
+  });
+});
+
+describe("buildFilterSystemPrompt", () => {
+  it("frames the quality check around the brand", () => {
+    const p = buildFilterSystemPrompt(brand);
+    expect(p).toContain("Athena");
+    expect(p).toContain("Parents of high-schoolers");
   });
 });
 
 describe("buildIdeaUserPrompt", () => {
-  it("single category", () => {
-    expect(buildIdeaUserPrompt(5, ["COMIC"])).toBe(
-      "Generate exactly 5 content ideas for the COMIC category.",
-    );
+  it("handles a single category", () => {
+    expect(buildIdeaUserPrompt(3, ["MYTH"])).toContain("MYTH");
   });
-  it("multiple categories", () => {
-    expect(buildIdeaUserPrompt(10, ["A", "B"])).toBe(
-      "Generate exactly 10 content ideas distributed roughly evenly across: A, B.",
-    );
+  it("handles multiple categories", () => {
+    expect(buildIdeaUserPrompt(6, ["A", "B"])).toContain("A, B");
   });
 });

@@ -5,8 +5,10 @@ import { randomUUID } from "crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
   buildIdeaSystemPrompt, buildIdeaUserPrompt,
-  FILTER_SYSTEM_PROMPT, IdeasOutput, FilterOutput,
+  buildFilterSystemPrompt, IdeasOutput, FilterOutput,
+  type BrandContext,
 } from "@/lib/athena/prompts";
+import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { applyFilterDecisions } from "@/lib/athena/filter";
 import type { Category } from "@/lib/types";
 
@@ -14,7 +16,7 @@ const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
 export async function generateIdeas(userId: string, categoryKey: string, count: number) {
   const supabase = createAdminSupabase();
-  const anthropic = new Anthropic();
+  const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId) });
 
   let query = supabase.from("categories").select("*").eq("user_id", userId).eq("active", true);
   if (categoryKey !== "ALL") query = query.eq("key", categoryKey);
@@ -24,11 +26,21 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const cats = categories as Category[];
   const activeKeys = cats.map((c) => c.key);
 
+  const { data: brandRow } = await supabase
+    .from("brand_profiles").select("*").eq("user_id", userId).maybeSingle();
+  const brand: BrandContext = {
+    business_name: brandRow?.business_name ?? "",
+    business_description: brandRow?.business_description ?? "",
+    audience: brandRow?.audience ?? "",
+    voice: brandRow?.voice ?? "",
+    avoid: brandRow?.avoid ?? "",
+  };
+
   // Call 1: generate ideas (structured output replaces the old JSON-repair parse)
   const genResponse = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: 8000,
-    system: buildIdeaSystemPrompt(cats),
+    system: buildIdeaSystemPrompt(brand, cats),
     messages: [{ role: "user", content: buildIdeaUserPrompt(count, activeKeys) }],
     output_config: { format: zodOutputFormat(IdeasOutput) },
   });
@@ -44,7 +56,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const filterResponse = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: 2000,
-    system: FILTER_SYSTEM_PROMPT,
+    system: buildFilterSystemPrompt(brand),
     messages: [{
       role: "user",
       content: "Review and filter these ideas:\n" + JSON.stringify(raw, null, 2),
