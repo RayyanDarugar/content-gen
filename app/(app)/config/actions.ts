@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 
 export interface CategoryUpdate {
   name: string;
@@ -46,6 +47,22 @@ export async function saveApiKeys(
   if (error) return { error: error.message };
   revalidatePath("/config");
   return { ok: true };
+}
+
+export async function uploadStyleRefImage(
+  formData: FormData,
+): Promise<{ url?: string; error?: string }> {
+  await requireUser();
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "No file provided" };
+  if (file.size > 10 * 1024 * 1024) return { error: "Image must be under 10MB" };
+  const buffer = Buffer.from(await file.arrayBuffer());
+  try {
+    const { url } = await uploadImageToCloudinary(buffer, file.type || "image/jpeg");
+    return { url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function saveBrandProfile(
