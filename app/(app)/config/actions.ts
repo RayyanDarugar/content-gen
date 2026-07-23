@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
+import { encryptSecret } from "@/lib/crypto/secrets";
 
 export interface CategoryUpdate {
   name: string;
@@ -25,4 +26,24 @@ export async function updateCategory(key: string, fields: CategoryUpdate) {
   const { error } = await supabase.from("categories").update(fields).eq("key", key);
   if (error) throw new Error(error.message);
   revalidatePath("/config");
+}
+
+export async function saveApiKeys(
+  _prev: { error?: string; ok?: boolean } | undefined,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const user = await requireUser();
+  const supabase = await createServerSupabase();
+  const anthropic = String(formData.get("anthropic") ?? "").trim();
+  const kie = String(formData.get("kie") ?? "").trim();
+
+  // Only overwrite a key when a new value was typed (blank = leave unchanged).
+  const patch: Record<string, string> = { user_id: user.id };
+  if (anthropic) patch.anthropic_key_enc = encryptSecret(anthropic);
+  if (kie) patch.kie_key_enc = encryptSecret(kie);
+
+  const { error } = await supabase.from("user_settings").upsert(patch, { onConflict: "user_id" });
+  if (error) return { error: error.message };
+  revalidatePath("/config");
+  return { ok: true };
 }
