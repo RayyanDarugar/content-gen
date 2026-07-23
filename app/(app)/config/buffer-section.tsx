@@ -29,7 +29,7 @@ export function BufferSection({ connected }: { connected: boolean }) {
             <Input
               name="token"
               type="password"
-              placeholder={connected ? "•••••••• (leave blank to keep, or type a new one)" : "Paste your Buffer personal key"}
+              placeholder={connected ? "•••••••• (paste a new key to replace it)" : "Paste your Buffer personal key"}
             />
             <p className="mt-1 text-xs text-muted-foreground">
               Get this from Buffer → Settings → API → Personal Keys.
