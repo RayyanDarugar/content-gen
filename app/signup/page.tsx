@@ -14,10 +14,12 @@ export default function SignupPage() {
   const [state, action, pending] = useActionState(signUp, undefined);
 
   // On success (no error returned and the form was submitted), sign the user in
-  // client-side so the session cookie is set, then land them in the app.
+  // client-side so the session cookie is set, then land them on Config — a
+  // fresh account has no keys/brand/categories yet, so Ideas is empty and
+  // useless until they set those up first.
   useEffect(() => {
     if (state && !state.error) {
-      router.push("/ideas");
+      router.push("/config");
       router.refresh();
     }
   }, [state, router]);
