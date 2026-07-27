@@ -8,14 +8,24 @@ function kieHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-export async function uploadStyleRef(apiKey: string, styleRefUrl: string): Promise<string> {
+// The upload path must be unique per user and category. Kie overwrites on
+// path collision, so a shared path means two users generating at the same
+// time can serve each other's brand reference into their images — silently,
+// with nothing in the logs to trace it by.
+export async function uploadStyleRef(
+  apiKey: string,
+  styleRefUrl: string,
+  userId: string,
+  categoryKey: string,
+): Promise<string> {
+  const safeCategory = categoryKey.replace(/[^A-Za-z0-9_-]/g, "_") || "category";
   const res = await fetch("https://kieai.redpandaai.co/api/file-url-upload", {
     method: "POST",
     headers: kieHeaders(apiKey),
     body: JSON.stringify({
       fileUrl: styleRefUrl,
-      uploadPath: "athena-refs",
-      fileName: "style_ref.jpg",
+      uploadPath: `athena-refs/${userId}`,
+      fileName: `${safeCategory}.jpg`,
     }),
   });
   const json = await res.json().catch(() => null);

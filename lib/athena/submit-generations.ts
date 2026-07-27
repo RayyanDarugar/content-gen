@@ -54,7 +54,7 @@ export async function submitGenerations(
       if (!category) throw new Error(`no category ${idea.category_key}`);
       let styleUrl = styleUrlCache.get(category.key);
       if (!styleUrl) {
-        styleUrl = await uploadStyleRef(kieKey, category.style_ref_url);
+        styleUrl = await uploadStyleRef(kieKey, category.style_ref_url, userId, category.key);
         styleUrlCache.set(category.key, styleUrl);
       }
       const fullPrompt = buildImagePrompt(
