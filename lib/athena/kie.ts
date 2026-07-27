@@ -41,7 +41,7 @@ export async function uploadStyleRef(
 export async function createKieTask(
   apiKey: string,
   prompt: string,
-  styleUrl: string,
+  inputUrls: string[],
   aspectRatio: string,
 ): Promise<string> {
   const res = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
@@ -49,7 +49,7 @@ export async function createKieTask(
     headers: kieHeaders(apiKey),
     body: JSON.stringify({
       model: "gpt-image-2-image-to-image",
-      input: { prompt, input_urls: [styleUrl], aspect_ratio: aspectRatio },
+      input: { prompt, input_urls: inputUrls, aspect_ratio: aspectRatio },
     }),
   });
   const json = await res.json().catch(() => null);

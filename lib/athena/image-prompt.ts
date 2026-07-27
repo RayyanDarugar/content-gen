@@ -1,15 +1,53 @@
-export function buildImagePrompt(
+import type { Slide } from "@/lib/types";
+
+// Kept deliberately short. Testing showed the reference image overrides
+// art-direction prose, so long stylistic instructions here buy nothing and
+// push the prompt toward Kie's flaky length range.
+const ROLE_DIRECTION: Record<Slide["role"], string> = {
+  hook:
+    "This is the anchor panel. Establish the palette, lettering, subject appearance, and " +
+    "any persistent elements — every later panel matches this one.",
+  beat:
+    "Middle story beat. Match the reference panels exactly for palette, lettering, subject " +
+    "appearance, and persistent elements, but the camera angle and pose must differ from " +
+    "every other panel.",
+  payoff:
+    "Payoff panel. Highest emotional register in the set, and the tightest crop of the " +
+    "carousel. Same palette, lettering, subject, and persistent elements as the references.",
+  single:
+    "A single standalone image, not part of a sequence. It must work alone.",
+};
+
+const ONE_REFERENCE =
+  "Reference the provided style image to maintain visual consistency in palette, " +
+  "illustration style, and layout.";
+
+// Verbatim from the wording that held identity across five slides in testing.
+const TWO_REFERENCES =
+  "Two reference images are provided. The FIRST is the brand style reference. The SECOND " +
+  "is the opening panel of this exact carousel — match its palette, typography, subject " +
+  "appearance, and any persistent elements precisely, while following the camera and pose " +
+  "direction above.";
+
+export function buildSlidePrompt(
   styleGuide: string,
-  resolvedPrompt: string,
+  slide: Slide,
+  position: number,
+  total: number,
+  chained: boolean,
   refinementNotes = "",
 ): string {
-  const content = refinementNotes
-    ? `${resolvedPrompt}\n\nRefinement notes: ${refinementNotes}`
-    : resolvedPrompt;
-  return (
-    styleGuide +
-    "\n\nSPECIFIC CONTENT FOR THIS IMAGE:\n" +
-    content +
-    "\n\nReference the provided style image to maintain visual consistency in palette, illustration style, and layout."
+  const lines: string[] = [styleGuide, "", "SPECIFIC CONTENT FOR THIS IMAGE:"];
+  if (total > 1) lines.push(`Panel ${position} of ${total}.`, "");
+  if (slide.text.trim()) lines.push(`Text on panel: "${slide.text}"`);
+  if (slide.visual.trim()) lines.push(`Scene: ${slide.visual}`);
+  lines.push(
+    "",
+    "Follow every rule in the style guide, including any element it specifies as appearing " +
+      "on every panel.",
   );
+  if (refinementNotes) lines.push("", `Refinement notes: ${refinementNotes}`);
+  lines.push("", `ROLE DIRECTION: ${ROLE_DIRECTION[slide.role]}`);
+  lines.push("", chained ? TWO_REFERENCES : ONE_REFERENCE);
+  return lines.join("\n");
 }

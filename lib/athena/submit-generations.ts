@@ -1,9 +1,9 @@
 import "server-only";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
-import { buildImagePrompt } from "@/lib/athena/image-prompt";
+import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { requireKieKey } from "@/lib/settings/user-secrets";
-import type { Category, Idea } from "@/lib/types";
+import type { Category, Idea, Slide } from "@/lib/types";
 
 export interface SubmitResult {
   submitted: number;
@@ -57,14 +57,21 @@ export async function submitGenerations(
         styleUrl = await uploadStyleRef(kieKey, category.style_ref_url, userId, category.key);
         styleUrlCache.set(category.key, styleUrl);
       }
-      const fullPrompt = buildImagePrompt(
-        category.style_guide, idea.resolved_prompt, refinementNotes);
-      const taskId = await createKieTask(kieKey, fullPrompt, styleUrl, category.aspect_ratio);
+      const slides = (idea.slides ?? []) as Slide[];
+      if (!slides.length) throw new Error("idea has no slides");
+
+      // Only the anchor is submitted here. The poll cron fans out the rest
+      // once this image exists, because they reference it.
+      const anchor = slides[0];
+      const fullPrompt = buildSlidePrompt(
+        category.style_guide, anchor, 1, slides.length, false, refinementNotes);
+      const taskId = await createKieTask(kieKey, fullPrompt, [styleUrl], category.aspect_ratio);
       const { error: insErr } = await supabase.from("generations").insert({
         user_id: userId,
         idea_id: idea.id,
         kie_task_id: taskId,
         status: "submitted",
+        slide_index: 0,
         kie_style_url: styleUrl,
         full_prompt: fullPrompt,
         refinement_notes: refinementNotes,
