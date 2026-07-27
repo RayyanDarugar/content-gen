@@ -12,6 +12,7 @@ export interface SlideGeneration {
   slide_index: number;
   status: string;
   created_at: string;
+  anchor_generation_id?: string | null;
 }
 
 export interface SlideSlot<G> {
@@ -39,9 +40,33 @@ export function buildSlideView<G extends SlideGeneration>(
   slideCount: number,
 ): SlideView<G> {
   const count = Math.max(1, slideCount);
-  const chosen = new Map<number, G>();
 
-  for (const gen of generations) {
+  // Only slides belonging to the CURRENT anchor may fill a slot. Without this
+  // the view borrows a previous anchor's image whenever the current one's
+  // slide failed — so a carousel that is genuinely incomplete looks finished,
+  // its status looks stuck at "generating", and the images on screen come
+  // from two different anchors, which is the mixed-anchor carousel the whole
+  // anchor-scoping design exists to prevent.
+  const anchors = generations.filter((g) => g.slide_index === 0 && g.status === "succeeded");
+  const anchor = anchors.length
+    ? anchors.reduce((newest, g) => (g.created_at > newest.created_at ? g : newest))
+    : null;
+
+  // Before any anchor has succeeded there is nothing to scope to, so show
+  // whatever exists — that is a first run in progress, not a mixed carousel.
+  // Exclude a row only on positive evidence it belongs to a DIFFERENT anchor.
+  // Rows carrying no anchor id at all predate anchor tracking (or come from a
+  // path that never set it); dropping those would silently hide legacy
+  // siblings, so they are kept.
+  const inScope = anchor
+    ? generations.filter((g) => {
+        if (g.slide_index === 0) return g.id === anchor.id;
+        return !g.anchor_generation_id || g.anchor_generation_id === anchor.id;
+      })
+    : generations;
+
+  const chosen = new Map<number, G>();
+  for (const gen of inScope) {
     if (gen.slide_index < 0 || gen.slide_index >= count) continue;
     if (better(gen, chosen.get(gen.slide_index) ?? null)) {
       chosen.set(gen.slide_index, gen);

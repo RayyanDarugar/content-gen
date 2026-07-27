@@ -62,3 +62,67 @@ describe("buildSlideView", () => {
     expect(view.slides[0].generation?.id).toBe("a");
   });
 });
+
+describe("buildSlideView — anchor scoping", () => {
+  const a = (id: string, slide_index: number, status: string, created_at: string,
+             anchor_generation_id: string | null = null) =>
+    ({ id, slide_index, status, created_at, anchor_generation_id });
+
+  it("does not borrow a previous anchor's image when the current one failed", () => {
+    const view = buildSlideView([
+      a("A", 0, "succeeded", "1"),
+      a("A1", 1, "succeeded", "2", "A"),
+      a("B", 0, "succeeded", "5"),
+      a("B1", 1, "failed", "6", "B"),
+    ], 2);
+    // Slot 1 must show B's failure, not A's success — otherwise the carousel
+    // looks complete while the backend correctly refuses to complete it.
+    expect(view.slides[1].generation?.id).toBe("B1");
+    expect(view.superseded.map((x) => x.id).sort()).toEqual(["A", "A1"]);
+  });
+
+  it("scopes a healthy carousel to the current anchor's slides", () => {
+    const view = buildSlideView([
+      a("A", 0, "succeeded", "1"),
+      a("A1", 1, "succeeded", "2", "A"),
+      a("B", 0, "succeeded", "5"),
+      a("B1", 1, "succeeded", "6", "B"),
+    ], 2);
+    expect(view.slides.map((s) => s.generation?.id)).toEqual(["B", "B1"]);
+  });
+
+  it("shows everything when no anchor has succeeded yet (first run in flight)", () => {
+    const view = buildSlideView([a("p", 0, "polling", "1")], 3);
+    expect(view.slides[0].generation?.id).toBe("p");
+  });
+
+  it("still handles legacy rows that carry no anchor id", () => {
+    const view = buildSlideView([a("only", 0, "succeeded", "1")], 1);
+    expect(view.slides[0].generation?.id).toBe("only");
+    expect(view.superseded).toEqual([]);
+  });
+});
+
+describe("buildSlideView — untracked anchor ids", () => {
+  const a = (id: string, slide_index: number, status: string, created_at: string,
+             anchor_generation_id: string | null = null) =>
+    ({ id, slide_index, status, created_at, anchor_generation_id });
+
+  it("keeps siblings that carry no anchor id, rather than hiding legacy rows", () => {
+    const view = buildSlideView([
+      a("A", 0, "succeeded", "1"),
+      a("untracked", 1, "succeeded", "2", null),
+    ], 2);
+    expect(view.slides[1].generation?.id).toBe("untracked");
+  });
+
+  it("still drops a sibling explicitly bound to a superseded anchor", () => {
+    const view = buildSlideView([
+      a("A", 0, "succeeded", "1"),
+      a("A1", 1, "succeeded", "2", "A"),
+      a("B", 0, "succeeded", "5"),
+    ], 2);
+    expect(view.slides[1].generation).toBeNull();
+    expect(view.superseded.map((x) => x.id).sort()).toEqual(["A", "A1"]);
+  });
+});

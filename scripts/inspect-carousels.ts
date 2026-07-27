@@ -79,8 +79,20 @@ async function main() {
       );
     }
 
+    // Anchor-scoped, matching what the poll route requires to complete an
+    // idea. Counting succeeded slides across every anchor reports a carousel
+    // as done when its CURRENT anchor still has failures — a false MISMATCH.
+    const succeededAnchors = rows.filter((r) => r.slide_index === 0 && r.status === "succeeded");
+    const cur = succeededAnchors.length
+      ? succeededAnchors.reduce((n, r) => (r.created_at > n.created_at ? r : n))
+      : null;
     const succeeded = new Set(
-      rows.filter((r) => r.status === "succeeded").map((r) => r.slide_index));
+      rows.filter((r) =>
+        r.status === "succeeded" &&
+        (r.slide_index === 0
+          ? cur && r.id === cur.id
+          : !cur || !r.anchor_generation_id || r.anchor_generation_id === cur.id),
+      ).map((r) => r.slide_index));
     const complete = slides.length > 0 && [...Array(slides.length).keys()].every((i) => succeeded.has(i));
     const expected = complete ? "generated" : "generating";
     if (slides.length && idea.status !== "posted" && idea.status !== expected &&
