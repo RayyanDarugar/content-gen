@@ -64,3 +64,45 @@ describe("buildSlidePrompt", () => {
     expect(buildSlidePrompt("G", wordless, 2, 5, true)).not.toContain("Text on panel:");
   });
 });
+
+describe("buildSlidePrompt — role guides", () => {
+  const guides = {
+    hook: "Orange MYTH tag top-left. Statement struck through with a hand-drawn X.",
+    beat: "No tag, no X. This panel explains rather than debunks.",
+    payoff: "No tag, no X. The resolved truth, stated clean.",
+  };
+
+  it("applies only the guide for this slide's role", () => {
+    const beat = buildSlidePrompt("G", { role: "beat", text: "t", visual: "v" }, 2, 5, true, "", guides);
+    expect(beat).toContain("explains rather than debunks");
+    expect(beat).not.toContain("MYTH tag");
+    expect(beat).not.toContain("resolved truth");
+  });
+
+  it("gives the hook its own treatment", () => {
+    const hook = buildSlidePrompt("G", { role: "hook", text: "t", visual: "v" }, 1, 5, false, "", guides);
+    expect(hook).toContain("MYTH tag");
+    expect(hook).not.toContain("explains rather than debunks");
+  });
+
+  it("keeps the payoff free of the hook's strike-through treatment", () => {
+    const payoff = buildSlidePrompt("G", { role: "payoff", text: "t", visual: "v" }, 5, 5, true, "", guides);
+    expect(payoff).toContain("resolved truth");
+    expect(payoff).not.toContain("struck through");
+  });
+
+  it("omits the section entirely when the role has no guide", () => {
+    const p = buildSlidePrompt("G", { role: "single", text: "t", visual: "v" }, 1, 1, false, "", guides);
+    expect(p).not.toContain("TREATMENT FOR THIS PANEL");
+  });
+
+  it("omits the section when role guides are absent altogether", () => {
+    const p = buildSlidePrompt("G", { role: "hook", text: "t", visual: "v" }, 1, 5, false);
+    expect(p).not.toContain("TREATMENT FOR THIS PANEL");
+  });
+
+  it("treats a whitespace-only guide as absent", () => {
+    const p = buildSlidePrompt("G", { role: "hook", text: "t", visual: "v" }, 1, 5, false, "", { hook: "   " });
+    expect(p).not.toContain("TREATMENT FOR THIS PANEL");
+  });
+});

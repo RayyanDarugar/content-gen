@@ -84,7 +84,8 @@ export async function submitGenerations(
       // once this image exists, because they reference it.
       const anchor = slides[0];
       const fullPrompt = buildSlidePrompt(
-        category.style_guide, anchor, 1, slides.length, false, refinementNotes);
+        category.style_guide, anchor, 1, slides.length, false, refinementNotes,
+        category.role_guides);
       const taskId = await createKieTask(kieKey, fullPrompt, [styleUrl], category.aspect_ratio);
       const { error: insErr } = await supabase.from("generations").insert({
         user_id: userId,

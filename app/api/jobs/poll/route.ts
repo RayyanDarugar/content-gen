@@ -127,7 +127,7 @@ async function fanOutCarousel(
   for (const index of slideIndexesToFanOut(slides.length)) {
     const prompt = buildSlidePrompt(
       category.style_guide, slides[index], index + 1, slides.length, true,
-      anchor.refinement_notes);
+      anchor.refinement_notes, category.role_guides);
     let taskId: string;
     try {
       taskId = await createKieTask(
@@ -218,7 +218,8 @@ async function retryAnchorIfWorthwhile(
   const slides = idea.slides ?? [];
   if (!slides.length) return;
   const prompt = buildSlidePrompt(
-    category.style_guide, slides[0], 1, slides.length, false, failed.refinement_notes);
+    category.style_guide, slides[0], 1, slides.length, false, failed.refinement_notes,
+    category.role_guides);
   const taskId = await createKieTask(
     apiKey, prompt, [failed.kie_style_url], category.aspect_ratio);
   // Checked for the same reason as fanOutCarousel's insert: unchecked, an

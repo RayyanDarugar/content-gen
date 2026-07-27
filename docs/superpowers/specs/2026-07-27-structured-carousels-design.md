@@ -36,6 +36,7 @@ The existing data corroborates the problem: SAT_MYTH's style guide says *"one im
 5. **No text compositing.** Pure generation, per the test result.
 6. **`resolved_prompt` is retired** for new ideas. Per-slide `visual` replaces it. The column stays for legacy rows.
 7. **This change is strictly additive to what the app can already do.** Structured carousels are a new option alongside freeform composition, not a migration onto rails. Every existing workflow — hand-picking and reordering arbitrary images, approve/reject, retry, regenerate-with-notes — survives unchanged. See §5.4.
+8. **A category is either independent or narrative, and independent is the default.** Added 2026-07-27 after live testing — see §10.
 
 ## 4. Data model changes
 
@@ -270,3 +271,65 @@ Brand / format / series object model. Brand discovery and website extraction. Th
 - Retrying a middle slide leaves the other four untouched and keeps the same `anchor_generation_id`.
 - Regenerating a carousel produces a fresh anchor plus a fresh set of siblings under it, leaves the previous generations in place as history, and posts the new set — not a mix of the two.
 - A carousel deliberately stalled at 4 of 5 still shows its four succeeded images in the freeform pool, and they can be posted alongside another image.
+
+## 10. Post type: independent vs narrative
+
+**Added after live testing revealed a design error in decisions 2 and 7 above.**
+
+### What went wrong
+
+Phase A read `images_per_carousel = 5` as "this is a five-part story" and applied the slide/role/anchor machinery to every category. Four of the five aren't stories.
+
+SAT_MYTH's style guide describes a **standalone poster**: an orange `MYTH:` tag, the statement struck through with a hand-drawn X, one visual metaphor, explicitly "no panels, no split screens." Applied verbatim to all five slides of a generated carousel, it produced this on the *payoff* panel:
+
+> **MYTH:** ~~UNDERSTANDING BEATS MEMORIZING, EVERY TIME.~~
+
+The correct insight, tagged as a myth and crossed out. The format inverted its own meaning, and the same happened on the explainer beats.
+
+Five independent posters in one carousel post was never broken — it is a legitimate format and it is what that style guide is written for. The error was making narrative the default rather than an opt-in, which turns Phase A from additive into a regression for SAT_MYTH, BRAIN_TEASER, COMIC, and NOTES_APP.
+
+### 10.1 `categories.post_type`
+
+```sql
+alter table categories
+  add column post_type text not null default 'independent'
+  check (post_type in ('independent', 'narrative'));
+```
+
+- **`independent`** — N images, each a complete standalone post. One idea per image, exactly one slide with role `single`, no anchor chaining. `shouldFanOut(1, …)` is already false, so nothing fans out. This is the pre-Phase-A behaviour, now expressed in the slide model rather than beside it.
+- **`narrative`** — N slides forming one story. One idea per post, roles, anchor chaining, everything §5 describes.
+
+**Defaulting to `independent` is the point.** It makes Phase A additive in behaviour as well as in schema: nothing changes for any existing category until it is explicitly opted in.
+
+### 10.2 `categories.role_guides`
+
+```sql
+alter table categories add column role_guides jsonb not null default '{}'::jsonb;
+```
+
+Shape: `{ hook?: string; beat?: string; payoff?: string; single?: string }`.
+
+One style guide cannot serve three jobs. An opener has to stop the scroll, an explainer panel has to be readable, a closer has to land — and only the format's author knows how they differ visually. `style_guide` keeps what is shared (palette, character, typography, any persistent footer); `role_guides` holds what is specific:
+
+```
+hook:   Orange MYTH tag top-left. Statement struck through with a hand-drawn X.
+beat:   No tag, no X. This panel explains rather than debunks.
+payoff: No tag, no X. The resolved truth, stated clean.
+```
+
+That scoping is what stops the payoff being crossed out.
+
+Phase A's role direction was generic prose — "match the reference panels, use a different camera angle" — deliberately format-agnostic, and therefore incapable of expressing "the X belongs only on slide 1." Generic direction handles *composition*; only the format author can supply *treatment*.
+
+### 10.3 Generation
+
+`buildIdeaSystemPrompt` branches on `post_type`:
+
+- `independent` — ask for `count` ideas, each carrying exactly one slide with role `single`. No carousel-structure instructions.
+- `narrative` — ask for carousels of `images_per_carousel` slides, as §5.1 describes.
+
+`buildSlidePrompt` composes `style_guide` + `role_guides[slide.role]` (omitted when absent) + the slide's content. Everything downstream — submission, fan-out, the sweep, completion, posting, the gallery — already handles both cases and needs no change, because a one-slide idea was always a supported shape.
+
+### 10.4 Not in scope here
+
+Authoring these fields with AI assistance — describing a format in plain English, or uploading a screenshot of a post to reverse-engineer it — is a genuine subsystem with its own design questions and gets its own spec. It is safe to defer because of decision 7's corollary: **the assist lane drafts into the manual lane's objects and never gets its own.** The manual editor built here is the surface such an assistant fills in and the one used to correct it, so it is not throwaway work.

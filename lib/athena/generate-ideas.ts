@@ -73,7 +73,11 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const raw = generated.ideas
     .filter((i) => activeKeys.includes(i.category))
     .filter((i) => {
-      const expected = catByKey.get(i.category)?.images_per_carousel ?? 1;
+      const cat = catByKey.get(i.category);
+      // An independent category posts N standalone images, but each IDEA is
+      // one of them — so the expected slide count is 1, not images_per_carousel.
+      const expected =
+        cat?.post_type === "narrative" ? (cat.images_per_carousel ?? 1) : 1;
       const shape = validateSlideShape((i.slides ?? []) as Slide[], expected);
       if (!shape.ok) {
         console.warn(`dropping malformed carousel (${i.category}): ${shape.reason}`);

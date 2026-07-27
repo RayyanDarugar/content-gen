@@ -1,4 +1,4 @@
-import type { Slide } from "@/lib/types";
+import type { RoleGuides, Slide } from "@/lib/types";
 
 // Kept deliberately short. Testing showed the reference image overrides
 // art-direction prose, so long stylistic instructions here buy nothing and
@@ -36,6 +36,7 @@ export function buildSlidePrompt(
   total: number,
   chained: boolean,
   refinementNotes = "",
+  roleGuides: RoleGuides = {},
 ): string {
   const lines: string[] = [styleGuide, "", "SPECIFIC CONTENT FOR THIS IMAGE:"];
   if (total > 1) lines.push(`Panel ${position} of ${total}.`, "");
@@ -46,6 +47,16 @@ export function buildSlidePrompt(
     "Follow every rule in the style guide, including any element it specifies as appearing " +
       "on every panel.",
   );
+
+  // The style guide covers what every panel shares; this covers what belongs
+  // to THIS role only. Without it a myth-format guide stamps its "MYTH:" tag
+  // and strike-through X onto the explainer beats and the payoff too —
+  // crossing out the very insight the carousel exists to land.
+  const roleGuide = roleGuides[slide.role]?.trim();
+  if (roleGuide) {
+    lines.push("", `TREATMENT FOR THIS PANEL (${slide.role}):`, roleGuide);
+  }
+
   if (refinementNotes) lines.push("", `Refinement notes: ${refinementNotes}`);
   lines.push("", `ROLE DIRECTION: ${ROLE_DIRECTION[slide.role]}`);
   lines.push("", chained ? TWO_REFERENCES : ONE_REFERENCE);

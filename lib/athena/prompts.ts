@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PostType } from "@/lib/types";
 
 export interface BrandContext {
   business_name: string;
@@ -20,14 +21,21 @@ function brandBlock(brand: BrandContext): string {
 
 export function buildIdeaSystemPrompt(
   brand: BrandContext,
-  categories: { key: string; style_guide: string; output_format: string; images_per_carousel: number }[],
+  categories: {
+    key: string; style_guide: string; output_format: string;
+    images_per_carousel: number; post_type: PostType;
+  }[],
 ): string {
   const guides = categories
     .map((c) => {
       const parts = [`=== ${c.key} ===`];
       parts.push(c.style_guide || "[No style guide — fill in Config]");
       if (c.output_format) parts.push(`OUTPUT FORMAT: ${c.output_format}`);
-      parts.push(`REQUIRED SLIDE COUNT: ${c.images_per_carousel}`);
+      parts.push(
+        c.post_type === "narrative"
+          ? `POST TYPE: narrative — ONE carousel of exactly ${c.images_per_carousel} slides telling one story.`
+          : "POST TYPE: independent — each idea is ONE standalone image. Exactly 1 slide, role \"single\".",
+      );
       return parts.join("\n");
     })
     .join("\n\n");
@@ -47,12 +55,16 @@ export function buildIdeaSystemPrompt(
     "Scene, camera angle, and subject pose belong on each slide's 'visual' field, not in concept (general style, palette, and layout already live in the style guide, separate from both).",
     "When a category specifies an OUTPUT FORMAT, use it to shape the slides for that category's ideas — not the concept line.",
     "",
-    "CAROUSEL STRUCTURE — this is what you are writing:",
-    "Each idea is a complete carousel with exactly the slide count listed for its category.",
-    "When the count is greater than 1: exactly one 'hook' first, then 'beat' slides, then exactly one 'payoff' last.",
-    "When the count is 1: a single slide with role 'single'.",
+    "WHAT TO WRITE — depends on the category's POST TYPE:",
     "",
-    "The panels must form ONE continuous story, not a set of separate observations:",
+    "For an INDEPENDENT category: each idea is one standalone image that works completely on its own.",
+    "Give it exactly one slide with role 'single'. There is no sequence, no opener, no closer — do not write one.",
+    "Its 'text' is the words on that image and its 'visual' is the scene.",
+    "",
+    "For a NARRATIVE category: each idea is one carousel with exactly the slide count listed for it.",
+    "Exactly one 'hook' first, then 'beat' slides, then exactly one 'payoff' last.",
+    "",
+    "The panels of a NARRATIVE carousel must form ONE continuous story, not a set of separate observations:",
     "- Each beat must only make sense AFTER the one before it. If the panels could be reordered without loss, the carousel has failed.",
     "- The payoff must resolve the specific tension the hook opened — not a generic lesson.",
     "- 'text' is literally what appears on the image: one short phrase or sentence. No panel numbers, no labels, no captions about the panel.",

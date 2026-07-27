@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { storeBufferToken, disconnectBuffer } from "@/lib/settings/buffer";
+import type { PostType, RoleGuides } from "@/lib/types";
 
 export interface CategoryFields {
   name: string;
@@ -16,12 +17,21 @@ export interface CategoryFields {
   images_per_carousel: number;
   aspect_ratio: string;
   active: boolean;
+  post_type: PostType;
+  role_guides: RoleGuides;
 }
 
 function validateFields(f: CategoryFields) {
   if (!f.name.trim()) throw new Error("Name is required");
   if (!Number.isInteger(f.images_per_carousel) || f.images_per_carousel < 1 || f.images_per_carousel > 10) {
     throw new Error("images_per_carousel must be 1-10");
+  }
+  if (f.post_type !== "independent" && f.post_type !== "narrative") {
+    throw new Error("post_type must be independent or narrative");
+  }
+  // A narrative carousel needs at least a hook and a payoff to be a story.
+  if (f.post_type === "narrative" && f.images_per_carousel < 2) {
+    throw new Error("A narrative post needs at least 2 slides — use independent for single images");
   }
 }
 
@@ -43,6 +53,8 @@ export async function createCategory(fields: CategoryFields) {
     post_caption: fields.post_caption,
     buffer_channel_id: fields.buffer_channel_id,
     images_per_carousel: fields.images_per_carousel,
+    post_type: fields.post_type,
+    role_guides: fields.role_guides,
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
   });
@@ -65,6 +77,8 @@ export async function updateCategory(id: string, fields: CategoryFields) {
     post_caption: fields.post_caption,
     buffer_channel_id: fields.buffer_channel_id,
     images_per_carousel: fields.images_per_carousel,
+    post_type: fields.post_type,
+    role_guides: fields.role_guides,
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
   }).eq("id", id);

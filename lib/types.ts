@@ -2,6 +2,12 @@ export type IdeaStatus =
   | "pending_review" | "approved" | "rejected"
   | "generating" | "generated" | "posted" | "failed";
 
+export type PostType = "independent" | "narrative";
+
+// What differs per panel type. style_guide holds what is shared across every
+// panel; these hold the treatment belonging to one role only.
+export type RoleGuides = Partial<Record<Slide["role"], string>>;
+
 export interface Slide {
   role: "hook" | "beat" | "payoff" | "single";
   text: string;   // the words that appear on the panel
@@ -15,6 +21,8 @@ export interface Category {
   name: string;
   style_guide: string;
   output_format: string;
+  post_type: PostType;
+  role_guides: RoleGuides;
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
