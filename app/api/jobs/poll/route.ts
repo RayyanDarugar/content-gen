@@ -18,6 +18,11 @@ import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 120;
 const INGEST_CAP = 5;
+// Bounds sweepOrphanedAnchors the same way INGEST_CAP bounds the main loop:
+// SWEEP_IDEA_CAP is a cheap candidate-fetch limit, FAN_OUT_SWEEP_CAP caps how
+// many paid fan-outs one tick can attempt.
+const SWEEP_IDEA_CAP = 50;
+const FAN_OUT_SWEEP_CAP = 5;
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -57,7 +62,17 @@ async function ingestImage(
       .eq("anchor_generation_id", gen.id);
     if (sibErr) throw new Error(`sibling count failed: ${sibErr.message}`);
     if (shouldFanOut(slideCount, count ?? 0)) {
-      await fanOutCarousel(supabase, gen, idea, url);
+      try {
+        await fanOutCarousel(supabase, gen, idea, url);
+      } catch (e) {
+        // The status update above already committed, so this generation is
+        // no longer in the "submitted"/"polling" set the main loop selects —
+        // nothing else would ever revisit it. sweepOrphanedAnchors() finds
+        // succeeded slide-0 rows with zero siblings on a later tick and
+        // retries this exact call, using the same shouldFanOut/zero-siblings
+        // rule, so retrying here is safe and idempotent.
+        console.error(`fan-out failed for anchor ${gen.id}, sweep will retry:`, e);
+      }
     }
   }
 
@@ -85,12 +100,16 @@ async function fanOutCarousel(
   const apiKey = await getKieKeyOrNull(anchor.user_id);
   if (!apiKey) return; // owner removed their key; a later tick retries
 
-  const { data: catRow } = await supabase
+  const { data: catRow, error: catErr } = await supabase
     .from("categories").select("*")
     .eq("user_id", anchor.user_id).eq("key", idea.category_key).single();
-  if (!catRow) throw new Error(`category ${idea.category_key} not found`);
+  if (catErr || !catRow) {
+    throw new Error(
+      `category ${idea.category_key} lookup failed: ${catErr?.message ?? "not found"}`,
+    );
+  }
   const category = catRow as Category;
-  const slides = idea.slides;
+  const slides = idea.slides ?? [];
 
   for (const index of slideIndexesToFanOut(slides.length)) {
     const prompt = buildSlidePrompt(
@@ -172,6 +191,68 @@ async function retryAnchorIfWorthwhile(
   });
 }
 
+// The main loop above only ever sees rows still in "submitted"/"polling", so
+// once ingestImage marks an anchor "succeeded" that row drops out of it for
+// good. If the inline fan-out attempt in ingestImage never ran (transient
+// error) or never got as far as inserting any sibling (missing key), nothing
+// else would revisit it — this sweep is that "something else."
+//
+// Candidates are found via `ideas.status = 'generating'`, not by scanning all
+// succeeded slide-0 generations: an idea leaves "generating" the moment its
+// carousel completes (isCarouselComplete flips it to "generated"), and a
+// single-slide idea completes on its very first ingest, so this query can
+// never grow to cover the app's full history of one-image ideas. Among that
+// bounded candidate set, shouldFanOut (zero siblings under anchor_generation_id)
+// is reused verbatim from ingestImage's own guard, so a real fan-out that
+// already ran drops the anchor out of consideration here too.
+async function sweepOrphanedAnchors(supabase: SupabaseClient): Promise<number> {
+  const { data: ideaRows, error: ideaErr } = await supabase
+    .from("ideas")
+    .select("*")
+    .eq("status", "generating")
+    .order("updated_at", { ascending: true })
+    .limit(SWEEP_IDEA_CAP);
+  if (ideaErr) {
+    console.error("fan-out sweep idea query failed:", ideaErr.message);
+    return 0;
+  }
+  const multiSlideIdeas = ((ideaRows ?? []) as Idea[]).filter((i) => (i.slides ?? []).length > 1);
+  if (!multiSlideIdeas.length) return 0;
+
+  const { data: anchorRows, error: anchorErr } = await supabase
+    .from("generations")
+    .select("*")
+    .in("idea_id", multiSlideIdeas.map((i) => i.id))
+    .eq("slide_index", 0)
+    .eq("status", "succeeded");
+  if (anchorErr) {
+    console.error("fan-out sweep anchor query failed:", anchorErr.message);
+    return 0;
+  }
+
+  const ideaById = new Map(multiSlideIdeas.map((i) => [i.id, i]));
+  let attempted = 0;
+  for (const anchor of (anchorRows ?? []) as Generation[]) {
+    if (attempted >= FAN_OUT_SWEEP_CAP) break;
+    const idea = ideaById.get(anchor.idea_id);
+    if (!idea) continue;
+    try {
+      const { count, error: sibErr } = await supabase
+        .from("generations")
+        .select("*", { count: "exact", head: true })
+        .eq("anchor_generation_id", anchor.id);
+      if (sibErr) throw new Error(`sibling count failed: ${sibErr.message}`);
+      const slideCount = (idea.slides ?? []).length;
+      if (!shouldFanOut(slideCount, count ?? 0)) continue;
+      attempted++;
+      await fanOutCarousel(supabase, anchor, idea, anchor.public_url);
+    } catch (e) {
+      console.error(`fan-out sweep error for anchor ${anchor.id}:`, e);
+    }
+  }
+  return attempted;
+}
+
 export async function GET(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -230,5 +311,14 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ polled, ingested, failed, pending: pending.length });
+  let sweptFanOuts = 0;
+  try {
+    sweptFanOuts = await sweepOrphanedAnchors(supabase);
+  } catch (e) {
+    // Same rationale as the per-row catch above: log and let the next tick
+    // retry rather than fail the whole response over a sweep-only error.
+    console.error("fan-out sweep failed:", e);
+  }
+
+  return NextResponse.json({ polled, ingested, failed, pending: pending.length, sweptFanOuts });
 }
