@@ -10,7 +10,8 @@
     "test": "vitest run",
     "seed": "tsx scripts/seed-categories.ts",
     "create-admin": "tsx scripts/create-admin-user.ts",
-    "verify-isolation": "tsx scripts/verify-isolation.ts"
+    "verify-isolation": "tsx scripts/verify-isolation.ts",
+    "import-legacy": "tsx scripts/import-athena-legacy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",
