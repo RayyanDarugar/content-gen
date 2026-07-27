@@ -15,6 +15,17 @@ import type { Category, Slide } from "@/lib/types";
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
+// anthropic.messages.parse() below is non-streaming. The SDK computes
+// expectedTime = (60min * max_tokens) / 128000 and throws before making any
+// request once that exceeds its 10-minute default timeout — i.e. for any
+// max_tokens above 21333 (@anthropic-ai/sdk 0.112.4, client.js
+// calculateNonstreamingTimeout). Bumping this back toward the full worst
+// case (200 slides in one batch) crosses that ceiling and fails idea
+// generation 100% of the time before any network call. If truncation shows
+// up again, switch this call to messages.stream() rather than raising this
+// constant past ~21000.
+const IDEA_GENERATION_MAX_TOKENS = 16000;
+
 export async function generateIdeas(userId: string, categoryKey: string, count: number) {
   const supabase = createAdminSupabase();
   const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId) });
@@ -44,11 +55,12 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   // structural overhead — roughly 5-10x what one line per idea cost before
   // this branch. 8000 was sized for the old one-line-per-idea output and
   // silently truncates a large carousel batch, which discards the whole paid
-  // call ("returned no parseable output"). 32000 comfortably covers the
-  // worst case with headroom.
+  // call ("returned no parseable output"). IDEA_GENERATION_MAX_TOKENS is
+  // capped by the SDK's non-streaming ceiling — see its definition — so this
+  // is roughly double the original budget rather than the full worst case.
   const genResponse = await anthropic.messages.parse({
     model: MODEL,
-    max_tokens: 32000,
+    max_tokens: IDEA_GENERATION_MAX_TOKENS,
     system: buildIdeaSystemPrompt(brand, cats),
     messages: [{ role: "user", content: buildIdeaUserPrompt(count, activeKeys) }],
     output_config: { format: zodOutputFormat(IdeasOutput) },
