@@ -8,6 +8,7 @@ function postable(overrides: Partial<Postable>): Postable {
   return {
     generation_id: "g1", idea_id: "i1", idea_created_at: "2026-07-01T00:00:00Z",
     public_url: "https://res.cloudinary.com/x/a.jpg", concept: "c",
+    slide_index: 0, slide_count: 1,
     ...overrides,
   };
 }
@@ -65,5 +66,34 @@ describe("buildCreatePostMutation", () => {
     expect(query).toContain("MutationError");
     // caption must never be interpolated into the query body
     expect(query).not.toContain("my ");
+  });
+});
+
+describe("selectAutoFill with multi-slide ideas", () => {
+  const p = (id: string, ideaId: string, created: string, slideCount: number) => ({
+    generation_id: id, idea_id: ideaId, idea_created_at: created,
+    public_url: `u/${id}`, concept: "c", slide_index: 0, slide_count: slideCount,
+  });
+
+  it("skips slides belonging to a multi-slide carousel", () => {
+    const pool = [
+      p("a", "i1", "2026-01-01", 5),
+      p("b", "i2", "2026-01-02", 1),
+      p("c", "i3", "2026-01-03", 1),
+    ];
+    expect(selectAutoFill(pool, 2).map((x) => x.generation_id)).toEqual(["b", "c"]);
+  });
+
+  it("still fills from single-slide ideas oldest first", () => {
+    const pool = [
+      p("b", "i2", "2026-01-02", 1),
+      p("c", "i3", "2026-01-03", 1),
+      p("a", "i1", "2026-01-01", 1),
+    ];
+    expect(selectAutoFill(pool, 2).map((x) => x.generation_id)).toEqual(["a", "b"]);
+  });
+
+  it("returns nothing rather than a scrambled carousel", () => {
+    expect(selectAutoFill([p("a", "i1", "2026-01-01", 5)], 5)).toEqual([]);
   });
 });

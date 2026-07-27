@@ -17,7 +17,7 @@ export default async function PostPage() {
     supabase
       .from("ideas")
       .select("*, generations(*)")
-      .eq("status", "generated")
+      .in("status", ["generated", "generating"])
       .order("created_at", { ascending: true }),
     supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50),
   ]);
@@ -25,21 +25,37 @@ export default async function PostPage() {
   const ideas = (ideaData ?? []) as IdeaWithGenerations[];
   const posts = (postData ?? []) as Post[];
 
-  // Postable = newest succeeded generation per generated idea.
+  // Postable = newest succeeded generation per (idea, slide). An idea can
+  // hold several slides (carousel) and a slide can be retried (e.g. a failed
+  // anchor resubmit, or a manual regenerate), so dedupe within each slide
+  // rather than within the whole idea — otherwise a retried slide would
+  // shadow its siblings instead of just its own earlier attempt. The idea no
+  // longer needs to have fully reached "generated": a carousel stuck mid-
+  // fan-out still offers its succeeded slides here.
   const postablesByCategory = new Map<string, Postable[]>();
   for (const idea of ideas) {
-    const newest = idea.generations
-      .filter((g) => g.status === "succeeded" && g.public_url)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    if (!newest) continue;
+    const slideCount = (idea.slides ?? []).length || 1;
+    const newestBySlide = new Map<number, Generation>();
+    for (const g of idea.generations) {
+      if (g.status !== "succeeded" || !g.public_url) continue;
+      const existing = newestBySlide.get(g.slide_index);
+      if (!existing || g.created_at > existing.created_at) {
+        newestBySlide.set(g.slide_index, g);
+      }
+    }
+    if (newestBySlide.size === 0) continue;
     const list = postablesByCategory.get(idea.category_key) ?? [];
-    list.push({
-      generation_id: newest.id,
-      idea_id: idea.id,
-      idea_created_at: idea.created_at,
-      public_url: newest.public_url,
-      concept: idea.concept,
-    });
+    for (const g of newestBySlide.values()) {
+      list.push({
+        generation_id: g.id,
+        idea_id: idea.id,
+        idea_created_at: idea.created_at,
+        public_url: g.public_url,
+        concept: idea.concept,
+        slide_index: g.slide_index,
+        slide_count: slideCount,
+      });
+    }
     postablesByCategory.set(idea.category_key, list);
   }
 

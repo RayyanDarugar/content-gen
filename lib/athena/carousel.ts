@@ -4,6 +4,8 @@ export interface Postable {
   idea_created_at: string;
   public_url: string;
   concept: string;
+  slide_index: number;
+  slide_count: number;
 }
 
 export function pickCaption(raw: string, rand: () => number = Math.random): string {
@@ -12,8 +14,14 @@ export function pickCaption(raw: string, rand: () => number = Math.random): stri
   return variants[Math.floor(rand() * variants.length)];
 }
 
+// Phase A: the default fill deliberately skips multi-slide carousels. All
+// slides of one idea share an idea_created_at and nothing here sorts by
+// slide_index, so including them would pre-fill a scrambled carousel —
+// worse than not offering one. Phase B assembles them in order. The pool
+// itself is unfiltered, so every image stays hand-pickable meanwhile.
 export function selectAutoFill(postables: Postable[], n: number): Postable[] {
   return [...postables]
+    .filter((p) => p.slide_count <= 1)
     .sort((a, b) => a.idea_created_at.localeCompare(b.idea_created_at))
     .slice(0, n);
 }
