@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { postToBuffer } from "@/lib/athena/buffer";
+import { findSupersededGenerationIds } from "@/lib/athena/carousel";
 import { getValidBufferToken } from "@/lib/settings/buffer";
 import type { Category, Generation, Idea } from "@/lib/types";
 
@@ -66,7 +67,12 @@ export async function POST(request: NextRequest) {
     if (g.status !== "succeeded" || !g.public_url) {
       return NextResponse.json({ error: `generation ${g.id} has no successful image` }, { status: 400 });
     }
-    if (g.idea.status !== "generated") {
+    // A carousel stuck mid-generation (one slide permanently failed) is
+    // deliberately left at "generating" forever so its good slides stay
+    // visible — see app/api/jobs/poll/route.ts. Mirror that here so the
+    // escape hatch it exists for actually works: freeform posting of the
+    // slides that did succeed.
+    if (g.idea.status !== "generated" && g.idea.status !== "generating") {
       return NextResponse.json({ error: `idea for generation ${g.id} is not postable (${g.idea.status})` }, { status: 400 });
     }
     if (g.idea.category_key !== categoryKey) {
@@ -74,29 +80,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Each selected generation must be the newest succeeded one for its idea.
+  // Each selected generation must be the newest succeeded one for its own
+  // (idea, slide) — see findSupersededGenerationIds for why this is scoped
+  // to the slide rather than the whole idea.
   const { data: siblingsData, error: sibErr } = await supabase
     .from("generations")
-    .select("id, idea_id, status, created_at")
+    .select("id, idea_id, slide_index, status, created_at")
     .in("idea_id", ideaIds)
     .eq("user_id", user.id);
   if (sibErr) return NextResponse.json({ error: sibErr.message }, { status: 500 });
-  const newestByIdea = new Map<string, string>();
-  for (const s of (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "status" | "created_at">[]) {
-    if (s.status !== "succeeded") continue;
-    const cur = newestByIdea.get(s.idea_id);
-    if (!cur) { newestByIdea.set(s.idea_id, s.id); continue; }
-    const curCreated = (siblingsData as { id: string; created_at: string }[])
-      .find((x) => x.id === cur)!.created_at;
-    if (s.created_at > curCreated) newestByIdea.set(s.idea_id, s.id);
-  }
-  for (const g of gens) {
-    if (newestByIdea.get(g.idea_id) !== g.id) {
-      return NextResponse.json(
-        { error: `generation ${g.id} is superseded by a newer image for its idea` },
-        { status: 400 },
-      );
-    }
+  const superseded = findSupersededGenerationIds(
+    gens.map((g) => ({ id: g.id, idea_id: g.idea_id, slide_index: g.slide_index })),
+    (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "slide_index" | "status" | "created_at">[],
+  );
+  if (superseded.length > 0) {
+    return NextResponse.json(
+      { error: `generation ${superseded[0]} is superseded by a newer image for its idea` },
+      { status: 400 },
+    );
   }
 
   // Preserve the request's carousel order.

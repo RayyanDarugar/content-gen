@@ -26,6 +26,31 @@ export function selectAutoFill(postables: Postable[], n: number): Postable[] {
     .slice(0, n);
 }
 
+// A generation is superseded only by a newer succeeded row for its own
+// (idea, slide) — not by a newer row anywhere else in the same idea. Before
+// carousels, one idea meant one image, so "newest per idea" and "newest per
+// slide" were the same check. Now a slide can be retried (failed-anchor
+// resubmit, manual regenerate) independently of its siblings, so comparing
+// across the whole idea would let, e.g., a freshly-succeeded slide 3 falsely
+// supersede an untouched slide 0 in the same carousel.
+export function findSupersededGenerationIds(
+  selected: { id: string; idea_id: string; slide_index: number }[],
+  siblings: { id: string; idea_id: string; slide_index: number; status: string; created_at: string }[],
+): string[] {
+  const newestBySlide = new Map<string, { id: string; created_at: string }>();
+  for (const s of siblings) {
+    if (s.status !== "succeeded") continue;
+    const key = `${s.idea_id}:${s.slide_index}`;
+    const cur = newestBySlide.get(key);
+    if (!cur || s.created_at > cur.created_at) {
+      newestBySlide.set(key, { id: s.id, created_at: s.created_at });
+    }
+  }
+  return selected
+    .filter((g) => newestBySlide.get(`${g.idea_id}:${g.slide_index}`)?.id !== g.id)
+    .map((g) => g.id);
+}
+
 // Port of n8n Workflow C "Group Into Carousels". channelId and image URLs are
 // app-controlled values; the caption is user text and travels as a variable.
 export function buildCreatePostMutation(
