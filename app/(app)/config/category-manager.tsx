@@ -129,7 +129,13 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
                     : "e.g. No tag, no X. The resolved truth, stated clean."
                 }
                 value={form.role_guides[role] ?? ""}
-                onChange={(e) => set("role_guides", { ...form.role_guides, [role]: e.target.value })}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const next = { ...form.role_guides };
+                  if (value.trim()) next[role] = value;
+                  else delete next[role];
+                  set("role_guides", next);
+                }}
               />
             </div>
           ))}

@@ -22,12 +22,20 @@ const ONE_REFERENCE =
   "Reference the provided style image to maintain visual consistency in palette, " +
   "illustration style, and layout.";
 
-// Verbatim from the wording that held identity across five slides in testing.
+// Verbatim from the wording that held identity across five slides in
+// testing, except "and any persistent elements precisely" is narrowed to the
+// deferral sentence below. That phrase told the model to copy the anchor's
+// persistent elements — including a hook's MYTH tag and strike-through X,
+// which are visually "persistent" in the reference even though they must
+// not appear on other panels. Per the header note above, the reference
+// image tends to win over prose, so this cannot be fully verified without a
+// live run — it narrows the wording rather than trusting prose alone.
 const TWO_REFERENCES =
   "Two reference images are provided. The FIRST is the brand style reference. The SECOND " +
-  "is the opening panel of this exact carousel — match its palette, typography, subject " +
-  "appearance, and any persistent elements precisely, while following the camera and pose " +
-  "direction above.";
+  "is the opening panel of this exact carousel — match its palette, typography, and subject " +
+  "appearance precisely, while following the camera and pose direction above. For any tag, " +
+  "badge, or overlay visible in the second reference, defer to this panel's treatment above " +
+  "rather than copying it.";
 
 export function buildSlidePrompt(
   styleGuide: string,
@@ -42,19 +50,32 @@ export function buildSlidePrompt(
   if (total > 1) lines.push(`Panel ${position} of ${total}.`, "");
   if (slide.text.trim()) lines.push(`Text on panel: "${slide.text}"`);
   if (slide.visual.trim()) lines.push(`Scene: ${slide.visual}`);
+
+  // The style guide covers what every panel shares; TREATMENT below covers
+  // what belongs to THIS role only. Without a role guide, "including any
+  // element it specifies as appearing on every panel" is the only signal
+  // that footers etc. persist — keep it. With one, that same clause is a
+  // direct contradiction of the treatment that follows (a myth-format guide
+  // says its "MYTH:" tag and strike-through X appear on every panel; the
+  // payoff's treatment says neither does) with no precedence rule between
+  // them, so it is dropped and replaced by an explicit precedence line.
+  const roleGuide = roleGuides[slide.role]?.trim();
   lines.push(
     "",
-    "Follow every rule in the style guide, including any element it specifies as appearing " +
-      "on every panel.",
+    roleGuide
+      ? "Follow every rule in the style guide."
+      : "Follow every rule in the style guide, including any element it specifies as appearing " +
+          "on every panel.",
   );
 
-  // The style guide covers what every panel shares; this covers what belongs
-  // to THIS role only. Without it a myth-format guide stamps its "MYTH:" tag
-  // and strike-through X onto the explainer beats and the payoff too —
-  // crossing out the very insight the carousel exists to land.
-  const roleGuide = roleGuides[slide.role]?.trim();
   if (roleGuide) {
-    lines.push("", `TREATMENT FOR THIS PANEL (${slide.role}):`, roleGuide);
+    lines.push(
+      "",
+      `TREATMENT FOR THIS PANEL (${slide.role}):`,
+      roleGuide,
+      "",
+      "Where this treatment conflicts with the style guide, this treatment governs this panel.",
+    );
   }
 
   if (refinementNotes) lines.push("", `Refinement notes: ${refinementNotes}`);

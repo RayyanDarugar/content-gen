@@ -115,4 +115,18 @@ describe("buildIdeaSystemPrompt — post type", () => {
     expect(p).toContain("For an INDEPENDENT category");
     expect(p).toContain("For a NARRATIVE category");
   });
+
+  it("describes concept in type-neutral terms, not as a carousel's story", () => {
+    const p = buildIdeaSystemPrompt(brand, cat("independent"));
+    expect(p.toLowerCase()).not.toContain("summary of the story this carousel tells");
+    expect(p).toContain("summary of the post this idea becomes");
+  });
+
+  it("scopes the structural-variety instruction to narrative carousels, not independent batches", () => {
+    const p = buildIdeaSystemPrompt(brand, cat("independent"));
+    // The instruction survives (it still applies whenever a narrative
+    // category is in the batch), but it must name narrative carousels
+    // rather than reading as a blanket rule over every idea in the batch.
+    expect(p).toContain("Across the NARRATIVE carousels in this batch, vary the STRUCTURE");
+  });
 });

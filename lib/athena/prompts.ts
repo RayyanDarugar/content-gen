@@ -50,7 +50,7 @@ export function buildIdeaSystemPrompt(
     guides,
     "",
     "CRITICAL INSTRUCTION FOR concept:",
-    "'concept' is a ONE-LINE summary of the story this carousel tells — a label, not a prompt.",
+    "'concept' is a ONE-LINE summary of the post this idea becomes — a label, not a prompt.",
     "Do NOT write image-generation detail into concept, and do NOT restate or summarize the style guide there.",
     "Scene, camera angle, and subject pose belong on each slide's 'visual' field, not in concept (general style, palette, and layout already live in the style guide, separate from both).",
     "When a category specifies an OUTPUT FORMAT, use it to shape the slides for that category's ideas — not the concept line.",
@@ -70,8 +70,7 @@ export function buildIdeaSystemPrompt(
     "- 'text' is literally what appears on the image: one short phrase or sentence. No panel numbers, no labels, no captions about the panel.",
     "- 'visual' describes the scene, camera angle, and subject pose. Give every panel a different camera angle.",
     "- The story must be followable from the visuals alone.",
-    "",
-    "Across the batch, vary the STRUCTURE, not just the topic. Do not write every carousel to the same template or end every payoff with the same sentence shape — variety across the set matters as much as quality within one.",
+    "- Across the NARRATIVE carousels in this batch, vary the STRUCTURE, not just the topic. Do not write every carousel to the same template or end every payoff with the same sentence shape — variety across the set matters as much as quality within one.",
   ].join("\n");
 }
 
@@ -95,7 +94,7 @@ export function buildFilterSystemPrompt(brand: BrandContext): string {
 export const IdeasOutput = z.object({
   ideas: z.array(z.object({
     category: z.string(),
-    concept: z.string().describe("one-line summary of the story this carousel tells"),
+    concept: z.string().describe("one-line summary of the post this idea becomes"),
     slides: z.array(z.object({
       role: z.enum(["hook", "beat", "payoff", "single"]),
       text: z.string().describe("the exact words appearing on this panel — short"),

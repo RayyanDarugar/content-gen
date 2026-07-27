@@ -105,4 +105,23 @@ describe("buildSlidePrompt — role guides", () => {
     const p = buildSlidePrompt("G", { role: "hook", text: "t", visual: "v" }, 1, 5, false, "", { hook: "   " });
     expect(p).not.toContain("TREATMENT FOR THIS PANEL");
   });
+
+  it("keeps the blanket follow-every-rule clause when no role guide applies", () => {
+    const p = buildSlidePrompt("G", { role: "hook", text: "t", visual: "v" }, 1, 5, false);
+    expect(p).toContain("including any element it specifies as appearing on every panel");
+  });
+
+  it("gives the role treatment precedence when it conflicts with the style guide, " +
+    "and drops the blanket follow-every-rule clause", () => {
+    const conflictingGuide =
+      "Every panel must show an orange MYTH tag and a hand-drawn strike-through X.";
+    const guides = { payoff: "No tag, no X. The resolved truth, stated clean." };
+    const p = buildSlidePrompt(
+      conflictingGuide, { role: "payoff", text: "t", visual: "v" }, 5, 5, true, "", guides,
+    );
+    expect(p).toContain(
+      "Where this treatment conflicts with the style guide, this treatment governs this panel.",
+    );
+    expect(p).not.toContain("including any element it specifies as appearing on every panel");
+  });
 });

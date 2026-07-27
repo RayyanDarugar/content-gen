@@ -23,19 +23,27 @@ function defaultSlides(count: number): Slide[] {
   }));
 }
 
+// Only a narrative category's default fill is a multi-slide story. An
+// independent category defaults to one standalone image regardless of its
+// images_per_carousel — that field means something else for it (how many
+// unrelated images make up a post). Without this branch, picking an
+// independent category like SAT_MYTH still pre-filled a chained five-panel
+// carousel shape, reproducing the bug this whole change exists to fix.
+function defaultSlidesForCategory(cat: Category | undefined): Slide[] {
+  return defaultSlides(cat?.post_type === "narrative" ? cat.images_per_carousel : 1);
+}
+
 export function ManualIdeaDialog({ categories }: { categories: Category[] }) {
   const [open, setOpen] = useState(false);
   const [categoryKey, setCategoryKey] = useState(categories[0]?.key ?? "");
   const [concept, setConcept] = useState("");
-  const [slides, setSlides] = useState<Slide[]>(
-    defaultSlides(categories[0]?.images_per_carousel ?? 1),
-  );
+  const [slides, setSlides] = useState<Slide[]>(defaultSlidesForCategory(categories[0]));
   const [busy, setBusy] = useState(false);
 
   function pickCategory(key: string) {
     setCategoryKey(key);
     const cat = categories.find((c) => c.key === key);
-    setSlides(defaultSlides(cat?.images_per_carousel ?? 1));
+    setSlides(defaultSlidesForCategory(cat));
   }
 
   function updateSlide(index: number, patch: Partial<Slide>) {
@@ -50,7 +58,7 @@ export function ManualIdeaDialog({ categories }: { categories: Category[] }) {
       setOpen(false);
       setConcept("");
       const cat = categories.find((c) => c.key === categoryKey);
-      setSlides(defaultSlides(cat?.images_per_carousel ?? 1));
+      setSlides(defaultSlidesForCategory(cat));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create idea");
     } finally {

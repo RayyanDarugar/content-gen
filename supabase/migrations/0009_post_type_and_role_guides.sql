@@ -16,6 +16,18 @@ alter table categories
   add column post_type text not null default 'independent'
   check (post_type in ('independent', 'narrative'));
 
+-- A narrative row needs at least a hook and a payoff to be a story; the
+-- server action already enforces this, but a row can also arrive via seed
+-- script or a direct DB edit, bypassing it. Without this constraint,
+-- narrative + images_per_carousel = 1 makes the idea prompt ask for "ONE
+-- carousel of exactly 1 slides" while validateSlideShape(slides, 1) demands
+-- role "single" — every idea gets discarded and the run dies with "Claude
+-- returned zero usable ideas" and no clue why. Validates cleanly against
+-- existing rows: they are all 'independent' by default.
+alter table categories
+  add constraint categories_narrative_needs_2_slides
+  check (post_type = 'independent' or images_per_carousel >= 2);
+
 -- What differs per panel type, keyed by slide role:
 --   { "hook": "...", "beat": "...", "payoff": "...", "single": "..." }
 -- style_guide keeps what is SHARED across every panel (palette, character,
