@@ -38,9 +38,17 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   };
 
   // Call 1: generate ideas (structured output replaces the old JSON-repair parse)
+  // Worst case: /generate allows count up to 20, and a category's
+  // images_per_carousel can be configured up to 10 (app/(app)/config), so one
+  // batch can carry 200 slides, each with its own role/text/visual plus JSON
+  // structural overhead — roughly 5-10x what one line per idea cost before
+  // this branch. 8000 was sized for the old one-line-per-idea output and
+  // silently truncates a large carousel batch, which discards the whole paid
+  // call ("returned no parseable output"). 32000 comfortably covers the
+  // worst case with headroom.
   const genResponse = await anthropic.messages.parse({
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: 32000,
     system: buildIdeaSystemPrompt(brand, cats),
     messages: [{ role: "user", content: buildIdeaUserPrompt(count, activeKeys) }],
     output_config: { format: zodOutputFormat(IdeasOutput) },
