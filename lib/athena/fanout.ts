@@ -21,6 +21,56 @@ export function isCarouselComplete(slideCount: number, succeededIndexes: number[
   return true;
 }
 
+// Spec §5.6: "A carousel is postable only if every slide has a succeeded
+// generation under the same anchor. That is the check, and it is exact
+// rather than count-based." Given every succeeded generation row for one
+// idea, picks the current anchor (the newest succeeded slide 0) and returns
+// only the indexes that succeeded *under that anchor* — a sibling generated
+// against a previous, now-superseded anchor doesn't count, even though it is
+// still the newest succeeded row for its own slide index. Without this, a
+// mid-regeneration idea (new anchor succeeded, its fresh siblings still
+// generating) would be seen as complete by pairing the new anchor with the
+// old anchor's leftover siblings — exactly the silently-broken carousel the
+// anchor scoping in the spec exists to prevent.
+export function succeededIndexesUnderCurrentAnchor(
+  rows: { id: string; slide_index: number; anchor_generation_id: string | null; created_at: string }[],
+): number[] {
+  const anchors = rows.filter((r) => r.slide_index === 0);
+  if (!anchors.length) return [];
+  const anchor = anchors.reduce((newest, r) => (r.created_at > newest.created_at ? r : newest));
+  const indexes = [0];
+  for (const r of rows) {
+    if (r.slide_index !== 0 && r.anchor_generation_id === anchor.id) indexes.push(r.slide_index);
+  }
+  return indexes;
+}
+
+// Built when a generations insert fails *after* a Kie task was already
+// created — the paid task exists but has no row to poll it. Without
+// recording it somewhere, that spend is invisible: the sibling count used by
+// shouldFanOut stays wrong forever (partial failure) or the sweep re-attempts
+// the same paid submission indefinitely (total failure, count stuck at 0).
+// Folding the taskId into the error column keeps the spend traceable even
+// though the row itself is a failure.
+export function orphanedTaskFailureRow(
+  base: { user_id: string; idea_id: string; slide_index: number; anchor_generation_id?: string | null },
+  taskId: string,
+  insertErrorMessage: string,
+): {
+  user_id: string;
+  idea_id: string;
+  slide_index: number;
+  anchor_generation_id?: string | null;
+  status: "failed";
+  error: string;
+} {
+  return {
+    ...base,
+    status: "failed",
+    error: `generation insert failed after Kie task ${taskId} was already created: ${insertErrorMessage}`,
+  };
+}
+
 export const MAX_ANCHOR_ATTEMPTS = 3;
 
 // The anchor gates every other slide, so a flaky failure there stalls the

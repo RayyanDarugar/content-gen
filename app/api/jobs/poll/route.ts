@@ -10,6 +10,8 @@ import {
   slideIndexesToFanOut,
   isCarouselComplete,
   shouldRetryAnchor,
+  succeededIndexesUnderCurrentAnchor,
+  orphanedTaskFailureRow,
 } from "@/lib/athena/fanout";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
@@ -76,16 +78,27 @@ async function ingestImage(
     }
   }
 
-  // The idea completes only when every slide has an image.
+  // The idea completes only when every slide has an image *under the same
+  // anchor* (spec §5.6 — "exact rather than count-based"). Aggregating
+  // across the whole idea would let a freshly-regenerated anchor pair up
+  // with a previous anchor's leftover siblings and falsely complete.
   const { data: doneRows, error: doneErr } = await supabase
     .from("generations")
-    .select("slide_index")
+    .select("id, slide_index, anchor_generation_id, created_at")
     .eq("idea_id", gen.idea_id)
     .eq("status", "succeeded");
   if (doneErr) throw new Error(`completion query failed: ${doneErr.message}`);
-  const succeeded = (doneRows ?? []).map((r) => r.slide_index as number);
+  const succeeded = succeededIndexesUnderCurrentAnchor(doneRows ?? []);
   if (isCarouselComplete(slideCount, succeeded)) {
-    await supabase.from("ideas").update({ status: "generated" }).eq("id", gen.idea_id);
+    // A posted idea must never be resurrected back to "generated" — a slide
+    // landing after the carousel was already (partially) posted would
+    // otherwise orphan the post record and reintroduce its images as
+    // postable. See app/api/posts/create/route.ts.
+    await supabase
+      .from("ideas")
+      .update({ status: "generated" })
+      .eq("id", gen.idea_id)
+      .neq("status", "posted");
   }
 }
 
@@ -115,23 +128,13 @@ async function fanOutCarousel(
     const prompt = buildSlidePrompt(
       category.style_guide, slides[index], index + 1, slides.length, true,
       anchor.refinement_notes);
+    let taskId: string;
     try {
-      const taskId = await createKieTask(
+      taskId = await createKieTask(
         apiKey, prompt, [anchor.kie_style_url, anchorImageUrl], category.aspect_ratio);
-      await supabase.from("generations").insert({
-        user_id: anchor.user_id,
-        idea_id: idea.id,
-        kie_task_id: taskId,
-        status: "submitted",
-        slide_index: index,
-        anchor_generation_id: anchor.id,
-        kie_style_url: anchor.kie_style_url,
-        full_prompt: prompt,
-        refinement_notes: anchor.refinement_notes,
-      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      await supabase.from("generations").insert({
+      const { error: failErr } = await supabase.from("generations").insert({
         user_id: anchor.user_id,
         idea_id: idea.id,
         status: "failed",
@@ -139,6 +142,45 @@ async function fanOutCarousel(
         anchor_generation_id: anchor.id,
         error: message,
       });
+      if (failErr) {
+        console.error(
+          `fan-out failed-row insert error for idea ${idea.id} slide ${index}:`,
+          failErr.message,
+        );
+      }
+      continue;
+    }
+    // supabase.insert() returns { error } rather than throwing, so this must
+    // be checked explicitly. Left unchecked, a partial failure here leaves a
+    // paid Kie task with no row to poll it — invisible spend — and the
+    // sibling count shouldFanOut relies on never reaches slides.length - 1,
+    // so the orphan sweep would never see this anchor as needing another
+    // pass either.
+    const { error: insErr } = await supabase.from("generations").insert({
+      user_id: anchor.user_id,
+      idea_id: idea.id,
+      kie_task_id: taskId,
+      status: "submitted",
+      slide_index: index,
+      anchor_generation_id: anchor.id,
+      kie_style_url: anchor.kie_style_url,
+      full_prompt: prompt,
+      refinement_notes: anchor.refinement_notes,
+    });
+    if (insErr) {
+      const { error: failErr } = await supabase.from("generations").insert(
+        orphanedTaskFailureRow(
+          { user_id: anchor.user_id, idea_id: idea.id, slide_index: index, anchor_generation_id: anchor.id },
+          taskId,
+          insErr.message,
+        ),
+      );
+      if (failErr) {
+        console.error(
+          `fan-out orphan-row insert error for idea ${idea.id} slide ${index} (orphaned Kie task ${taskId}):`,
+          failErr.message,
+        );
+      }
     }
   }
 }
@@ -179,7 +221,9 @@ async function retryAnchorIfWorthwhile(
     category.style_guide, slides[0], 1, slides.length, false, failed.refinement_notes);
   const taskId = await createKieTask(
     apiKey, prompt, [failed.kie_style_url], category.aspect_ratio);
-  await supabase.from("generations").insert({
+  // Checked for the same reason as fanOutCarousel's insert: unchecked, an
+  // insert failure here would leave a paid Kie task with no row to poll it.
+  const { error: insErr } = await supabase.from("generations").insert({
     user_id: failed.user_id,
     idea_id: failed.idea_id,
     kie_task_id: taskId,
@@ -189,6 +233,21 @@ async function retryAnchorIfWorthwhile(
     full_prompt: prompt,
     refinement_notes: failed.refinement_notes,
   });
+  if (insErr) {
+    const { error: failErr } = await supabase.from("generations").insert(
+      orphanedTaskFailureRow(
+        { user_id: failed.user_id, idea_id: failed.idea_id, slide_index: 0 },
+        taskId,
+        insErr.message,
+      ),
+    );
+    if (failErr) {
+      console.error(
+        `anchor retry orphan-row insert error for idea ${failed.idea_id} (orphaned Kie task ${taskId}):`,
+        failErr.message,
+      );
+    }
+  }
 }
 
 // The main loop above only ever sees rows still in "submitted"/"polling", so
@@ -197,20 +256,22 @@ async function retryAnchorIfWorthwhile(
 // error) or never got as far as inserting any sibling (missing key), nothing
 // else would revisit it — this sweep is that "something else."
 //
-// Candidates are found via `ideas.status = 'generating'`, not by scanning all
-// succeeded slide-0 generations: an idea leaves "generating" the moment its
-// carousel completes (isCarouselComplete flips it to "generated"), and a
-// single-slide idea completes on its very first ingest, so this query can
-// never grow to cover the app's full history of one-image ideas. Among that
-// bounded candidate set, shouldFanOut (zero siblings under anchor_generation_id)
-// is reused verbatim from ingestImage's own guard, so a real fan-out that
-// already ran drops the anchor out of consideration here too.
+// Candidates are found via `ideas.status = 'generating'`. A carousel that
+// finishes normally leaves this set the moment isCarouselComplete flips it to
+// "generated", but a carousel with a permanently failed slide never leaves —
+// the poll loop deliberately stops marking ideas "failed" so a dud slide
+// doesn't hide the rest of the carousel's good images. That means this
+// candidate set is unbounded and only grows over time, which is exactly why
+// it is ordered newest-first: the oldest entries are disproportionately
+// permanently-stuck carousels that shouldFanOut below will reject every tick
+// forever, and once SWEEP_IDEA_CAP of those accumulate they must not be
+// allowed to starve a newly orphaned anchor out of its only recovery path.
 async function sweepOrphanedAnchors(supabase: SupabaseClient): Promise<number> {
   const { data: ideaRows, error: ideaErr } = await supabase
     .from("ideas")
     .select("*")
     .eq("status", "generating")
-    .order("updated_at", { ascending: true })
+    .order("updated_at", { ascending: false })
     .limit(SWEEP_IDEA_CAP);
   if (ideaErr) {
     console.error("fan-out sweep idea query failed:", ideaErr.message);

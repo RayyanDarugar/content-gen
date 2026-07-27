@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { shouldFanOut, slideIndexesToFanOut, isCarouselComplete, shouldRetryAnchor } from "@/lib/athena/fanout";
+import {
+  shouldFanOut,
+  slideIndexesToFanOut,
+  isCarouselComplete,
+  shouldRetryAnchor,
+  succeededIndexesUnderCurrentAnchor,
+  orphanedTaskFailureRow,
+} from "@/lib/athena/fanout";
 
 describe("shouldFanOut", () => {
   it("fans out a multi-slide carousel with no siblings yet", () => {
@@ -66,5 +73,78 @@ describe("shouldRetryAnchor", () => {
 
   it("never retries once an anchor has succeeded", () => {
     expect(shouldRetryAnchor(1, true)).toBe(false);
+  });
+});
+
+describe("succeededIndexesUnderCurrentAnchor", () => {
+  const row = (id: string, slideIndex: number, anchorId: string | null, created: string) => ({
+    id, slide_index: slideIndex, anchor_generation_id: anchorId, created_at: created,
+  });
+
+  it("is empty when no slide-0 has ever succeeded", () => {
+    expect(succeededIndexesUnderCurrentAnchor([])).toEqual([]);
+  });
+
+  it("includes every sibling anchored to the current anchor", () => {
+    const rows = [
+      row("anchor", 0, null, "2026-01-01T00:00:00Z"),
+      row("s1", 1, "anchor", "2026-01-01T00:01:00Z"),
+      row("s2", 2, "anchor", "2026-01-01T00:02:00Z"),
+    ];
+    expect(succeededIndexesUnderCurrentAnchor(rows).sort()).toEqual([0, 1, 2]);
+  });
+
+  it("excludes siblings anchored to a superseded anchor, even though they are the newest succeeded row for their slide", () => {
+    // The regeneration case from spec §5.6: old anchor's siblings succeeded
+    // long ago and are still the newest succeeded row for their own slide
+    // index, but a fresh anchor now exists and its own siblings haven't
+    // landed yet. Pairing the new anchor with the old anchor's leftovers is
+    // exactly the silently-broken carousel the anchor scoping prevents.
+    const rows = [
+      row("anchorA", 0, null, "2026-01-01T00:00:00Z"),
+      row("old-s1", 1, "anchorA", "2026-01-01T00:01:00Z"),
+      row("old-s2", 2, "anchorA", "2026-01-01T00:02:00Z"),
+      row("anchorB", 0, null, "2026-01-02T00:00:00Z"),
+    ];
+    expect(succeededIndexesUnderCurrentAnchor(rows)).toEqual([0]);
+  });
+
+  it("picks the newest slide-0 row as the current anchor when several have succeeded (retried anchor history)", () => {
+    const rows = [
+      row("anchorOld", 0, null, "2026-01-01T00:00:00Z"),
+      row("anchorNew", 0, null, "2026-01-03T00:00:00Z"),
+      row("s1-new", 1, "anchorNew", "2026-01-03T00:01:00Z"),
+      row("s1-old", 1, "anchorOld", "2026-01-01T00:01:00Z"),
+    ];
+    expect(succeededIndexesUnderCurrentAnchor(rows).sort()).toEqual([0, 1]);
+  });
+});
+
+describe("orphanedTaskFailureRow", () => {
+  it("records the orphaned task id in the error column so the spend is traceable", () => {
+    const row = orphanedTaskFailureRow(
+      { user_id: "u1", idea_id: "i1", slide_index: 2, anchor_generation_id: "anchor1" },
+      "kie-task-123",
+      "duplicate key value",
+    );
+    expect(row).toEqual({
+      user_id: "u1",
+      idea_id: "i1",
+      slide_index: 2,
+      anchor_generation_id: "anchor1",
+      status: "failed",
+      error: "generation insert failed after Kie task kie-task-123 was already created: duplicate key value",
+    });
+  });
+
+  it("preserves a null anchor_generation_id for an orphaned anchor submission", () => {
+    const row = orphanedTaskFailureRow(
+      { user_id: "u1", idea_id: "i1", slide_index: 0 },
+      "kie-task-456",
+      "insert failed",
+    );
+    expect(row.anchor_generation_id).toBeUndefined();
+    expect(row.slide_index).toBe(0);
+    expect(row.status).toBe("failed");
   });
 });
