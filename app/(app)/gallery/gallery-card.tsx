@@ -35,6 +35,13 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? res.statusText);
       if (json.failed > 0) throw new Error(json.errors?.[0] ?? "submit failed");
+      // A skip (idea not currently retryable — e.g. still in flight, or a
+      // completed idea with no refinement notes) returns HTTP 200 with
+      // submitted: 0. That is not success: nothing happened, so the dialog
+      // must not close and refresh as though it worked.
+      if ((json.submitted ?? 0) === 0) {
+        throw new Error("Nothing was submitted — this idea isn't retryable right now.");
+      }
       setDialogOpen(false);
       setNotes("");
       router.refresh();

@@ -3,6 +3,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { requireKieKey } from "@/lib/settings/user-secrets";
+import { isSubmitEligible } from "@/lib/athena/submit-eligibility";
 import type { Category, Idea, Slide } from "@/lib/types";
 
 export interface SubmitResult {
@@ -26,12 +27,23 @@ export async function submitGenerations(
   const ideas = (ideasData ?? []) as Idea[];
   if (!ideas.length) throw new Error("no matching ideas");
 
-  // Fresh submit + retry from approved/failed; regenerate from generated only with notes.
-  const eligible = ideas.filter(
-    (i) =>
-      i.status === "approved" ||
-      i.status === "failed" ||
-      (i.status === "generated" && refinementNotes !== ""),
+  // A "generating" idea is only eligible once nothing is still in flight for
+  // it — see isSubmitEligible for why. Only bother querying for ideas that
+  // are actually in that status.
+  const generatingIds = ideas.filter((i) => i.status === "generating").map((i) => i.id);
+  let inFlightIdeaIds = new Set<string>();
+  if (generatingIds.length) {
+    const { data: inFlightRows, error: inFlightErr } = await supabase
+      .from("generations")
+      .select("idea_id")
+      .in("idea_id", generatingIds)
+      .in("status", ["submitted", "polling"]);
+    if (inFlightErr) throw new Error(`in-flight query failed: ${inFlightErr.message}`);
+    inFlightIdeaIds = new Set((inFlightRows ?? []).map((r) => r.idea_id as string));
+  }
+
+  const eligible = ideas.filter((i) =>
+    isSubmitEligible(i.status, refinementNotes, inFlightIdeaIds.has(i.id)),
   );
 
   const { data: catsData, error: catsErr } = await supabase
@@ -57,8 +69,16 @@ export async function submitGenerations(
         styleUrl = await uploadStyleRef(kieKey, category.style_ref_url, userId, category.key);
         styleUrlCache.set(category.key, styleUrl);
       }
-      const slides = (idea.slides ?? []) as Slide[];
-      if (!slides.length) throw new Error("idea has no slides");
+      // Migration 0008's backfill only touched rows that existed at the time
+      // it ran. Any idea inserted between then and the deploy of the code
+      // that writes slides has slides = '[]' with a real concept — self-heal
+      // it the same way the backfill did, rather than failing it, so a
+      // production gap doesn't quietly condemn otherwise-good ideas.
+      let slides = (idea.slides ?? []) as Slide[];
+      if (!slides.length) {
+        if (!idea.concept.trim()) throw new Error("idea has no slides and no concept");
+        slides = [{ role: "single", text: "", visual: idea.concept }];
+      }
 
       // Only the anchor is submitted here. The poll cron fans out the rest
       // once this image exists, because they reference it.
