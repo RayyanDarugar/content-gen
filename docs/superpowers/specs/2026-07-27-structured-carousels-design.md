@@ -248,7 +248,7 @@ One constraint on Phase A: `selectAutoFill` groups loose generations by recency,
 
 ## 7. Risks
 
-1. **Cloudinary URLs as Kie `input_urls` is unverified.** Testing chained on raw Kie result URLs. Cloudinary URLs are public HTTPS and should work, and using them is preferable since Kie's temp URLs expire — but this must be verified in the first implementation task, before the fan-out is built on it.
+1. **Cloudinary URLs as Kie `input_urls` is unverified.** Testing chained on raw Kie result URLs. Cloudinary URLs are public HTTPS and should work, and using them is preferable since Kie's temp URLs expire — but this must be verified in the first implementation task, before the fan-out is built on it. **Verified 2026-07-27:** a Cloudinary `public_url` submitted as the second `input_urls` entry against `BEAGLE_EXPLAINS` succeeded on the first run (`gpt-image-2-image-to-image`, task completed with a `resultUrls` output). Accepted.
 2. **Latency roughly doubles per carousel.** Slide 1 must complete (~1–3 min) before siblings start. Acceptable for a cron-driven pipeline; worth surfacing in the UI as a two-stage state.
 3. **A failed slide 0 blocks the whole carousel.** Kie fails ~40% of the time on long BEAGLE_EXPLAINS prompts and ~10% elsewhere. The style-guide rewrite (3358 → 2372 chars) reduces this, and manual retry already exists, but slide 0 warrants automatic retry since it gates four other slides.
 4. **Partial carousels.** If slide 3 of 5 fails permanently the idea never reaches `generated`. Mitigated by §5.6: middle slides retry against the same anchor, and the freeform pool stops being gated on idea completion so the surviving images stay usable.
