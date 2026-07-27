@@ -373,6 +373,13 @@ EOF
 
 ### Task 4: `buildSlidePrompt`
 
+> **Ruling (Rayyan, 2026-07-27): Tasks 4 and 5 are implemented and committed as one unit.**
+> Renaming `buildImagePrompt` without updating its caller leaves an intermediate commit where
+> `tsc` fails. The multi-tenant Phase B plan hit this exact situation and merged its two tasks
+> for the same reason. Do all of Task 4 and Task 5, run the verification from Task 5 Step 3,
+> and make a single commit using Task 5's message. Ignore Task 4 Step 5's separate commit and
+> its note that the typecheck is expected to fail.
+
 **Files:**
 - Modify: `lib/athena/image-prompt.ts` (replaces `buildImagePrompt`)
 - Modify: `tests/image-prompt.test.ts` (rewrite)
@@ -547,6 +554,8 @@ EOF
 ---
 
 ### Task 5: `createKieTask` takes multiple references; submit slide 0 only
+
+> **Implemented together with Task 4 as one commit — see the ruling under Task 4.**
 
 **Files:**
 - Modify: `lib/athena/kie.ts:31-53` (`createKieTask`)
