@@ -68,7 +68,18 @@ create index generations_idea_slide_idx on generations(idea_id, slide_index);
 
 Default `0` makes every existing row a valid slide-0 generation.
 
-### 4.3 `posts.idea_id`
+### 4.3 `generations.anchor_generation_id`
+
+```sql
+alter table generations add column anchor_generation_id uuid references generations(id);
+create index generations_anchor_idx on generations(anchor_generation_id);
+```
+
+Records which slide-0 image a slide was generated against. Null for slide 0 itself, and for legacy and single-slide generations.
+
+This exists because "which slides belong together" is otherwise only inferrable, and inference breaks the moment an anchor is regenerated (§5.6). One nullable column makes carousel membership explicit, makes the fan-out guard exact rather than approximate, and lets posting verify that a carousel's slides were all built against the *same* anchor.
+
+### 4.4 `posts.idea_id`
 
 ```sql
 alter table posts add column idea_id uuid references ideas(id);
@@ -76,7 +87,7 @@ alter table posts add column idea_id uuid references ideas(id);
 
 Nullable **and left null for legacy posts** — the 5 existing posts each group five *unrelated* ideas, so they have no single owning idea. New posts always set it.
 
-### 4.4 Backfill
+### 4.5 Backfill
 
 ```sql
 update ideas
@@ -150,7 +161,11 @@ Note the style guide is *not* required to restate footer rules in the prompt; th
 
 **Phase 2 — poll route fan-out:** when a `slide_index = 0` generation is ingested successfully and its idea has `slides.length > 1`, submit slides 1..N-1 with `input_urls = [styleUrl, slide0.public_url]`. Those poll and ingest normally.
 
-**The fan-out must be idempotent.** The cron runs repeatedly and a retried slide 0 produces a *second* slide-0 generation, so "did slide 0 just succeed" is not a safe trigger. The guard is: fan out only if the idea has **no generations with `slide_index > 0`**. Combined with the `(idea_id, slide_index)` index this is one cheap query, and it makes double-firing structurally impossible rather than merely unlikely.
+Each fanned-out generation records `anchor_generation_id = <the slide-0 generation>`.
+
+**The fan-out must be idempotent.** The cron runs repeatedly, so "did slide 0 just succeed" is not a safe trigger. The guard is: for a succeeded slide-0 generation `G`, fan out only if **no generations exist with `anchor_generation_id = G`**.
+
+Note this is deliberately keyed on the anchor rather than on "does the idea have any slide > 0" — the weaker guard would make re-anchoring (§5.6) impossible, since an earlier run's slides would block a new one forever.
 
 The idea reaches `generated` only when *every* slide has a succeeded generation — currently it flips on the first one.
 
@@ -187,19 +202,36 @@ Everything downstream is unchanged — the idea flows through the same two-phase
 
 **One validation consequence.** `app/api/posts/create/route.ts` currently rejects a post unless `generation_ids.length === category.images_per_carousel`. That breaks any carousel whose slide count differs from the category default, which manual authoring makes possible. The check becomes: for a carousel-sourced post, the count must equal that **idea's slide count**; for a freeform post, `images_per_carousel` still applies.
 
+### 5.6 Retry and failure semantics
+
+Two cases the two-phase model creates that the single-image pipeline never had.
+
+**Retrying a middle slide** (`slide_index > 0`) is safe and cheap: resubmit that slide against the same anchor image, recording the same `anchor_generation_id`. The other slides are untouched. Posting picks the newest succeeded generation per `(idea, slide_index)` *within one anchor*, extending the "newest succeeded per idea" rule the posting route already applies.
+
+**Retrying the anchor after fan-out is a whole-carousel regeneration, and must be presented as one.** Slides 2..N were generated against the old slide 1; a new anchor invalidates all of them, and silently swapping it produces a carousel whose first panel no longer matches the rest — visually broken in a way nothing would flag. So:
+
+- The gallery offers "regenerate this carousel", not a per-slide retry, on slide 1 once siblings exist.
+- Accepting creates a new slide-0 generation, which fans out afresh under its own `anchor_generation_id`.
+- Prior generations are **not deleted** — they stay as history, consistent with how failed generations are already retained. They simply stop being the newest anchor.
+
+**A carousel is postable only if every slide has a succeeded generation under the same anchor.** That is the check, and it is exact rather than count-based.
+
+**Partial carousels must not dead-end.** If a slide fails past its retries, the remaining images are still good work and must stay usable. Today `postables` only includes generations whose idea has reached `generated`, so a carousel stuck at 4 of 5 would hide four perfectly good images. The freeform pool therefore includes **every succeeded generation in the category**, regardless of whether its idea completed. The escape hatch from a broken carousel is the freeform composer, which requires no new UI — only that the pool stops being gated on idea completion.
+
 ## 6. Files touched
 
 | file | change |
 |---|---|
 | `supabase/migrations/0008_structured_carousels.sql` | new |
-| `lib/types.ts` | `Slide`, `Idea.slides`, `Generation.slide_index`, `Post.idea_id` |
+| `lib/types.ts` | `Slide`, `Idea.slides`, `Generation.slide_index`, `Generation.anchor_generation_id`, `Post.idea_id` |
 | `lib/athena/prompts.ts` | carousel schema + instructions, shape validation |
 | `lib/athena/generate-ideas.ts` | validate and insert slides |
 | `lib/athena/image-prompt.ts` | `buildSlidePrompt` replaces `buildImagePrompt` |
 | `lib/athena/kie.ts` | `createKieTask` takes `inputUrls: string[]` |
 | `lib/athena/submit-generations.ts` | submit slide 0 only |
-| `app/api/jobs/poll/route.ts` | phase-2 fan-out; idea completes only when all slides do |
-| `lib/athena/carousel.ts` | idea-based assembly replaces `selectAutoFill` |
+| `app/api/jobs/poll/route.ts` | phase-2 fan-out keyed on `anchor_generation_id`; idea completes only when all slides do |
+| `lib/athena/carousel.ts` | slide-aware assembly; freeform pool no longer gated on idea completion |
+| `app/(app)/gallery/gallery-card.tsx` | per-slide retry vs. whole-carousel regenerate on the anchor |
 | `app/(app)/ideas/*` | manual authoring dialog + server action |
 | `app/api/posts/create/route.ts` | count validation becomes slide-aware for carousel posts |
 | `app/(app)/post/*` | carousel fill alongside the existing freeform pool |
@@ -219,7 +251,8 @@ One constraint on Phase A: `selectAutoFill` groups loose generations by recency,
 1. **Cloudinary URLs as Kie `input_urls` is unverified.** Testing chained on raw Kie result URLs. Cloudinary URLs are public HTTPS and should work, and using them is preferable since Kie's temp URLs expire — but this must be verified in the first implementation task, before the fan-out is built on it.
 2. **Latency roughly doubles per carousel.** Slide 1 must complete (~1–3 min) before siblings start. Acceptable for a cron-driven pipeline; worth surfacing in the UI as a two-stage state.
 3. **A failed slide 0 blocks the whole carousel.** Kie fails ~40% of the time on long BEAGLE_EXPLAINS prompts and ~10% elsewhere. The style-guide rewrite (3358 → 2372 chars) reduces this, and manual retry already exists, but slide 0 warrants automatic retry since it gates four other slides.
-4. **Partial carousels.** If slide 3 of 5 fails permanently, the idea is stuck between states. Retry of an individual slide must work without regenerating the anchor.
+4. **Partial carousels.** If slide 3 of 5 fails permanently the idea never reaches `generated`. Mitigated by §5.6: middle slides retry against the same anchor, and the freeform pool stops being gated on idea completion so the surviving images stay usable.
+5. **Anchor regeneration is a footgun if exposed as a plain retry.** Replacing slide 1 after fan-out silently invalidates every other slide. §5.6 requires it be presented as regenerating the whole carousel; `anchor_generation_id` is what makes that enforceable rather than a convention.
 
 ## 8. Out of scope
 
@@ -234,3 +267,6 @@ Brand / format / series object model. Brand discovery and website extraction. Th
 - The 34 imported legacy ideas and their generations continue to render in the gallery.
 - A hand-authored carousel with no LLM call generates and posts end to end, including one whose slide count differs from its category's `images_per_carousel`.
 - Freeform composition still works: five unrelated images, hand-picked in a chosen order, post successfully.
+- Retrying a middle slide leaves the other four untouched and keeps the same `anchor_generation_id`.
+- Regenerating a carousel produces a fresh anchor plus a fresh set of siblings under it, leaves the previous generations in place as history, and posts the new set — not a mix of the two.
+- A carousel deliberately stalled at 4 of 5 still shows its four succeeded images in the freeform pool, and they can be posted alongside another image.
