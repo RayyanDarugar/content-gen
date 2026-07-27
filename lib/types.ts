@@ -2,6 +2,12 @@ export type IdeaStatus =
   | "pending_review" | "approved" | "rejected"
   | "generating" | "generated" | "posted" | "failed";
 
+export interface Slide {
+  role: "hook" | "beat" | "payoff" | "single";
+  text: string;   // the words that appear on the panel
+  visual: string; // scene, camera angle, subject pose
+}
+
 export interface Category {
   id: string;
   user_id: string;
@@ -29,6 +35,7 @@ export interface Idea {
   approved: boolean;
   status: IdeaStatus;
   batch_id: string;
+  slides: Slide[];
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +53,8 @@ export interface Generation {
   image_path: string;
   public_url: string;
   error: string;
+  slide_index: number;
+  anchor_generation_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,6 +67,7 @@ export interface Post {
   caption: string;
   status: "created" | "queued" | "failed";
   error: string;
+  idea_id: string | null;
   created_at: string;
   updated_at: string;
 }
