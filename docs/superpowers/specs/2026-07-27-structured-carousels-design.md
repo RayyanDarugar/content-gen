@@ -171,6 +171,22 @@ What changes is only **how the composer's default fill is chosen**, plus a new w
 
 **Nothing requires a carousel.** A five-image post of five unrelated images, hand-picked in whatever order, remains a first-class thing the product does.
 
+### 5.5 Manual authoring (no LLM)
+
+Today the only path into `ideas` is `generateIdeas`, so a carousel cannot be created without an LLM call. Slides as a structured array make hand-authoring natural, and it is the manual counterpart to generated carousels: same table, same generation path, same posting path — only the author differs.
+
+A dialog on `/ideas` writes an idea row directly:
+
+- category, `concept` (the one-line summary), and one row per slide (`role`, `text`, `visual`)
+- slide count defaults to the category's `images_per_carousel` but is **not constrained by it** — a hand-authored carousel may be any length, including one
+- inserted with `approved = true`, `status = "approved"`, a fresh `batch_id`, and empty `ai_filter_reason`
+
+It skips `pending_review` deliberately: that queue exists to review the model's output, and there is nothing to review about text the user just typed.
+
+Everything downstream is unchanged — the idea flows through the same two-phase generation and the same composer.
+
+**One validation consequence.** `app/api/posts/create/route.ts` currently rejects a post unless `generation_ids.length === category.images_per_carousel`. That breaks any carousel whose slide count differs from the category default, which manual authoring makes possible. The check becomes: for a carousel-sourced post, the count must equal that **idea's slide count**; for a freeform post, `images_per_carousel` still applies.
+
 ## 6. Files touched
 
 | file | change |
@@ -184,13 +200,17 @@ What changes is only **how the composer's default fill is chosen**, plus a new w
 | `lib/athena/submit-generations.ts` | submit slide 0 only |
 | `app/api/jobs/poll/route.ts` | phase-2 fan-out; idea completes only when all slides do |
 | `lib/athena/carousel.ts` | idea-based assembly replaces `selectAutoFill` |
-| `app/(app)/post/*` | carousel-per-idea composer |
+| `app/(app)/ideas/*` | manual authoring dialog + server action |
+| `app/api/posts/create/route.ts` | count validation becomes slide-aware for carousel posts |
+| `app/(app)/post/*` | carousel fill alongside the existing freeform pool |
 | `app/(app)/gallery/*` | group generations by idea |
-| `tests/*` | prompt shape, fan-out decision, assembly ordering |
+| `tests/*` | prompt shape, fan-out idempotency, assembly ordering, post count validation |
 
 Also folded in: the uncommitted `uploadStyleRef` fix (per-user/per-category upload path — a cross-tenant defect where concurrent users overwrite each other's style reference at a shared path).
 
-**Natural phasing.** This is larger than one sitting and splits cleanly at the generation/consumption boundary: **Phase A** = migration, types, prompts, idea generation, slide prompts, two-phase submission and fan-out (everything through images landing in the gallery). **Phase B** = posting and UI (carousel assembly, `/post` rework, gallery grouping). Phase A is independently verifiable: correct slides in the database with all their images generated.
+**Natural phasing.** This is larger than one sitting and splits cleanly at the generation/consumption boundary: **Phase A** = migration, types, prompts, idea generation, slide prompts, two-phase submission and fan-out, and manual authoring (§5.5) — everything through images landing in the gallery, whether the slides were written by the model or by hand. **Phase B** = posting and UI (carousel fill, `/post` rework, slide-aware count validation, gallery grouping).
+
+Manual authoring belongs in Phase A because it exercises the same schema and generation path as generated carousels, which makes it a cheap independent check that the slide model works before any UI depends on it. Phase A is independently verifiable: correct slides in the database with all their images generated.
 
 One constraint on Phase A: `selectAutoFill` groups loose generations by recency, so once an idea yields five sibling generations its *default fill* would assemble them in arbitrary order — all five share an `idea_created_at`, and nothing sorts by `slide_index`. Phase A must therefore make the default fill skip multi-slide ideas. The freeform pool is unaffected and every image remains hand-pickable throughout; only the pre-filled suggestion is constrained until Phase B teaches it to assemble carousels in order. Silently pre-filling a scrambled carousel is the worse failure.
 
@@ -212,3 +232,5 @@ Brand / format / series object model. Brand discovery and website extraction. Th
 - Slide 0 generates; the cron fans out slides 1–4 referencing it; the idea flips to `generated` only after all five succeed.
 - `/post` assembles the five in `slide_index` order and posts one Buffer carousel.
 - The 34 imported legacy ideas and their generations continue to render in the gallery.
+- A hand-authored carousel with no LLM call generates and posts end to end, including one whose slide count differs from its category's `images_per_carousel`.
+- Freeform composition still works: five unrelated images, hand-picked in a chosen order, post successfully.
