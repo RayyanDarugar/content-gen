@@ -60,17 +60,23 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
 
   const current = slides[Math.min(active, slides.length - 1)]?.generation ?? null;
   const anyFailed = slides.some((s) => s.generation?.status === "failed");
+  const currentFailed = current?.status === "failed";
   const allSucceeded = slides.every((s) => s.generation?.status === "succeeded");
   const isCarousel = slideCount > 1;
 
-  async function submit(refinementNotes?: string) {
+  // slideIndex retries just that panel against the anchor its siblings used.
+  // Omitting it re-anchors and regenerates the whole carousel — which is right
+  // for a failed opener or a deliberate Regenerate, and wrong for one bad
+  // middle slide, where it would spend five generations to recover one and
+  // throw away four good images.
+  async function submit(refinementNotes?: string, slideIndex?: number) {
     setBusy(true);
     setMsg("");
     try {
       const res = await fetch("/api/images/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaId: idea.id, refinementNotes }),
+        body: JSON.stringify({ ideaId: idea.id, refinementNotes, slideIndex }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? res.statusText);
@@ -130,10 +136,26 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
           <p className="text-xs text-muted-foreground">Notes: {current.refinement_notes}</p>
         )}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          {anyFailed && (
-            <Button size="sm" variant="outline" className="rounded-full" disabled={busy} onClick={() => submit()}>
-              Retry
+          {currentFailed && (
+            <Button
+              size="sm" variant="outline" className="rounded-full" disabled={busy}
+              onClick={() => submit(undefined, isCarousel && active > 0 ? active : undefined)}
+              title={
+                isCarousel && active > 0
+                  ? `Regenerate slide ${active + 1} against the opening image`
+                  : "The opening image anchors the others, so this regenerates the whole carousel"
+              }
+            >
+              {isCarousel && active > 0 ? `Retry slide ${active + 1}` : isCarousel ? "Retry carousel" : "Retry"}
             </Button>
+          )}
+          {anyFailed && !currentFailed && (
+            <button
+              className="text-xs underline text-muted-foreground"
+              onClick={() => setActive(slides.findIndex((s) => s.generation?.status === "failed"))}
+            >
+              go to failed slide
+            </button>
           )}
           {allSucceeded && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -82,3 +82,15 @@ export function shouldRetryAnchor(anchorAttempts: number, anchorSucceeded: boole
   if (anchorSucceeded) return false;
   return anchorAttempts < MAX_ANCHOR_ATTEMPTS;
 }
+
+// The anchor a retried slide must be generated against: the newest SUCCEEDED
+// slide-0 image. Filters on status itself, so it is safe to hand every
+// generation an idea has — unlike succeededIndexesUnderCurrentAnchor, whose
+// callers pre-filter.
+export function currentAnchor<
+  G extends { slide_index: number; status: string; created_at: string },
+>(rows: G[]): G | null {
+  const anchors = rows.filter((r) => r.slide_index === 0 && r.status === "succeeded");
+  if (!anchors.length) return null;
+  return anchors.reduce((newest, r) => (r.created_at > newest.created_at ? r : newest));
+}

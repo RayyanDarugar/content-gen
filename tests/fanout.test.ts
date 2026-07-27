@@ -6,6 +6,7 @@ import {
   shouldRetryAnchor,
   succeededIndexesUnderCurrentAnchor,
   orphanedTaskFailureRow,
+  currentAnchor,
 } from "@/lib/athena/fanout";
 
 describe("shouldFanOut", () => {
@@ -146,5 +147,36 @@ describe("orphanedTaskFailureRow", () => {
     expect(row.anchor_generation_id).toBeUndefined();
     expect(row.slide_index).toBe(0);
     expect(row.status).toBe("failed");
+  });
+});
+
+describe("currentAnchor", () => {
+  const r = (id: string, slide_index: number, status: string, created_at: string) =>
+    ({ id, slide_index, status, created_at });
+
+  it("returns the newest succeeded slide-0 row", () => {
+    expect(currentAnchor([
+      r("old", 0, "succeeded", "1"), r("new", 0, "succeeded", "2"),
+    ])?.id).toBe("new");
+  });
+
+  it("ignores a newer anchor that hasn't succeeded", () => {
+    expect(currentAnchor([
+      r("ok", 0, "succeeded", "1"), r("pending", 0, "submitted", "2"),
+    ])?.id).toBe("ok");
+  });
+
+  it("ignores non-anchor slides entirely", () => {
+    expect(currentAnchor([
+      r("s3", 3, "succeeded", "9"), r("a", 0, "succeeded", "1"),
+    ])?.id).toBe("a");
+  });
+
+  it("returns null when no anchor has succeeded yet", () => {
+    expect(currentAnchor([r("p", 0, "polling", "1"), r("f", 0, "failed", "2")])).toBeNull();
+  });
+
+  it("returns null for an empty set", () => {
+    expect(currentAnchor([])).toBeNull();
   });
 });
