@@ -22,4 +22,11 @@ describe("applyFilterDecisions", () => {
       ai_filter_reason: "no decision returned — defaulting to keep",
     });
   });
+  it("preserves extra fields (e.g. slides) carried on the idea beyond the base shape", () => {
+    const withSlides = [
+      { idea_id: "a", category: "COMIC", concept: "one", slides: [{ role: "single", text: "t", visual: "v" }] },
+    ];
+    const out = applyFilterDecisions(withSlides, [{ idea_id: "a", keep: true, reason: "fresh" }]);
+    expect(out[0].slides).toEqual([{ role: "single", text: "t", visual: "v" }]);
+  });
 });
