@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { TrainIcon } from "@/components/train-icon";
 import { NavLinks } from "./nav-links";
 
@@ -19,6 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </form>
       </aside>
       <main className="flex-1 p-6 bg-grid">{children}</main>
+      <Toaster />
     </div>
   );
 }
