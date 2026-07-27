@@ -60,8 +60,17 @@ export async function POST(request: NextRequest) {
   }
 
   const ideaIds = gens.map((g) => g.idea_id);
-  if (new Set(ideaIds).size !== ideaIds.length) {
-    return NextResponse.json({ error: "duplicate ideas in selection" }, { status: 400 });
+  // Uniqueness is on (idea_id, slide_index), not idea_id alone: the widened
+  // pool now legitimately includes several succeeded slides of the same
+  // carousel (e.g. the surviving images of one stuck at 4 of 5), and that is
+  // exactly the freeform escape hatch spec §5.6/§9 promise. Rejecting on
+  // idea_id alone would block posting two slides of the same idea together,
+  // which defeats the escape hatch it exists for. What must still be
+  // rejected is posting the same image (or the same slide's newest retry)
+  // twice.
+  const slideKeys = gens.map((g) => `${g.idea_id}:${g.slide_index}`);
+  if (new Set(slideKeys).size !== slideKeys.length) {
+    return NextResponse.json({ error: "duplicate slide in selection" }, { status: 400 });
   }
   for (const g of gens) {
     if (g.status !== "succeeded" || !g.public_url) {
@@ -85,13 +94,15 @@ export async function POST(request: NextRequest) {
   // to the slide rather than the whole idea.
   const { data: siblingsData, error: sibErr } = await supabase
     .from("generations")
-    .select("id, idea_id, slide_index, status, created_at")
+    .select("id, idea_id, slide_index, anchor_generation_id, status, created_at")
     .in("idea_id", ideaIds)
     .eq("user_id", user.id);
   if (sibErr) return NextResponse.json({ error: sibErr.message }, { status: 500 });
   const superseded = findSupersededGenerationIds(
     gens.map((g) => ({ id: g.id, idea_id: g.idea_id, slide_index: g.slide_index })),
-    (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "slide_index" | "status" | "created_at">[],
+    (siblingsData ?? []) as Pick<
+      Generation, "id" | "idea_id" | "slide_index" | "anchor_generation_id" | "status" | "created_at"
+    >[],
   );
   if (superseded.length > 0) {
     return NextResponse.json(

@@ -26,28 +26,62 @@ export function selectAutoFill(postables: Postable[], n: number): Postable[] {
     .slice(0, n);
 }
 
-// A generation is superseded only by a newer succeeded row for its own
-// (idea, slide) — not by a newer row anywhere else in the same idea. Before
-// carousels, one idea meant one image, so "newest per idea" and "newest per
-// slide" were the same check. Now a slide can be retried (failed-anchor
-// resubmit, manual regenerate) independently of its siblings, so comparing
-// across the whole idea would let, e.g., a freshly-succeeded slide 3 falsely
-// supersede an untouched slide 0 in the same carousel.
+export interface SiblingGeneration {
+  id: string;
+  idea_id: string;
+  slide_index: number;
+  anchor_generation_id: string | null;
+  status: string;
+  created_at: string;
+}
+
+// A generation is superseded unless it is the newest succeeded row for its
+// own (idea, slide) *under the idea's current anchor* — not by a newer row
+// anywhere else in the same idea, and not by a row that succeeded under a
+// previous, now-superseded anchor. Spec §5.6: "A carousel is postable only
+// if every slide has a succeeded generation under the same anchor... exact
+// rather than count-based." Before carousels, one idea meant one image, so
+// "newest per idea" and "newest per slide" were the same check. Now a slide
+// can be retried (failed-anchor resubmit, manual regenerate) independently
+// of its siblings, and an anchor itself can be regenerated — which must
+// invalidate its old siblings even though they are each still the newest
+// succeeded row for their own slide index. Without the anchor scope, posting
+// a fresh anchor alongside a previous anchor's leftover siblings would pass
+// this check: the exact silently-broken carousel the spec exists to prevent.
 export function findSupersededGenerationIds(
   selected: { id: string; idea_id: string; slide_index: number }[],
-  siblings: { id: string; idea_id: string; slide_index: number; status: string; created_at: string }[],
+  siblings: SiblingGeneration[],
 ): string[] {
-  const newestBySlide = new Map<string, { id: string; created_at: string }>();
+  const byIdea = new Map<string, SiblingGeneration[]>();
   for (const s of siblings) {
-    if (s.status !== "succeeded") continue;
-    const key = `${s.idea_id}:${s.slide_index}`;
-    const cur = newestBySlide.get(key);
-    if (!cur || s.created_at > cur.created_at) {
-      newestBySlide.set(key, { id: s.id, created_at: s.created_at });
+    const arr = byIdea.get(s.idea_id) ?? [];
+    arr.push(s);
+    byIdea.set(s.idea_id, arr);
+  }
+
+  const validIdByKey = new Map<string, string>();
+  for (const [ideaId, gens] of byIdea) {
+    const succeeded = gens.filter((g) => g.status === "succeeded");
+    const anchors = succeeded.filter((g) => g.slide_index === 0);
+    if (!anchors.length) continue; // nothing has succeeded under any anchor
+    const anchor = anchors.reduce((newest, g) => (g.created_at > newest.created_at ? g : newest));
+    validIdByKey.set(`${ideaId}:0`, anchor.id);
+
+    const bestForSlide = new Map<number, { id: string; created_at: string }>();
+    for (const g of succeeded) {
+      if (g.slide_index === 0 || g.anchor_generation_id !== anchor.id) continue;
+      const cur = bestForSlide.get(g.slide_index);
+      if (!cur || g.created_at > cur.created_at) {
+        bestForSlide.set(g.slide_index, { id: g.id, created_at: g.created_at });
+      }
+    }
+    for (const [slideIndex, best] of bestForSlide) {
+      validIdByKey.set(`${ideaId}:${slideIndex}`, best.id);
     }
   }
+
   return selected
-    .filter((g) => newestBySlide.get(`${g.idea_id}:${g.slide_index}`)?.id !== g.id)
+    .filter((g) => validIdByKey.get(`${g.idea_id}:${g.slide_index}`) !== g.id)
     .map((g) => g.id);
 }
 

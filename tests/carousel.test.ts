@@ -101,7 +101,11 @@ describe("selectAutoFill with multi-slide ideas", () => {
 describe("findSupersededGenerationIds", () => {
   const sib = (
     id: string, ideaId: string, slideIndex: number, status: string, created: string,
-  ) => ({ id, idea_id: ideaId, slide_index: slideIndex, status, created_at: created });
+    anchorGenerationId: string | null = null,
+  ) => ({
+    id, idea_id: ideaId, slide_index: slideIndex,
+    anchor_generation_id: anchorGenerationId, status, created_at: created,
+  });
 
   it("does not supersede a slide because a different, newer slide in the same idea succeeded", () => {
     // The exact regression this fixes: idea i1 has slide 0 (selected, older)
@@ -125,8 +129,9 @@ describe("findSupersededGenerationIds", () => {
   });
 
   it("handles slides with differing retry counts independently", () => {
-    // slide 0 has two succeeded rows (a retried anchor); slide 1 has one.
-    // Selecting the newest slide 0 and the only slide 1 should both pass.
+    // slide 0 has two succeeded rows (a retried anchor); slide 1 has one,
+    // anchored to the newest slide-0 row. Selecting the newest slide 0 and
+    // the only slide 1 should both pass.
     const selected = [
       { id: "s0-newest", idea_id: "i1", slide_index: 0 },
       { id: "s1-only", idea_id: "i1", slide_index: 1 },
@@ -134,7 +139,7 @@ describe("findSupersededGenerationIds", () => {
     const siblings = [
       sib("s0-first", "i1", 0, "failed", "2026-01-01T00:00:00Z"),
       sib("s0-newest", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
-      sib("s1-only", "i1", 1, "succeeded", "2026-01-02T00:05:00Z"),
+      sib("s1-only", "i1", 1, "succeeded", "2026-01-02T00:05:00Z", "s0-newest"),
     ];
     expect(findSupersededGenerationIds(selected, siblings)).toEqual([]);
   });
@@ -143,5 +148,26 @@ describe("findSupersededGenerationIds", () => {
     const selected = [{ id: "g1", idea_id: "i1", slide_index: 0 }];
     const siblings = [sib("g1", "i1", 0, "succeeded", "2026-01-01T00:00:00Z")];
     expect(findSupersededGenerationIds(selected, siblings)).toEqual([]);
+  });
+
+  it("flags old-anchor siblings as superseded once a new anchor succeeds, even though they remain the newest succeeded row for their own slide index", () => {
+    // Finding 4's regression case: a completed 3-slide carousel is
+    // regenerated via "Regenerate…" on the anchor. The new anchor succeeds;
+    // its own siblings haven't landed yet. Per-slide-only comparison (no
+    // anchor scope) would pass this selection — pairing the new anchor with
+    // the old anchor's leftover slides — which is precisely the silently-
+    // broken carousel spec §5.6 exists to prevent.
+    const selected = [
+      { id: "anchorB", idea_id: "i1", slide_index: 0 },
+      { id: "old-s1", idea_id: "i1", slide_index: 1 },
+      { id: "old-s2", idea_id: "i1", slide_index: 2 },
+    ];
+    const siblings = [
+      sib("anchorA", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("old-s1", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchorA"),
+      sib("old-s2", "i1", 2, "succeeded", "2026-01-01T00:02:00Z", "anchorA"),
+      sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
+    ];
+    expect(findSupersededGenerationIds(selected, siblings)).toEqual(["old-s1", "old-s2"]);
   });
 });
