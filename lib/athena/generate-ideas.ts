@@ -10,7 +10,8 @@ import {
 } from "@/lib/athena/prompts";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { applyFilterDecisions } from "@/lib/athena/filter";
-import type { Category } from "@/lib/types";
+import { validateSlideShape } from "@/lib/athena/slides";
+import type { Category, Slide } from "@/lib/types";
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
@@ -47,9 +48,23 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const generated = genResponse.parsed_output;
   if (!generated) throw new Error(`idea generation returned no parseable output (stop_reason: ${genResponse.stop_reason})`);
 
+  const catByKey = new Map(cats.map((c) => [c.key, c]));
+  let droppedForShape = 0;
   const raw = generated.ideas
     .filter((i) => activeKeys.includes(i.category))
-    .map((i, idx) => ({ idea_id: `idea_${idx}`, category: i.category, concept: i.concept }));
+    .filter((i) => {
+      const expected = catByKey.get(i.category)?.images_per_carousel ?? 1;
+      const shape = validateSlideShape((i.slides ?? []) as Slide[], expected);
+      if (!shape.ok) {
+        console.warn(`dropping malformed carousel (${i.category}): ${shape.reason}`);
+        droppedForShape++;
+      }
+      return shape.ok;
+    })
+    .map((i, idx) => ({
+      idea_id: `idea_${idx}`, category: i.category, concept: i.concept,
+      slides: i.slides as Slide[],
+    }));
   if (!raw.length) throw new Error("Claude returned zero usable ideas");
 
   // Call 2: self-filter
@@ -75,6 +90,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
         category_key: i.category,
         concept: i.concept,
         resolved_prompt: i.concept,
+        slides: i.slides,
         ai_filter_reason: i.ai_filter_reason,
         approved: false,
         status: "pending_review",
@@ -83,5 +99,5 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
     );
     if (insErr) throw new Error(`insert failed: ${insErr.message}`);
   }
-  return { inserted: kept.length, filteredOut: merged.length - kept.length, batchId };
+  return { inserted: kept.length, filteredOut: merged.length - kept.length + droppedForShape, batchId };
 }
