@@ -35,6 +35,7 @@ The existing data corroborates the problem: SAT_MYTH's style guide says *"one im
 4. **Generation is two-phase, fanned out by the existing cron.** Slide 1 must finish before its siblings can reference it. The poll route already owns generation state transitions; it gains the fan-out.
 5. **No text compositing.** Pure generation, per the test result.
 6. **`resolved_prompt` is retired** for new ideas. Per-slide `visual` replaces it. The column stays for legacy rows.
+7. **This change is strictly additive to what the app can already do.** Structured carousels are a new option alongside freeform composition, not a migration onto rails. Every existing workflow — hand-picking and reordering arbitrary images, approve/reject, retry, regenerate-with-notes — survives unchanged. See §5.4.
 
 ## 4. Data model changes
 
@@ -155,9 +156,20 @@ The idea reaches `generated` only when *every* slide has a succeeded generation 
 
 `createKieTask` changes from `styleUrl: string` to `inputUrls: string[]`.
 
-### 5.4 Posting
+### 5.4 Posting — additive, not a replacement
 
-`selectAutoFill` (oldest-N-by-recency) is deleted. `/post` instead lists **ideas** whose slides have all succeeded, and assembles image URLs ordered by `slide_index`. `posts.idea_id` is set on creation.
+**Freeform composition is preserved in full.** The composer today is already a manual tool: auto-fill is only the default, and `remove` / `add` / `move` let any succeeded image in the category be swapped in and reordered with no LLM involved. That capability is not removed, reduced, or hidden.
+
+What changes is only **how the composer's default fill is chosen**, plus a new way to pick a starting point:
+
+- **Carousel fill (new).** Choose an idea whose slides have all succeeded; the composer loads its images pre-ordered by `slide_index`. Still fully editable afterwards — remove, reorder, swap in anything else.
+- **Freeform fill (existing).** The current pool picker over loose succeeded generations, unchanged.
+
+`selectAutoFill`'s recency grouping is therefore **replaced as a default, not deleted as a capability** — it becomes slide-aware so it stops mixing slides from different carousels, while the underlying pool remains every postable image in the category.
+
+`posts.idea_id` is set for carousel-sourced posts and left null for freeform ones. That gives the nullable column a permanent meaning rather than making it a legacy artifact: null means "hand-assembled", non-null means "this post is that carousel".
+
+**Nothing requires a carousel.** A five-image post of five unrelated images, hand-picked in whatever order, remains a first-class thing the product does.
 
 ## 6. Files touched
 
@@ -180,7 +192,7 @@ Also folded in: the uncommitted `uploadStyleRef` fix (per-user/per-category uplo
 
 **Natural phasing.** This is larger than one sitting and splits cleanly at the generation/consumption boundary: **Phase A** = migration, types, prompts, idea generation, slide prompts, two-phase submission and fan-out (everything through images landing in the gallery). **Phase B** = posting and UI (carousel assembly, `/post` rework, gallery grouping). Phase A is independently verifiable: correct slides in the database with all their images generated.
 
-Phase A does **not** leave `/post` safely usable for new content. `selectAutoFill` groups loose generations by recency, so once an idea yields five sibling generations it will assemble them in arbitrary order — all five share an `idea_created_at`, and nothing sorts by `slide_index`. Phase A must therefore filter `/post` to single-slide ideas only, so multi-slide carousels are simply not offered until Phase B teaches it to assemble them properly. Silently posting a scrambled carousel is the worse failure.
+One constraint on Phase A: `selectAutoFill` groups loose generations by recency, so once an idea yields five sibling generations its *default fill* would assemble them in arbitrary order — all five share an `idea_created_at`, and nothing sorts by `slide_index`. Phase A must therefore make the default fill skip multi-slide ideas. The freeform pool is unaffected and every image remains hand-pickable throughout; only the pre-filled suggestion is constrained until Phase B teaches it to assemble carousels in order. Silently pre-filling a scrambled carousel is the worse failure.
 
 ## 7. Risks
 
