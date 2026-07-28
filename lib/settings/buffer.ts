@@ -1,53 +1,59 @@
 import "server-only";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets";
-import type { BufferChannel } from "@/lib/types";
+import type { BufferChannel, BufferConnection } from "@/lib/types";
 
-interface BufferRow {
-  buffer_token_enc: string;
-}
-
-async function fetchBufferRow(userId: string): Promise<BufferRow | null> {
+export async function listBufferConnections(userId: string): Promise<BufferConnection[]> {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase
-    .from("user_settings")
-    .select("buffer_token_enc")
+    .from("buffer_connections")
+    .select("id, user_id, label, created_at, updated_at") // never the token
     .eq("user_id", userId)
-    .maybeSingle();
-  if (error) throw new Error(`user_settings query failed: ${error.message}`);
-  return (data as BufferRow) ?? null;
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(`buffer_connections query failed: ${error.message}`);
+  return (data ?? []) as BufferConnection[];
 }
 
-export async function storeBufferToken(userId: string, token: string): Promise<void> {
+export async function addBufferConnection(userId: string, label: string, token: string): Promise<void> {
   const supabase = createAdminSupabase();
-  const { error } = await supabase.from("user_settings").upsert(
-    { user_id: userId, buffer_token_enc: encryptSecret(token) },
-    { onConflict: "user_id" },
-  );
-  if (error) throw new Error(`failed to store buffer token: ${error.message}`);
+  const { error } = await supabase.from("buffer_connections").insert({
+    user_id: userId,
+    label: label.trim(),
+    buffer_token_enc: encryptSecret(token),
+  });
+  if (error) throw new Error(`failed to add buffer connection: ${error.message}`);
 }
 
-export async function getBufferStatus(userId: string): Promise<{ connected: boolean }> {
-  const row = await fetchBufferRow(userId);
-  return { connected: !!row?.buffer_token_enc };
-}
-
-export async function disconnectBuffer(userId: string): Promise<void> {
+export async function removeBufferConnection(userId: string, connectionId: string): Promise<void> {
   const supabase = createAdminSupabase();
   const { error } = await supabase
-    .from("user_settings")
-    .update({ buffer_token_enc: "" })
-    .eq("user_id", userId);
-  if (error) throw new Error(`failed to disconnect buffer: ${error.message}`);
+    .from("buffer_connections").delete()
+    .eq("id", connectionId).eq("user_id", userId);
+  if (error) throw new Error(`failed to remove buffer connection: ${error.message}`);
 }
 
-// The one function every downstream Buffer call goes through — the stable
-// boundary that lets a future OAuth upgrade add expiry/refresh logic here
-// without touching postToBuffer, getBufferChannels, or the posting route.
+// The boundary every downstream Buffer call goes through (was
+// getValidBufferToken; connection-aware since phase 1 of the Post Menu work).
+export async function getBufferTokenForConnection(userId: string, connectionId: string): Promise<string> {
+  const supabase = createAdminSupabase();
+  const { data, error } = await supabase
+    .from("buffer_connections").select("buffer_token_enc")
+    .eq("id", connectionId).eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`buffer_connections query failed: ${error.message}`);
+  if (!data?.buffer_token_enc) {
+    throw new Error("This category's Buffer connection is missing — pick one in Config");
+  }
+  return decryptSecret(data.buffer_token_enc);
+}
+
+// Shim for callers that haven't been migrated to a connection-scoped call
+// yet (Task 4 removes its last caller and then deletes this).
 export async function getValidBufferToken(userId: string): Promise<string> {
-  const row = await fetchBufferRow(userId);
-  if (!row?.buffer_token_enc) throw new Error("Add your Buffer personal key in Config");
-  return decryptSecret(row.buffer_token_enc);
+  const connections = await listBufferConnections(userId);
+  if (connections.length === 0) throw new Error("Add a Buffer connection in Config");
+  if (connections.length > 1) throw new Error("Multiple Buffer connections — this action must specify one");
+  return getBufferTokenForConnection(userId, connections[0].id);
 }
 
 const GRAPHQL_URL = "https://api.buffer.com";
@@ -65,8 +71,7 @@ async function bufferGraphQL<T>(token: string, query: string): Promise<T> {
   return json.data as T;
 }
 
-export async function getBufferChannels(userId: string): Promise<BufferChannel[]> {
-  const token = await getValidBufferToken(userId);
+async function fetchChannelsWithToken(token: string): Promise<BufferChannel[]> {
   const orgs = await bufferGraphQL<{ account: { organizations: { id: string }[] } }>(
     token,
     `query GetOrganizations { account { organizations { id name ownerEmail } } }`,
@@ -81,4 +86,17 @@ export async function getBufferChannels(userId: string): Promise<BufferChannel[]
     if (Array.isArray(data.channels)) all.push(...data.channels);
   }
   return all;
+}
+
+export async function getBufferChannelsForConnection(
+  userId: string, connectionId: string,
+): Promise<BufferChannel[]> {
+  return fetchChannelsWithToken(await getBufferTokenForConnection(userId, connectionId));
+}
+
+export interface ChannelGroup {
+  connectionId: string;
+  label: string;
+  channels: BufferChannel[];
+  error: string; // non-empty when this connection's channel fetch failed
 }
