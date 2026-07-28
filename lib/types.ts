@@ -32,6 +32,8 @@ export interface Category {
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
+  caption_guide: string;
+  buffer_channel_service: string;
   images_per_carousel: number;
   aspect_ratio: string;
   active: boolean;
@@ -50,6 +52,7 @@ export interface Idea {
   status: IdeaStatus;
   batch_id: string;
   slides: Slide[];
+  post_text: string;
   created_at: string;
   updated_at: string;
 }
