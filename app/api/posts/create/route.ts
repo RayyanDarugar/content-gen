@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { postToBuffer } from "@/lib/athena/buffer";
 import { findSupersededGenerationIds } from "@/lib/athena/carousel";
-import { getValidBufferToken } from "@/lib/settings/buffer";
+import { getBufferTokenForConnection } from "@/lib/settings/buffer";
 import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -40,6 +40,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "unknown or inactive category" }, { status: 400 });
   }
   const cat = category as Category;
+
+  if (!cat.buffer_connection_id) {
+    return NextResponse.json(
+      { error: `category ${cat.key} has no Buffer connection — pick its channel in Config` },
+      { status: 400 },
+    );
+  }
 
   if (generationIds.length !== cat.images_per_carousel) {
     return NextResponse.json(
@@ -118,7 +125,7 @@ export async function POST(request: NextRequest) {
 
   let result;
   try {
-    const token = await getValidBufferToken(user.id);
+    const token = await getBufferTokenForConnection(user.id, cat.buffer_connection_id);
     result = await postToBuffer(token, cat.buffer_channel_id, imageUrls, caption);
   } catch (e) {
     result = { success: false, postId: "", error: e instanceof Error ? e.message : String(e), rawBody: "" };
@@ -131,6 +138,7 @@ export async function POST(request: NextRequest) {
       caption,
       status: "failed",
       error: result.error || result.rawBody.slice(0, 2000),
+      buffer_channel_id: cat.buffer_channel_id,
     });
     console.error("buffer post failed:", result.error, result.rawBody.slice(0, 500));
     return NextResponse.json({ error: `Buffer post failed: ${result.error}` }, { status: 500 });
@@ -144,6 +152,7 @@ export async function POST(request: NextRequest) {
       buffer_update_id: result.postId,
       caption,
       status: "queued",
+      buffer_channel_id: cat.buffer_channel_id,
     })
     .select()
     .single();

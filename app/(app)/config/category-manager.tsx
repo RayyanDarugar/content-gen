@@ -12,16 +12,18 @@ import {
   createCategory, updateCategory, deleteCategory, uploadStyleRefImage, clearRoleRefUrl,
 } from "./actions";
 import type { CategoryFields } from "@/lib/categories";
-import type { BufferChannel, Category } from "@/lib/types";
+import type { Category } from "@/lib/types";
+import type { ChannelGroup } from "@/lib/settings/buffer";
+import { encodeChannelChoice, decodeChannelChoice, resolveChannelService } from "@/lib/channel-choice";
 
 const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
-  post_caption: "", buffer_channel_id: "", caption_guide: "", buffer_channel_service: "",
+  post_caption: "", buffer_channel_id: "", buffer_connection_id: "", caption_guide: "", buffer_channel_service: "",
   images_per_carousel: 5, aspect_ratio: "4:5", active: true,
   post_type: "independent", role_guides: {},
 };
 
-function CategoryEditor({ category, channels }: { category?: Category; channels: BufferChannel[] }) {
+function CategoryEditor({ category, groups }: { category?: Category; groups: ChannelGroup[] }) {
   const router = useRouter();
   const [form, setForm] = useState<CategoryFields>(
     category
@@ -29,6 +31,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           name: category.name, style_guide: category.style_guide,
           output_format: category.output_format, style_ref_url: category.style_ref_url,
           post_caption: category.post_caption, buffer_channel_id: category.buffer_channel_id,
+          buffer_connection_id: category.buffer_connection_id ?? "",
           caption_guide: category.caption_guide, buffer_channel_service: category.buffer_channel_service ?? "",
           images_per_carousel: category.images_per_carousel,
           aspect_ratio: category.aspect_ratio, active: category.active,
@@ -40,6 +43,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
   const [msg, setMsg] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const allChannels = groups.flatMap((g) => g.channels);
 
   function set<K extends keyof CategoryFields>(k: K, v: CategoryFields[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -65,8 +69,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         // but re-saving a pre-existing category without re-picking the channel
         // would otherwise write back whatever was already in form (possibly
         // ''). Re-derive it from the current channel list so it self-heals.
-        const service = channels.find((c) => c.id === form.buffer_channel_id)?.service
-          ?? form.buffer_channel_service;
+        const service = resolveChannelService(allChannels, form.buffer_channel_id, form.buffer_channel_service);
         const payload = { ...form, buffer_channel_service: service };
         if (category) await updateCategory(category.id, payload);
         else { await createCategory(payload); setForm(EMPTY); }
@@ -225,21 +228,42 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         <Textarea rows={3} value={form.post_caption}
           onChange={(e) => set("post_caption", e.target.value)} /></div>
       <div><Label>Buffer channel</Label>
-        {channels.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Connect Buffer above to choose a channel.</p>
+        {groups.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Add a Buffer connection above to choose a channel.</p>
         ) : (
           <select className="block w-full rounded-md border bg-background p-2 text-sm"
-            value={form.buffer_channel_id}
+            value={form.buffer_connection_id && form.buffer_channel_id
+              ? encodeChannelChoice(
+                  form.buffer_connection_id,
+                  form.buffer_channel_id,
+                  resolveChannelService(allChannels, form.buffer_channel_id, form.buffer_channel_service),
+                )
+              : ""}
             onChange={(e) => {
-              const id = e.target.value;
-              const service = channels.find((c) => c.id === id)?.service ?? "";
-              setForm((f) => ({ ...f, buffer_channel_id: id, buffer_channel_service: service }));
+              const choice = decodeChannelChoice(e.target.value);
+              setForm((f) => ({
+                ...f,
+                buffer_connection_id: choice?.connectionId ?? "",
+                buffer_channel_id: choice?.channelId ?? "",
+                buffer_channel_service: choice?.service ?? "",
+              }));
             }}>
             <option value="">— none —</option>
-            {channels.map((c) => (
-              <option key={c.id} value={c.id}>{c.displayName || c.name} ({c.service})</option>
+            {groups.map((g) => (
+              <optgroup key={g.connectionId} label={g.error ? `${g.label} (unavailable)` : g.label}>
+                {g.channels.map((c) => (
+                  <option key={c.id} value={encodeChannelChoice(g.connectionId, c.id, c.service)}>
+                    {c.displayName || c.name} ({c.service})
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
+        )}
+        {form.buffer_channel_id && !form.buffer_connection_id && (
+          <p className="mt-1 text-xs text-destructive">
+            This channel belongs to a disconnected or unassigned Buffer account — re-pick it from a connection above.
+          </p>
         )}
       </div>
       <div className="flex items-center gap-3">
@@ -252,12 +276,12 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
   );
 }
 
-export function CategoryManager({ categories, channels }: { categories: Category[]; channels: BufferChannel[] }) {
+export function CategoryManager({ categories, groups }: { categories: Category[]; groups: ChannelGroup[] }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        {categories.map((c) => <CategoryEditor key={c.id} category={c} channels={channels} />)}
+        {categories.map((c) => <CategoryEditor key={c.id} category={c} groups={groups} />)}
         <div>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Add a new category</p>
@@ -265,7 +289,7 @@ export function CategoryManager({ categories, channels }: { categories: Category
               ✨ Draft with AI
             </Button>
           </div>
-          <CategoryEditor channels={channels} />
+          <CategoryEditor groups={groups} />
         </div>
       </CardContent>
     </Card>

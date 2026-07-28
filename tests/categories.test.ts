@@ -3,7 +3,7 @@ import { slugify, validateCategoryFields, type CategoryFields } from "@/lib/cate
 
 const base: CategoryFields = {
   name: "Test", style_guide: "", output_format: "", style_ref_url: "",
-  post_caption: "", buffer_channel_id: "", caption_guide: "", buffer_channel_service: "", images_per_carousel: 5,
+  post_caption: "", buffer_channel_id: "", buffer_connection_id: "", caption_guide: "", buffer_channel_service: "", images_per_carousel: 5,
   aspect_ratio: "4:5", active: true, post_type: "independent", role_guides: {},
 };
 
@@ -51,6 +51,14 @@ describe("CategoryFields copy fields", () => {
         caption_guide: "Long-form thought leadership.",
         buffer_channel_service: "linkedin",
       }),
+    ).not.toThrow();
+  });
+});
+
+describe("CategoryFields connection binding", () => {
+  it("accepts buffer_connection_id as a plain string", () => {
+    expect(() =>
+      validateCategoryFields({ ...base, buffer_connection_id: "11111111-1111-1111-1111-111111111111" }),
     ).not.toThrow();
   });
 });

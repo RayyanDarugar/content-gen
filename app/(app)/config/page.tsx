@@ -1,21 +1,26 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { getKeyStatus } from "@/lib/settings/user-secrets";
-import { getBufferStatus, getBufferChannels } from "@/lib/settings/buffer";
+import { listBufferConnections, getBufferChannelsForConnection, type ChannelGroup } from "@/lib/settings/buffer";
 import { CategoryManager } from "./category-manager";
 import { KeysSection } from "./keys-section";
 import { BrandSection } from "./brand-section";
-import { BufferSection } from "./buffer-section";
-import type { BrandProfile, BufferChannel, Category } from "@/lib/types";
+import { ConnectionsSection } from "./connections-section";
+import type { BrandProfile, Category } from "@/lib/types";
 
 export default async function ConfigPage() {
   const user = await requireUser();
   const status = await getKeyStatus(user.id);
-  const bufferStatus = await getBufferStatus(user.id);
-  let channels: BufferChannel[] = [];
-  if (bufferStatus.connected) {
-    try { channels = await getBufferChannels(user.id); } catch { channels = []; }
-  }
+  const connections = await listBufferConnections(user.id);
+  const groups: ChannelGroup[] = await Promise.all(
+    connections.map(async (c) => {
+      try {
+        return { connectionId: c.id, label: c.label, channels: await getBufferChannelsForConnection(user.id, c.id), error: "" };
+      } catch (e) {
+        return { connectionId: c.id, label: c.label, channels: [], error: e instanceof Error ? e.message : String(e) };
+      }
+    }),
+  );
   const supabase = await createServerSupabase();
   const { data } = await supabase.from("categories").select("*").order("key");
   const { data: brandRow } = await supabase
@@ -25,8 +30,8 @@ export default async function ConfigPage() {
       <h1 className="text-2xl font-bold">Config</h1>
       <KeysSection status={status} />
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
-      <BufferSection connected={bufferStatus.connected} />
-      <CategoryManager categories={(data ?? []) as Category[]} channels={channels} />
+      <ConnectionsSection groups={groups} />
+      <CategoryManager categories={(data ?? []) as Category[]} groups={groups} />
     </div>
   );
 }

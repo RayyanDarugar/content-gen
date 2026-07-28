@@ -4,7 +4,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
-import { storeBufferToken, disconnectBuffer } from "@/lib/settings/buffer";
+import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
 import type { RoleRefUrls } from "@/lib/types";
 
@@ -21,6 +21,7 @@ export async function createCategory(fields: CategoryFields) {
     style_ref_url: fields.style_ref_url,
     post_caption: fields.post_caption,
     buffer_channel_id: fields.buffer_channel_id,
+    buffer_connection_id: fields.buffer_connection_id || null,
     caption_guide: fields.caption_guide,
     buffer_channel_service: fields.buffer_channel_service,
     images_per_carousel: fields.images_per_carousel,
@@ -47,6 +48,7 @@ export async function updateCategory(id: string, fields: CategoryFields) {
     style_ref_url: fields.style_ref_url,
     post_caption: fields.post_caption,
     buffer_channel_id: fields.buffer_channel_id,
+    buffer_connection_id: fields.buffer_connection_id || null,
     caption_guide: fields.caption_guide,
     buffer_channel_service: fields.buffer_channel_service,
     images_per_carousel: fields.images_per_carousel,
@@ -142,15 +144,17 @@ export async function saveBrandProfile(
   return { ok: true };
 }
 
-export async function saveBufferToken(
+export async function addBufferConnectionAction(
   _prev: { error?: string; ok?: boolean } | undefined,
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
+  const label = String(formData.get("label") ?? "").trim();
   const token = String(formData.get("token") ?? "").trim();
-  if (!token) return { error: "Enter a Buffer personal key." };
+  if (!label) return { error: "Name this connection (e.g. the account it belongs to)." };
+  if (!token) return { error: "Paste the Buffer personal key." };
   try {
-    await storeBufferToken(user.id, token);
+    await addBufferConnection(user.id, label, token);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -158,8 +162,8 @@ export async function saveBufferToken(
   return { ok: true };
 }
 
-export async function disconnectBufferAction() {
+export async function removeBufferConnectionAction(connectionId: string) {
   const user = await requireUser();
-  await disconnectBuffer(user.id);
+  await removeBufferConnection(user.id, connectionId);
   revalidatePath("/config");
 }
