@@ -32,8 +32,8 @@ export async function removeBufferConnection(userId: string, connectionId: strin
   if (error) throw new Error(`failed to remove buffer connection: ${error.message}`);
 }
 
-// The boundary every downstream Buffer call goes through (was
-// getValidBufferToken; connection-aware since phase 1 of the Post Menu work).
+// The boundary every downstream Buffer call goes through (connection-aware
+// since phase 1 of the Post Menu work).
 export async function getBufferTokenForConnection(userId: string, connectionId: string): Promise<string> {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase
@@ -45,15 +45,6 @@ export async function getBufferTokenForConnection(userId: string, connectionId: 
     throw new Error("This category's Buffer connection is missing — pick one in Config");
   }
   return decryptSecret(data.buffer_token_enc);
-}
-
-// Shim for callers that haven't been migrated to a connection-scoped call
-// yet (Task 4 removes its last caller and then deletes this).
-export async function getValidBufferToken(userId: string): Promise<string> {
-  const connections = await listBufferConnections(userId);
-  if (connections.length === 0) throw new Error("Add a Buffer connection in Config");
-  if (connections.length > 1) throw new Error("Multiple Buffer connections — this action must specify one");
-  return getBufferTokenForConnection(userId, connections[0].id);
 }
 
 const GRAPHQL_URL = "https://api.buffer.com";
