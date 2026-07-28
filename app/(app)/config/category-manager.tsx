@@ -9,8 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   createCategory, updateCategory, deleteCategory, uploadStyleRefImage,
-  type CategoryFields,
 } from "./actions";
+import type { CategoryFields } from "@/lib/categories";
 import type { BufferChannel, Category } from "@/lib/types";
 
 const EMPTY: CategoryFields = {
