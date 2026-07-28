@@ -21,6 +21,36 @@ interface PreviewRun {
   fanout: TaskState[] | null;
 }
 
+type Role = Slide["role"];
+const ALL_ROLES: readonly Role[] = ["hook", "beat", "payoff", "single"];
+
+// One entry per DONE image in the run, tagged with the role its slide plays.
+// "anchor" is always slides[0]; fanout[i] is always slides[i + 1] (§10).
+interface RefCandidate { key: string; url: string; role: Role }
+
+function buildCandidates(run: PreviewRun): RefCandidate[] {
+  const list: RefCandidate[] = [];
+  if (run.anchor.status === "done" && run.anchor.url && run.slides[0]) {
+    list.push({ key: "anchor", url: run.anchor.url, role: run.slides[0].role });
+  }
+  run.fanout?.forEach((t, i) => {
+    if (t.status === "done" && t.url && run.slides[i + 1]) {
+      list.push({ key: t.taskId, url: t.url, role: run.slides[i + 1].role });
+    }
+  });
+  return list;
+}
+
+function groupByRole(candidates: RefCandidate[]): Map<Role, RefCandidate[]> {
+  const byRole = new Map<Role, RefCandidate[]>();
+  for (const c of candidates) {
+    const arr = byRole.get(c.role) ?? [];
+    arr.push(c);
+    byRole.set(c.role, arr);
+  }
+  return byRole;
+}
+
 // Confirmed against the state values documented on the preview route's GET
 // handler (app/api/categories/draft/preview/route.ts:79-80): "success" ->
 // done, "fail" -> failed, anything else -> still in flight.
@@ -74,10 +104,22 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Promotion state — local to the pane (§10). Keyed by role, not by
+  // candidate identity, so it survives re-renders across polling updates.
+  const [selection, setSelection] = useState<Partial<Record<Role, string>>>({});
+  const [excludedRoles, setExcludedRoles] = useState<Set<Role>>(new Set());
+  const [promoteState, setPromoteState] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [promoteError, setPromoteError] = useState("");
+
   async function startTest() {
     setBusy(true);
     setError("");
     setRun(null);
+    // A fresh test run invalidates any prior candidate keys/selections.
+    setSelection({});
+    setExcludedRoles(new Set());
+    setPromoteState("idle");
+    setPromoteError("");
     try {
       const res = await fetch("/api/categories/draft/preview", {
         method: "POST",
@@ -147,6 +189,35 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
     }
   }
 
+  const candidates = run ? buildCandidates(run) : [];
+  const byRole = groupByRole(candidates);
+
+  async function cementRefs() {
+    const refs: Partial<Record<Role, string>> = {};
+    for (const [role, list] of byRole.entries()) {
+      if (excludedRoles.has(role)) continue;
+      const selectedKey = selection[role] ?? list[0].key;
+      const candidate = list.find((c) => c.key === selectedKey) ?? list[0];
+      refs[role] = candidate.url;
+    }
+    if (!Object.keys(refs).length) return;
+    setPromoteState("pending");
+    setPromoteError("");
+    try {
+      const res = await fetch("/api/categories/draft/promote-refs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId, refs }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setPromoteState("success");
+    } catch (e) {
+      setPromoteError(e instanceof Error ? e.message : String(e));
+      setPromoteState("error");
+    }
+  }
+
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Test run</CardTitle></CardHeader>
@@ -185,6 +256,71 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
           </div>
         )}
         {error && <p className="text-destructive">{error}</p>}
+        {candidates.length > 0 && (
+          <div className="space-y-3 border-t pt-3">
+            <p className="text-sm font-medium">Cement as reference images</p>
+            <p className="text-xs text-muted-foreground">
+              Pick one image per role below. Future posts in this category will generate against these
+              images instead of the brand style reference.
+            </p>
+            <div className="space-y-3">
+              {ALL_ROLES.filter((role) => byRole.has(role)).map((role) => {
+                const list = byRole.get(role)!;
+                const selectedKey = selection[role] ?? list[0].key;
+                const isExcluded = excludedRoles.has(role);
+                return (
+                  <div key={role} className="space-y-1">
+                    <label className="flex items-center gap-2 text-xs font-medium capitalize">
+                      <input
+                        type="checkbox"
+                        checked={!isExcluded}
+                        onChange={(e) => {
+                          setExcludedRoles((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.delete(role);
+                            else next.add(role);
+                            return next;
+                          });
+                        }}
+                      />
+                      {role}
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {list.map((c) => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => setSelection((prev) => ({ ...prev, [role]: c.key }))}
+                          className={`overflow-hidden rounded border-2 ${
+                            selectedKey === c.key ? "border-primary ring-2 ring-primary" : "border-transparent"
+                          } ${isExcluded ? "opacity-50" : ""}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={c.url} alt={`${role} candidate`} className="h-20 w-16 object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={cementRefs} disabled={promoteState === "pending"}>
+                {promoteState === "pending"
+                  ? "Cementing…"
+                  : promoteState === "error"
+                    ? "Retry"
+                    : "Cement selected as references"}
+              </Button>
+              {promoteState === "success" && (
+                <span className="text-xs text-muted-foreground">
+                  References updated — future posts in this category will generate against these images.
+                </span>
+              )}
+            </div>
+            {promoteState === "error" && <p className="text-xs text-destructive">{promoteError}</p>}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
