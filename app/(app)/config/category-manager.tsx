@@ -14,7 +14,7 @@ import {
 import type { CategoryFields } from "@/lib/categories";
 import type { Category } from "@/lib/types";
 import type { ChannelGroup } from "@/lib/settings/buffer";
-import { encodeChannelChoice, decodeChannelChoice } from "@/lib/channel-choice";
+import { encodeChannelChoice, decodeChannelChoice, resolveChannelService } from "@/lib/channel-choice";
 
 const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
@@ -43,6 +43,7 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
   const [msg, setMsg] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const allChannels = groups.flatMap((g) => g.channels);
 
   function set<K extends keyof CategoryFields>(k: K, v: CategoryFields[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -68,9 +69,7 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
         // but re-saving a pre-existing category without re-picking the channel
         // would otherwise write back whatever was already in form (possibly
         // ''). Re-derive it from the current channel list so it self-heals.
-        const channels = groups.flatMap((g) => g.channels);
-        const service = channels.find((c) => c.id === form.buffer_channel_id)?.service
-          ?? form.buffer_channel_service;
+        const service = resolveChannelService(allChannels, form.buffer_channel_id, form.buffer_channel_service);
         const payload = { ...form, buffer_channel_service: service };
         if (category) await updateCategory(category.id, payload);
         else { await createCategory(payload); setForm(EMPTY); }
@@ -234,7 +233,11 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
         ) : (
           <select className="block w-full rounded-md border bg-background p-2 text-sm"
             value={form.buffer_connection_id && form.buffer_channel_id
-              ? encodeChannelChoice(form.buffer_connection_id, form.buffer_channel_id, form.buffer_channel_service)
+              ? encodeChannelChoice(
+                  form.buffer_connection_id,
+                  form.buffer_channel_id,
+                  resolveChannelService(allChannels, form.buffer_channel_id, form.buffer_channel_service),
+                )
               : ""}
             onChange={(e) => {
               const choice = decodeChannelChoice(e.target.value);
