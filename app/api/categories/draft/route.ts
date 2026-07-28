@@ -28,6 +28,7 @@ function draftColumns(draft: NormalizedDraft) {
     output_format: draft.output_format,
     post_type: draft.post_type,
     role_guides: draft.role_guides,
+    caption_guide: draft.caption_guide,
     images_per_carousel: draft.images_per_carousel,
     aspect_ratio: draft.aspect_ratio,
   };
