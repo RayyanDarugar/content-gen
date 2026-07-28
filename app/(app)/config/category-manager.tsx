@@ -1,6 +1,7 @@
 "use client";
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,7 +86,16 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         <div className="flex items-center gap-3">
           <Switch checked={form.active} onCheckedChange={(v) => set("active", v)} />
           {category && (
-            <Button variant="destructive" size="sm" disabled={pending} onClick={remove}>Delete</Button>
+            <>
+              <Button
+                render={<Link href={`/config/draft?category=${category.id}`} />}
+                variant="outline"
+                size="sm"
+              >
+                Revise with AI
+              </Button>
+              <Button variant="destructive" size="sm" disabled={pending} onClick={remove}>Delete</Button>
+            </>
           )}
         </div>
       </div>
@@ -192,7 +202,12 @@ export function CategoryManager({ categories, channels }: { categories: Category
       <CardContent className="space-y-4">
         {categories.map((c) => <CategoryEditor key={c.id} category={c} channels={channels} />)}
         <div>
-          <p className="mb-2 text-sm font-medium">Add a new category</p>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium">Add a new category</p>
+            <Button render={<Link href="/config/draft" />} variant="outline" size="sm">
+              ✨ Draft with AI
+            </Button>
+          </div>
           <CategoryEditor channels={channels} />
         </div>
       </CardContent>
