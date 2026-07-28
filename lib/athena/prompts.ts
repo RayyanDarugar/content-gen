@@ -9,7 +9,7 @@ export interface BrandContext {
   avoid: string;
 }
 
-function brandBlock(brand: BrandContext): string {
+export function brandBlock(brand: BrandContext): string {
   const lines: string[] = [];
   if (brand.business_name) lines.push(`Business: ${brand.business_name}`);
   if (brand.business_description) lines.push(`What it is: ${brand.business_description}`);
