@@ -17,31 +17,36 @@ Internal to super{set} first. Not a sellable product unless proven inside the po
 
 ## The Core Hypothesis (unproven — Phase 0 exists to test it)
 
-**That organic-feeling content from a credible persona produces meaningfully better market signal than an honest paid ad under the company's real name.** The persona approach's genuine edge is qualitative — unprompted comments, objections, and shares from people who believe they discovered the product organically. Its costs are real: weeks of account warmup, platform ban risk (coordinated-inauthentic-behavior detection), and reputational/disclosure risk to super{set} if the proxied-account pattern gets noticed.
+**That an agentic tool running market tests through social channels produces a decision-grade market read faster, cheaper, and more credibly than what a founder would otherwise do** — manual validation (DIY posting, cold outreach, informal focus groups) or, most commonly, nothing at all. The baseline Market Test Me competes against is *manual testing / no testing*, not one distribution channel versus another.
 
-If a matched paid campaign performs roughly as well, the right product to build is paid-ads automation (fast, safe, sanctioned), not a persona network. Phase 0 is designed to answer this before the expensive part gets built.
+Persona accounts and paid ads are both **instruments** of the same tool, not competitors. They yield different kinds of signal — paid gives fast, targeted, quantitative conversion data with zero platform risk; personas give organic-reception data and unprompted qualitative reactions (comments, objections, shares) that ads structurally can't. A mature version of the tool likely runs both per test. Phase 0 runs both not to pick a winner but to learn what each instrument actually contributes to the market read — which determines where build investment goes next.
+
+The persona instrument carries costs the paid one doesn't (weeks of warmup, platform ban risk, reputational/disclosure risk to super{set}), so its *contribution* has to justify those costs — but that's a portfolio-allocation question inside the tool, not an existential either/or.
 
 ## Phase 0 — Validation Pilot (the only committed scope)
 
-Run **one real test for one product/positioning** with two arms sharing the same message, landing page, and attribution pipeline:
+Run **one real test for one product/positioning** using both instruments, sharing the same message, landing page, and attribution pipeline:
 
-**Arm A — persona (the thing being validated):**
+**Instrument A — personas:**
 - **2 ICPs:** developers, enterprise marketers.
 - **1 persona account per ICP** (2 accounts total).
 - **1 channel: X.**
 - ~2 weeks of warmup per account (100% organic, ICP-relevant, non-promotional content) before any test content.
 - During the campaign window: test posts folded in among continued organic posts, each linking to the waitlist with unique per-post UTMs.
 
-**Arm B — paid control (manual, zero build):**
-- A matched ad campaign created by hand in X's native ad manager — same channel as the persona arm so the comparison is fair — same message and landing page, targeted at the same two ICPs via platform targeting.
-- Tagged `utm_medium=paid` vs Arm A's `utm_medium=organic-persona`. Same landing page captures both — no extra code.
-- **Not a product feature.** No ad API integration, no spend automation. It is the experimental control.
+**Instrument B — paid (manual, zero build):**
+- A matched ad campaign created by hand in X's native ad manager — same channel, same message, same landing page — targeted at the same two ICPs via platform targeting.
+- Tagged `utm_medium=paid` vs Instrument A's `utm_medium=organic-persona`. Same landing page captures both — no extra code.
+- Manual in Phase 0 only because building ad-API automation before validating the tool would be premature — paid is expected to be an automated instrument later if the tool proves out.
 
-**Success criteria for scaling past Phase 0** (persona arm must earn its keep on at least one):
-- More signups per unit of effort/cost than the paid control, or
-- Qualitatively richer signal — real objections, comments, shares — that would change a founder's decision in a way the paid arm's numbers couldn't.
+**What Phase 0 must prove (the tool-level question):**
+- The full loop works end to end: define a test → generate content → distribute through social channels → capture intent → produce a report a founder actually uses to make a decision.
+- That read is worth more than what the founder would have gotten manually in the same two weeks — measured honestly by asking the test-subject founder: *did this change or confirm a decision, and would you have gotten there yourself?*
 
-If neither holds, stop: the future build is paid-ads automation, and the persona network (reservations, warmup pipeline, cooldowns) never gets built.
+**What Phase 0 additionally teaches (the instrument-level question):**
+- What each instrument contributes: does the persona arm's qualitative signal (comments, objections, organic shares) add decision value beyond the paid arm's conversion numbers? The answer sets post-Phase-0 build priorities — how much to invest in scaling the persona network vs. automating paid — it is not a kill-gate for either instrument.
+
+If the tool-level question fails — the loop produces a report nobody acts on, or manual testing would clearly have done as well — stop and rethink the product, regardless of which instrument performed better.
 
 ## What Gets Built for Phase 0
 
@@ -61,19 +66,19 @@ Deliberately minimal — most of Phase 0 is operational (running accounts), not 
 
 ## Post–Phase 0 Design (recorded, not committed)
 
-These decisions were made during brainstorming and hold **if** Phase 0 validates the hypothesis:
+These decisions were made during brainstorming and hold **if** Phase 0 validates the tool-level hypothesis; instrument-level results tune how much of this gets built and when:
 
 - **Persona pool:** 3 account instances per ICP. Personas are reusable templates (the IP); the 3-account spread enables A/B of framings within one ICP and averages out single-account audience quirks.
 - **Lifecycle:** warmup (~2 weeks, organic only) → reservable pool → steady state (mostly organic content, capped share of test content during reserved windows) → mandatory cooldown before a different org can reserve the same account. Cooldown + feed-share caps are what keep an account from reading as a serial pitchman — which would contaminate the signal for everyone.
 - **Reservations:** a booking system. `personas` + `reservations` (persona_id, org_id, campaign_id, tstzrange window, status) with a Postgres `EXCLUDE USING gist` constraint making double-booking structurally impossible. The reservation window gates the posting scheduler. Contention policy (FCFS vs. operator arbitration) is policy, not schema — decide later.
 - **Channels:** add LinkedIn second (text-first, same pipeline). Instagram is possible — the content engine already handles image/carousel production — but deprioritized while video generation is out of scope, since IG's algorithm under-distributes non-video content and accounts would grow slowly. Revisit when Kie-based video gen matures.
-- **Paid ads as a feature:** deferred entirely. If Phase 0 says paid wins, the future build is per-platform ad API integrations, a spend-control layer (BYO ad accounts or centrally funded with caps + approval), ICP→targeting-spec translation per platform, and campaign pacing/monitoring — a different product than the persona network, sharing only the content engine and attribution layer.
+- **Paid ads as an automated instrument:** deferred, but expected. The build is per-platform ad API integrations, a spend-control layer (BYO ad accounts or centrally funded with caps + approval), ICP→targeting-spec translation per platform, and campaign pacing/monitoring. It shares the content engine and attribution layer with the persona instrument; how much to invest in it vs. scaling the persona network is set by what Phase 0 shows each instrument contributing.
 - **Reporting at scale:** ICP × channel × persona × message-variant matrix; engagement rate + conversion rate per cell; persona maturity (follower count, account age) surfaced as context so a young account's weak numbers aren't misread as weak positioning.
 
 ## Risks (acknowledged, not resolved)
 
 - **Platform detection:** multiple accounts operated from one shop with correlated posting patterns is what coordinated-inauthentic-behavior systems look for. Phase 0's 2-account scale keeps the blast radius small; a ban costs one account's warmup, not a network.
-- **Disclosure/reputation:** proxied accounts presenting product mentions as organic discovery sits close to undisclosed-endorsement territory. The tail risk is reputational — "super{set}-backed startups run astroturf accounts" — and it lands on super{set}, not one portfolio company. This is the strongest argument for the paid-control comparison: if honest testing works as well, the risk isn't worth carrying.
+- **Disclosure/reputation:** proxied accounts presenting product mentions as organic discovery sits close to undisclosed-endorsement territory. The tail risk is reputational — "super{set}-backed startups run astroturf accounts" — and it lands on super{set}, not one portfolio company. This risk attaches only to the persona instrument, which is why its qualitative contribution (measured in Phase 0) has to justify carrying it — if paid + other honest instruments deliver most of the decision value, the persona network can stay small or be dropped without killing the tool.
 - **Signal validity:** small follower counts in Phase 0 mean small absolute numbers; the comparison against the paid arm (same window, same message) is what makes them interpretable.
 
 ## Open Questions
