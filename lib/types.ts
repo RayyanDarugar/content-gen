@@ -19,6 +19,14 @@ export interface Slide {
   visual: string; // scene, camera angle, subject pose
 }
 
+export interface BufferConnection {
+  id: string;
+  user_id: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Category {
   id: string;
   user_id: string;
@@ -32,6 +40,7 @@ export interface Category {
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
+  buffer_connection_id: string | null;
   caption_guide: string;
   buffer_channel_service: string;
   images_per_carousel: number;
@@ -81,6 +90,8 @@ export interface Post {
   user_id: string;
   category_key: string;
   buffer_update_id: string;
+  post_group_id: string;
+  buffer_channel_id: string;
   caption: string;
   status: "created" | "queued" | "failed";
   error: string;

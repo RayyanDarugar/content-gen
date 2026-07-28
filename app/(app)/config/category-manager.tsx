@@ -16,7 +16,7 @@ import type { BufferChannel, Category } from "@/lib/types";
 
 const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
-  post_caption: "", buffer_channel_id: "", caption_guide: "", buffer_channel_service: "",
+  post_caption: "", buffer_channel_id: "", buffer_connection_id: "", caption_guide: "", buffer_channel_service: "",
   images_per_carousel: 5, aspect_ratio: "4:5", active: true,
   post_type: "independent", role_guides: {},
 };
@@ -29,6 +29,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           name: category.name, style_guide: category.style_guide,
           output_format: category.output_format, style_ref_url: category.style_ref_url,
           post_caption: category.post_caption, buffer_channel_id: category.buffer_channel_id,
+          buffer_connection_id: category.buffer_connection_id ?? "",
           caption_guide: category.caption_guide, buffer_channel_service: category.buffer_channel_service ?? "",
           images_per_carousel: category.images_per_carousel,
           aspect_ratio: category.aspect_ratio, active: category.active,

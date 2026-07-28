@@ -7,6 +7,7 @@ export interface CategoryFields {
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
+  buffer_connection_id: string;
   caption_guide: string;
   buffer_channel_service: string;
   images_per_carousel: number;
