@@ -94,3 +94,20 @@ export function currentAnchor<
   if (!anchors.length) return null;
   return anchors.reduce((newest, r) => (r.created_at > newest.created_at ? r : newest));
 }
+
+// resubmitSlide (lib/athena/resubmit-slide.ts) retries ONE slide against a
+// stored kie_style_url. A post-role-ref carousel (spec §10) stores each
+// fanned slide's OWN role's ref there — not necessarily the anchor's — so
+// the right value to replay lives on a prior row for this exact slide index,
+// not on the anchor. Returns the most recent such row (by created_at) with a
+// non-empty kie_style_url, so the caller can fall back to the anchor's own
+// kie_style_url when none exists: a pre-role-ref carousel (every sibling
+// already shares the anchor's url, so the fallback is a no-op) or a slide
+// that never got a row at all.
+export function mostRecentForSlide<
+  G extends { slide_index: number; kie_style_url: string; created_at: string },
+>(rows: G[], slideIndex: number): G | null {
+  const candidates = rows.filter((r) => r.slide_index === slideIndex && r.kie_style_url);
+  if (!candidates.length) return null;
+  return candidates.reduce((newest, r) => (r.created_at > newest.created_at ? r : newest));
+}

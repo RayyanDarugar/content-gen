@@ -3,7 +3,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createKieTask } from "@/lib/athena/kie";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { requireKieKey } from "@/lib/settings/user-secrets";
-import { currentAnchor } from "@/lib/athena/fanout";
+import { currentAnchor, mostRecentForSlide } from "@/lib/athena/fanout";
 import type { Category, Generation, Idea, Slide } from "@/lib/types";
 
 export interface ResubmitResult {
@@ -69,8 +69,15 @@ export async function resubmitSlide(
     category.style_guide, slides[slideIndex], slideIndex + 1, slides.length, true,
     refinementNotes, category.role_guides);
 
+  // See mostRecentForSlide's doc comment: a post-role-ref carousel stores
+  // each fanned slide's OWN role's ref, which can differ from the anchor's —
+  // reusing anchor.kie_style_url here would silently regenerate against the
+  // wrong role's reference.
+  const priorForSlide = mostRecentForSlide(gens, slideIndex);
+  const styleRefUrl = priorForSlide?.kie_style_url ?? anchor.kie_style_url;
+
   const taskId = await createKieTask(
-    kieKey, prompt, [anchor.kie_style_url, anchor.public_url], category.aspect_ratio);
+    kieKey, prompt, [styleRefUrl, anchor.public_url], category.aspect_ratio);
 
   const { error: insErr } = await supabase.from("generations").insert({
     user_id: userId,
@@ -79,7 +86,7 @@ export async function resubmitSlide(
     status: "submitted",
     slide_index: slideIndex,
     anchor_generation_id: anchor.id,
-    kie_style_url: anchor.kie_style_url,
+    kie_style_url: styleRefUrl,
     full_prompt: prompt,
     refinement_notes: refinementNotes,
   });

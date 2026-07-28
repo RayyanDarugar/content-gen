@@ -7,6 +7,7 @@ import {
   succeededIndexesUnderCurrentAnchor,
   orphanedTaskFailureRow,
   currentAnchor,
+  mostRecentForSlide,
 } from "@/lib/athena/fanout";
 
 describe("shouldFanOut", () => {
@@ -178,5 +179,36 @@ describe("currentAnchor", () => {
 
   it("returns null for an empty set", () => {
     expect(currentAnchor([])).toBeNull();
+  });
+});
+
+describe("mostRecentForSlide", () => {
+  const g = (slide_index: number, kie_style_url: string, created_at: string) =>
+    ({ slide_index, kie_style_url, created_at });
+
+  it("returns the newest row for the requested slide index", () => {
+    expect(mostRecentForSlide([
+      g(2, "https://cdn.example/old.jpg", "1"),
+      g(2, "https://cdn.example/new.jpg", "2"),
+    ], 2)?.kie_style_url).toBe("https://cdn.example/new.jpg");
+  });
+
+  it("ignores rows for other slide indexes", () => {
+    expect(mostRecentForSlide([
+      g(1, "https://cdn.example/beat.jpg", "1"),
+      g(2, "https://cdn.example/payoff.jpg", "2"),
+    ], 1)?.kie_style_url).toBe("https://cdn.example/beat.jpg");
+  });
+
+  it("ignores rows with an empty kie_style_url", () => {
+    expect(mostRecentForSlide([g(2, "", "1")], 2)).toBeNull();
+  });
+
+  it("returns null when no row exists for that slide index", () => {
+    expect(mostRecentForSlide([g(1, "https://cdn.example/beat.jpg", "1")], 2)).toBeNull();
+  });
+
+  it("returns null for an empty set", () => {
+    expect(mostRecentForSlide([], 3)).toBeNull();
   });
 });

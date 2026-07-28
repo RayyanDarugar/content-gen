@@ -8,6 +8,7 @@ import {
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
 import { validateSlideShape } from "@/lib/athena/slides";
+import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import { requireAnthropicKey, requireKieKey } from "@/lib/settings/user-secrets";
 import type { Category, Slide } from "@/lib/types";
 
@@ -71,11 +72,15 @@ export async function submitPreviewAnchor(
   category: Category,
   slides: Slide[],
 ): Promise<{ styleUrl: string; taskId: string }> {
-  if (!category.style_ref_url) {
+  const anchorRole = slides[0].role;
+  const refUrl = resolveRoleRef(category, anchorRole);
+  if (!refUrl) {
     throw new Error("Add a brand visual reference image first — the preview generates against it");
   }
   const kieKey = await requireKieKey(userId);
-  const styleUrl = await uploadStyleRef(kieKey, category.style_ref_url, userId, category.key);
+  const usedRoleRef = !!category.role_ref_urls?.[anchorRole];
+  const styleUrl = await uploadStyleRef(
+    kieKey, refUrl, userId, roleRefUploadKey(category.key, anchorRole, usedRoleRef));
   const { anchor } = buildPreviewPrompts(category, slides);
   const taskId = await createKieTask(kieKey, anchor, [styleUrl], category.aspect_ratio);
   return { styleUrl, taskId };
@@ -85,14 +90,33 @@ export async function submitPreviewFanout(
   userId: string,
   category: Category,
   slides: Slide[],
+  // The anchor-role's already-uploaded ref, returned by submitPreviewAnchor.
+  // Precedence per fanned slide mirrors resolveRoleRef: that slide's own
+  // promoted role ref wins if one exists (uploaded fresh below, per-role
+  // cached within this call); otherwise this param is the fallback — which
+  // is itself already resolveRoleRef(category, anchorRole) resolved and
+  // uploaded, not the raw style_ref_url.
   styleUrl: string,
   anchorImageUrl: string,
 ): Promise<{ taskIds: string[] }> {
   const kieKey = await requireKieKey(userId);
   const { fanout } = buildPreviewPrompts(category, slides);
+  const roleRefUrlCache = new Map<string, string>();
   const taskIds: string[] = [];
-  for (const prompt of fanout) {
-    taskIds.push(await createKieTask(kieKey, prompt, [styleUrl, anchorImageUrl], category.aspect_ratio));
+  for (let i = 0; i < fanout.length; i++) {
+    const role = slides[i + 1].role;
+    let refUrl = styleUrl;
+    if (category.role_ref_urls?.[role]) {
+      const cached = roleRefUrlCache.get(role);
+      if (cached) {
+        refUrl = cached;
+      } else {
+        refUrl = await uploadStyleRef(
+          kieKey, resolveRoleRef(category, role), userId, roleRefUploadKey(category.key, role, true));
+        roleRefUrlCache.set(role, refUrl);
+      }
+    }
+    taskIds.push(await createKieTask(kieKey, fanout[i], [refUrl, anchorImageUrl], category.aspect_ratio));
   }
   return { taskIds };
 }

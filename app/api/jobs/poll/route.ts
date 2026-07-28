@@ -3,7 +3,7 @@ import { timingSafeEqual } from "crypto";
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { getKieRecord, createKieTask } from "@/lib/athena/kie";
+import { getKieRecord, createKieTask, uploadStyleRef } from "@/lib/athena/kie";
 import { decidePoll } from "@/lib/athena/poll-logic";
 import {
   shouldFanOut,
@@ -14,6 +14,7 @@ import {
   orphanedTaskFailureRow,
 } from "@/lib/athena/fanout";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
+import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import type { Category, Generation, Idea } from "@/lib/types";
@@ -124,14 +125,32 @@ async function fanOutCarousel(
   const category = catRow as Category;
   const slides = idea.slides ?? [];
 
+  // Per-role uploads, cached within this one fan-out call so N beats sharing
+  // a role (or repeat calls for the same role) don't re-upload N times. Only
+  // populated for roles that actually have a promoted ref — see resolveRoleRef.
+  const roleRefUrlCache = new Map<string, string>();
+
   for (const index of slideIndexesToFanOut(slides.length)) {
+    const slideRole = slides[index].role;
+    let refUrl = anchor.kie_style_url;
+    if (category.role_ref_urls?.[slideRole]) {
+      const cached = roleRefUrlCache.get(slideRole);
+      if (cached) {
+        refUrl = cached;
+      } else {
+        refUrl = await uploadStyleRef(
+          apiKey, resolveRoleRef(category, slideRole), anchor.user_id,
+          roleRefUploadKey(category.key, slideRole, true));
+        roleRefUrlCache.set(slideRole, refUrl);
+      }
+    }
     const prompt = buildSlidePrompt(
       category.style_guide, slides[index], index + 1, slides.length, true,
       anchor.refinement_notes, category.role_guides);
     let taskId: string;
     try {
       taskId = await createKieTask(
-        apiKey, prompt, [anchor.kie_style_url, anchorImageUrl], category.aspect_ratio);
+        apiKey, prompt, [refUrl, anchorImageUrl], category.aspect_ratio);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const { error: failErr } = await supabase.from("generations").insert({
@@ -163,7 +182,7 @@ async function fanOutCarousel(
       status: "submitted",
       slide_index: index,
       anchor_generation_id: anchor.id,
-      kie_style_url: anchor.kie_style_url,
+      kie_style_url: refUrl,
       full_prompt: prompt,
       refinement_notes: anchor.refinement_notes,
     });
