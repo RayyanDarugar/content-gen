@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildPreviewPrompts, submitPreviewAnchor } from "@/lib/athena/preview";
-import type { Slide } from "@/lib/types";
+import type { Category, Slide } from "@/lib/types";
 
 // Mock server-only for this test file only
 vi.mock("server-only", () => ({}));
@@ -40,7 +40,7 @@ describe("buildPreviewPrompts", () => {
 
 describe("submitPreviewAnchor", () => {
   it("rejects when category has no style_ref_url", async () => {
-    const catWithoutRef = { ...category, style_ref_url: "" } as any;
+    const catWithoutRef = { ...category, style_ref_url: "" } as unknown as Category;
     await expect(submitPreviewAnchor("u1", catWithoutRef, slides)).rejects.toThrow(
       /brand visual reference/,
     );
