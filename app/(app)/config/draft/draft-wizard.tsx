@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { uploadStyleRefImage } from "../actions";
 import { categoryToDraft, type DraftTurn, type NormalizedDraft } from "@/lib/athena/draft-category";
 import type { Category } from "@/lib/types";
+import { PreviewPane } from "./preview-pane";
 
 interface Props {
   initialCategory: Category | null;
@@ -185,7 +186,14 @@ export function DraftWizard({ initialCategory, keys }: Props) {
           </CardContent>
         </Card>
 
-        {/* TASK 7 MOUNT POINT: preview pane renders here once a categoryId exists */}
+        {categoryId && lastDraft && (
+          <PreviewPane
+            categoryId={categoryId}
+            postType={lastDraft.post_type}
+            hasStyleRef={!!brandRefUrl}
+            hasKieKey={keys.kie}
+          />
+        )}
       </div>
 
       <div className="space-y-4">
