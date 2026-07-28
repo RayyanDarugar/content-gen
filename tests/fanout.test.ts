@@ -200,8 +200,21 @@ describe("mostRecentForSlide", () => {
     ], 1)?.kie_style_url).toBe("https://cdn.example/beat.jpg");
   });
 
+  // This is the property resubmitSlide's re-resolve fallback depends on: a
+  // failed row from a role-ref upload that itself failed (poll route's
+  // fanOutCarousel, inner catch) deliberately stores NO kie_style_url rather
+  // than the anchor's stale default, specifically so it's invisible here and
+  // resubmitSlide re-resolves the slide's actual role ref instead of reading
+  // back the wrong (anchor's) one as a "usable" prior.
   it("ignores rows with an empty kie_style_url", () => {
     expect(mostRecentForSlide([g(2, "", "1")], 2)).toBeNull();
+  });
+
+  it("skips a newer empty-kie_style_url row in favor of an older usable one", () => {
+    expect(mostRecentForSlide([
+      g(2, "https://cdn.example/payoff.jpg", "1"),
+      g(2, "", "2"),
+    ], 2)?.kie_style_url).toBe("https://cdn.example/payoff.jpg");
   });
 
   it("returns null when no row exists for that slide index", () => {
