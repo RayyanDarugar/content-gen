@@ -1,14 +1,18 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
+import { ManualIdeaDialog } from "./manual-idea-dialog";
 import { categoryColor } from "@/lib/category-colors";
-import type { Idea } from "@/lib/types";
+import type { Category, Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from("ideas").select("*").order("created_at", { ascending: false }).limit(200);
   const ideas = (data ?? []) as Idea[];
+
+  const { data: catData } = await supabase
+    .from("categories").select("*").eq("active", true).order("key");
 
   const byCategory = new Map<string, Idea[]>();
   for (const idea of ideas) {
@@ -17,7 +21,10 @@ export default async function IdeasPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold">Ideas</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Ideas</h1>
+        <ManualIdeaDialog categories={(catData ?? []) as Category[]} />
+      </div>
       {ideas.length === 0 && <p>No ideas yet — go to Generate.</p>}
       {[...byCategory.entries()].map(([key, group]) => (
         <section key={key} className="space-y-3">

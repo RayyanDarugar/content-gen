@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PostType } from "@/lib/types";
 
 export interface BrandContext {
   business_name: string;
@@ -20,13 +21,21 @@ function brandBlock(brand: BrandContext): string {
 
 export function buildIdeaSystemPrompt(
   brand: BrandContext,
-  categories: { key: string; style_guide: string; output_format: string }[],
+  categories: {
+    key: string; style_guide: string; output_format: string;
+    images_per_carousel: number; post_type: PostType;
+  }[],
 ): string {
   const guides = categories
     .map((c) => {
       const parts = [`=== ${c.key} ===`];
       parts.push(c.style_guide || "[No style guide — fill in Config]");
       if (c.output_format) parts.push(`OUTPUT FORMAT: ${c.output_format}`);
+      parts.push(
+        c.post_type === "narrative"
+          ? `POST TYPE: narrative — ONE carousel of exactly ${c.images_per_carousel} slides telling one story.`
+          : "POST TYPE: independent — each idea is ONE standalone image. Exactly 1 slide, role \"single\".",
+      );
       return parts.join("\n");
     })
     .join("\n\n");
@@ -41,9 +50,27 @@ export function buildIdeaSystemPrompt(
     guides,
     "",
     "CRITICAL INSTRUCTION FOR concept:",
-    "Do NOT write a full image-generation prompt. Do NOT restate or summarize the style guide.",
-    "Write only the specific creative content for this one idea — detailed enough that someone could generate the image from it later, but nothing about general style, palette, or layout (that already lives in the style guide).",
-    "When a category specifies an OUTPUT FORMAT, follow it exactly for that category's ideas.",
+    "'concept' is a ONE-LINE summary of the post this idea becomes — a label, not a prompt.",
+    "Do NOT write image-generation detail into concept, and do NOT restate or summarize the style guide there.",
+    "Scene, camera angle, and subject pose belong on each slide's 'visual' field, not in concept (general style, palette, and layout already live in the style guide, separate from both).",
+    "When a category specifies an OUTPUT FORMAT, use it to shape the slides for that category's ideas — not the concept line.",
+    "",
+    "WHAT TO WRITE — depends on the category's POST TYPE:",
+    "",
+    "For an INDEPENDENT category: each idea is one standalone image that works completely on its own.",
+    "Give it exactly one slide with role 'single'. There is no sequence, no opener, no closer — do not write one.",
+    "Its 'text' is the words on that image and its 'visual' is the scene.",
+    "",
+    "For a NARRATIVE category: each idea is one carousel with exactly the slide count listed for it.",
+    "Exactly one 'hook' first, then 'beat' slides, then exactly one 'payoff' last.",
+    "",
+    "The panels of a NARRATIVE carousel must form ONE continuous story, not a set of separate observations:",
+    "- Each beat must only make sense AFTER the one before it. If the panels could be reordered without loss, the carousel has failed.",
+    "- The payoff must resolve the specific tension the hook opened — not a generic lesson.",
+    "- 'text' is literally what appears on the image: one short phrase or sentence. No panel numbers, no labels, no captions about the panel.",
+    "- 'visual' describes the scene, camera angle, and subject pose. Give every panel a different camera angle.",
+    "- The story must be followable from the visuals alone.",
+    "- Across the NARRATIVE carousels in this batch, vary the STRUCTURE, not just the topic. Do not write every carousel to the same template or end every payoff with the same sentence shape — variety across the set matters as much as quality within one.",
   ].join("\n");
 }
 
@@ -65,7 +92,15 @@ export function buildFilterSystemPrompt(brand: BrandContext): string {
 }
 
 export const IdeasOutput = z.object({
-  ideas: z.array(z.object({ category: z.string(), concept: z.string() })),
+  ideas: z.array(z.object({
+    category: z.string(),
+    concept: z.string().describe("one-line summary of the post this idea becomes"),
+    slides: z.array(z.object({
+      role: z.enum(["hook", "beat", "payoff", "single"]),
+      text: z.string().describe("the exact words appearing on this panel — short"),
+      visual: z.string().describe("scene, camera angle, subject pose"),
+    })),
+  })),
 });
 export type IdeasOutputT = z.infer<typeof IdeasOutput>;
 

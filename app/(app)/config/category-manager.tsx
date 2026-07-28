@@ -17,6 +17,7 @@ const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
   post_caption: "", buffer_channel_id: "",
   images_per_carousel: 5, aspect_ratio: "4:5", active: true,
+  post_type: "independent", role_guides: {},
 };
 
 function CategoryEditor({ category, channels }: { category?: Category; channels: BufferChannel[] }) {
@@ -29,6 +30,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           post_caption: category.post_caption, buffer_channel_id: category.buffer_channel_id,
           images_per_carousel: category.images_per_carousel,
           aspect_ratio: category.aspect_ratio, active: category.active,
+          post_type: category.post_type, role_guides: category.role_guides ?? {},
         }
       : EMPTY,
   );
@@ -87,8 +89,58 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           )}
         </div>
       </div>
-      <div><Label>Style guide</Label>
+      <div><Label>Post type</Label>
+        <select
+          className="w-full rounded-md border bg-transparent px-3 py-2"
+          value={form.post_type}
+          onChange={(e) => set("post_type", e.target.value as CategoryFields["post_type"])}
+        >
+          <option value="independent">Independent images — each one stands alone</option>
+          <option value="narrative">Narrative carousel — one story across the slides</option>
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {form.post_type === "narrative"
+            ? `Each idea becomes one ${form.images_per_carousel}-slide story: an opener, middle beats, then a closer. Later slides are generated against the opening image so they look like one post.`
+            : "Each idea becomes one standalone image. Nothing is chained, and no opener or closer is written."}
+        </p>
+      </div>
+
+      <div><Label>Style guide (shared by every image)</Label>
         <Textarea rows={8} value={form.style_guide} onChange={(e) => set("style_guide", e.target.value)} /></div>
+
+      {form.post_type === "narrative" && (
+        <div className="space-y-2 rounded-lg border p-3">
+          <Label>Per-slide treatment</Label>
+          <p className="text-xs text-muted-foreground">
+            What differs by panel. The style guide above covers what every panel shares —
+            palette, character, typography, any footer. Put here only what belongs to one
+            role: a tag or strike-through that belongs on the opener, for instance, must be
+            named here rather than in the style guide, or it lands on every panel including
+            the closer.
+          </p>
+          {(["hook", "beat", "payoff"] as const).map((role) => (
+            <div key={role}>
+              <Label className="text-xs capitalize">{role}</Label>
+              <Textarea
+                rows={2}
+                placeholder={
+                  role === "hook" ? "e.g. Orange MYTH tag top-left, statement struck through with a hand-drawn X."
+                    : role === "beat" ? "e.g. No tag, no X — this panel explains rather than debunks."
+                    : "e.g. No tag, no X. The resolved truth, stated clean."
+                }
+                value={form.role_guides[role] ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const next = { ...form.role_guides };
+                  if (value.trim()) next[role] = value;
+                  else delete next[role];
+                  set("role_guides", next);
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
       <div><Label>Output format (how ideas in this category are structured)</Label>
         <Textarea rows={3} value={form.output_format} onChange={(e) => set("output_format", e.target.value)} /></div>
       <div><Label>Style reference image</Label>
