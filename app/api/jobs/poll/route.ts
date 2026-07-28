@@ -132,23 +132,36 @@ async function fanOutCarousel(
 
   for (const index of slideIndexesToFanOut(slides.length)) {
     const slideRole = slides[index].role;
-    let refUrl = anchor.kie_style_url;
-    if (category.role_ref_urls?.[slideRole]) {
-      const cached = roleRefUrlCache.get(slideRole);
-      if (cached) {
-        refUrl = cached;
-      } else {
-        refUrl = await uploadStyleRef(
-          apiKey, resolveRoleRef(category, slideRole), anchor.user_id,
-          roleRefUploadKey(category.key, slideRole, true));
-        roleRefUrlCache.set(slideRole, refUrl);
-      }
-    }
     const prompt = buildSlidePrompt(
       category.style_guide, slides[index], index + 1, slides.length, true,
       anchor.refinement_notes, category.role_guides);
+    // refUrl defaults to the anchor's own ref (pre-role-ref behavior) and is
+    // only reassigned below if this slide's role has a promoted ref to
+    // upload. Declared outside the try so a failure partway through (upload
+    // succeeded, createKieTask didn't, or vice versa) can still record
+    // whatever value is actually correct to replay on the failed row.
+    let refUrl = anchor.kie_style_url;
     let taskId: string;
     try {
+      // The upload must be inside this try: it's a network call to Kie and
+      // can fail transiently just like createKieTask. Previously it sat
+      // outside this block, so an upload failure threw out of the whole
+      // fan-out loop instead of just failing this one slide — later slides
+      // never got submitted, no failed row existed for any of them to
+      // retry against, and shouldFanOut's zero-siblings gate meant the
+      // orphan sweep would never revisit this anchor either. One slide's
+      // Kie hiccup would permanently strand the whole carousel.
+      if (category.role_ref_urls?.[slideRole]) {
+        const cached = roleRefUrlCache.get(slideRole);
+        if (cached) {
+          refUrl = cached;
+        } else {
+          refUrl = await uploadStyleRef(
+            apiKey, resolveRoleRef(category, slideRole), anchor.user_id,
+            roleRefUploadKey(category.key, slideRole, true));
+          roleRefUrlCache.set(slideRole, refUrl);
+        }
+      }
       taskId = await createKieTask(
         apiKey, prompt, [refUrl, anchorImageUrl], category.aspect_ratio);
     } catch (e) {
@@ -159,6 +172,11 @@ async function fanOutCarousel(
         status: "failed",
         slide_index: index,
         anchor_generation_id: anchor.id,
+        // Store whatever refUrl resolved to even on failure — if the role-ref
+        // upload succeeded and only createKieTask failed, this is the right
+        // role's url and lets a later resubmitSlide retry find it via
+        // mostRecentForSlide instead of falling back to the anchor's ref.
+        kie_style_url: refUrl,
         error: message,
       });
       if (failErr) {

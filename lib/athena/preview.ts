@@ -101,18 +101,24 @@ export async function submitPreviewFanout(
 ): Promise<{ taskIds: string[] }> {
   const kieKey = await requireKieKey(userId);
   const { fanout } = buildPreviewPrompts(category, slides);
+  // If a fanned slide's role resolves to the exact same source url as the
+  // anchor's (a role-less slide falling back to style_ref_url same as the
+  // anchor, or a dedicated role ref that happens to be the same image), skip
+  // uploading it again — styleUrl is already that image, already uploaded.
+  const anchorResolvedUrl = resolveRoleRef(category, slides[0].role);
   const roleRefUrlCache = new Map<string, string>();
   const taskIds: string[] = [];
   for (let i = 0; i < fanout.length; i++) {
     const role = slides[i + 1].role;
     let refUrl = styleUrl;
-    if (category.role_ref_urls?.[role]) {
+    const resolved = resolveRoleRef(category, role);
+    if (category.role_ref_urls?.[role] && resolved !== anchorResolvedUrl) {
       const cached = roleRefUrlCache.get(role);
       if (cached) {
         refUrl = cached;
       } else {
         refUrl = await uploadStyleRef(
-          kieKey, resolveRoleRef(category, role), userId, roleRefUploadKey(category.key, role, true));
+          kieKey, resolved, userId, roleRefUploadKey(category.key, role, true));
         roleRefUrlCache.set(role, refUrl);
       }
     }

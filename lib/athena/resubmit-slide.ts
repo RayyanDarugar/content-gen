@@ -1,9 +1,10 @@
 import "server-only";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { createKieTask } from "@/lib/athena/kie";
+import { createKieTask, uploadStyleRef } from "@/lib/athena/kie";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { requireKieKey } from "@/lib/settings/user-secrets";
 import { currentAnchor, mostRecentForSlide } from "@/lib/athena/fanout";
+import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import type { Category, Generation, Idea, Slide } from "@/lib/types";
 
 export interface ResubmitResult {
@@ -72,9 +73,27 @@ export async function resubmitSlide(
   // See mostRecentForSlide's doc comment: a post-role-ref carousel stores
   // each fanned slide's OWN role's ref, which can differ from the anchor's —
   // reusing anchor.kie_style_url here would silently regenerate against the
-  // wrong role's reference.
+  // wrong role's reference. mostRecentForSlide only finds a usable value when
+  // some prior row for this exact slide actually recorded one (e.g. a
+  // createKieTask failure that still captured a successful role-ref upload).
+  // When nothing usable exists — the slide's very first submission attempt,
+  // or an old failed row from before that upload was captured — re-resolve
+  // fresh: a dedicated role ref for this slide's role must still be uploaded
+  // and used, and only a role-less slide falls back to the anchor's ref.
   const priorForSlide = mostRecentForSlide(gens, slideIndex);
-  const styleRefUrl = priorForSlide?.kie_style_url ?? anchor.kie_style_url;
+  let styleRefUrl: string;
+  if (priorForSlide) {
+    styleRefUrl = priorForSlide.kie_style_url;
+  } else {
+    const slideRole = slides[slideIndex].role;
+    if (category.role_ref_urls?.[slideRole]) {
+      styleRefUrl = await uploadStyleRef(
+        kieKey, resolveRoleRef(category, slideRole), userId,
+        roleRefUploadKey(category.key, slideRole, true));
+    } else {
+      styleRefUrl = anchor.kie_style_url;
+    }
+  }
 
   const taskId = await createKieTask(
     kieKey, prompt, [styleRefUrl, anchor.public_url], category.aspect_ratio);
