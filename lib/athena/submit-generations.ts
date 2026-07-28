@@ -4,6 +4,7 @@ import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { requireKieKey } from "@/lib/settings/user-secrets";
 import { isSubmitEligible } from "@/lib/athena/submit-eligibility";
+import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import type { Category, Idea, Slide } from "@/lib/types";
 
 export interface SubmitResult {
@@ -52,6 +53,9 @@ export async function submitGenerations(
   if (catsErr) throw new Error(`categories query failed: ${catsErr.message}`);
   const catMap = new Map(((catsData ?? []) as Category[]).map((c) => [c.key, c]));
 
+  // Keyed by the upload key (roleRefUploadKey), not the bare category key —
+  // two roles (or a role ref vs. the brand fallback) within the same category
+  // upload to distinct Kie paths and must not collide in this cache.
   const styleUrlCache = new Map<string, string>();
   const result: SubmitResult = {
     submitted: 0,
@@ -64,11 +68,6 @@ export async function submitGenerations(
     try {
       const category = catMap.get(idea.category_key);
       if (!category) throw new Error(`no category ${idea.category_key}`);
-      let styleUrl = styleUrlCache.get(category.key);
-      if (!styleUrl) {
-        styleUrl = await uploadStyleRef(kieKey, category.style_ref_url, userId, category.key);
-        styleUrlCache.set(category.key, styleUrl);
-      }
       // Migration 0008's backfill only touched rows that existed at the time
       // it ran. Any idea inserted between then and the deploy of the code
       // that writes slides has slides = '[]' with a real concept — self-heal
@@ -83,6 +82,14 @@ export async function submitGenerations(
       // Only the anchor is submitted here. The poll cron fans out the rest
       // once this image exists, because they reference it.
       const anchor = slides[0];
+      const refUrl = resolveRoleRef(category, anchor.role);
+      const usedRoleRef = !!category.role_ref_urls?.[anchor.role];
+      const uploadKey = roleRefUploadKey(category.key, anchor.role, usedRoleRef);
+      let styleUrl = styleUrlCache.get(uploadKey);
+      if (!styleUrl) {
+        styleUrl = await uploadStyleRef(kieKey, refUrl, userId, uploadKey);
+        styleUrlCache.set(uploadKey, styleUrl);
+      }
       const fullPrompt = buildSlidePrompt(
         category.style_guide, anchor, 1, slides.length, false, refinementNotes,
         category.role_guides);

@@ -3,7 +3,7 @@ import { timingSafeEqual } from "crypto";
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { getKieRecord, createKieTask } from "@/lib/athena/kie";
+import { getKieRecord, createKieTask, uploadStyleRef } from "@/lib/athena/kie";
 import { decidePoll } from "@/lib/athena/poll-logic";
 import {
   shouldFanOut,
@@ -14,6 +14,7 @@ import {
   orphanedTaskFailureRow,
 } from "@/lib/athena/fanout";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
+import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import type { Category, Generation, Idea } from "@/lib/types";
@@ -124,14 +125,75 @@ async function fanOutCarousel(
   const category = catRow as Category;
   const slides = idea.slides ?? [];
 
+  // Per-role uploads, cached within this one fan-out call so N beats sharing
+  // a role (or repeat calls for the same role) don't re-upload N times. Only
+  // populated for roles that actually have a promoted ref — see resolveRoleRef.
+  const roleRefUrlCache = new Map<string, string>();
+
   for (const index of slideIndexesToFanOut(slides.length)) {
+    const slideRole = slides[index].role;
     const prompt = buildSlidePrompt(
       category.style_guide, slides[index], index + 1, slides.length, true,
       anchor.refinement_notes, category.role_guides);
+    // refUrl defaults to the anchor's own ref (pre-role-ref behavior) and is
+    // only reassigned below if this slide's role has a promoted ref to
+    // upload. Left at the anchor's value, it is genuinely correct — a
+    // role-less slide is SUPPOSED to fall back to the anchor's ref — so it
+    // must never be stored on a failed row from a scope where it might still
+    // hold that default despite the slide actually having its own role ref
+    // (see the inner catch below, which deliberately omits it for exactly
+    // that reason).
+    let refUrl = anchor.kie_style_url;
+    // The upload is a network call to Kie and can fail transiently just like
+    // createKieTask. It needs its own try/catch, separate from createKieTask's
+    // below: on an upload failure, refUrl is still the anchor's stale default
+    // (never reassigned), which is the WRONG role's ref for this slide — a
+    // failed row must not carry it, or a later resubmitSlide retry would read
+    // it back via mostRecentForSlide as a "usable" prior and silently
+    // regenerate against the anchor's ref instead of re-resolving this
+    // slide's actual role ref. (Previously this upload sat outside every
+    // try/catch, so a failure here threw out of the whole fan-out loop
+    // instead of failing just this one slide — later slides never got
+    // submitted, no failed row existed for the retry machinery to find, and
+    // the orphan sweep's zero-siblings gate meant nothing would ever revisit
+    // this anchor either.)
+    if (category.role_ref_urls?.[slideRole]) {
+      const cached = roleRefUrlCache.get(slideRole);
+      if (cached) {
+        refUrl = cached;
+      } else {
+        try {
+          refUrl = await uploadStyleRef(
+            apiKey, resolveRoleRef(category, slideRole), anchor.user_id,
+            roleRefUploadKey(category.key, slideRole, true));
+          roleRefUrlCache.set(slideRole, refUrl);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          const { error: failErr } = await supabase.from("generations").insert({
+            user_id: anchor.user_id,
+            idea_id: idea.id,
+            status: "failed",
+            slide_index: index,
+            anchor_generation_id: anchor.id,
+            // Deliberately no kie_style_url: refUrl here is still the
+            // anchor's default, not this slide's role ref (the upload that
+            // would have produced it just failed) — see the comment above.
+            error: message,
+          });
+          if (failErr) {
+            console.error(
+              `fan-out role-ref upload failed-row insert error for idea ${idea.id} slide ${index}:`,
+              failErr.message,
+            );
+          }
+          continue;
+        }
+      }
+    }
     let taskId: string;
     try {
       taskId = await createKieTask(
-        apiKey, prompt, [anchor.kie_style_url, anchorImageUrl], category.aspect_ratio);
+        apiKey, prompt, [refUrl, anchorImageUrl], category.aspect_ratio);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const { error: failErr } = await supabase.from("generations").insert({
@@ -140,6 +202,10 @@ async function fanOutCarousel(
         status: "failed",
         slide_index: index,
         anchor_generation_id: anchor.id,
+        // refUrl is genuinely this slide's ref at this point — either the
+        // freshly uploaded (or cached) role ref, or the anchor's ref for a
+        // role-less slide — so it's safe to store here.
+        kie_style_url: refUrl,
         error: message,
       });
       if (failErr) {
@@ -163,7 +229,7 @@ async function fanOutCarousel(
       status: "submitted",
       slide_index: index,
       anchor_generation_id: anchor.id,
-      kie_style_url: anchor.kie_style_url,
+      kie_style_url: refUrl,
       full_prompt: prompt,
       refinement_notes: anchor.refinement_notes,
     });

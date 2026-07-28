@@ -144,6 +144,10 @@ to correct it — so it is not throwaway work.
 Worth a proper brainstorm rather than a bolt-on: what a draft contains, how you
 iterate on it, and whether corrections persist as scoped directives.
 
+**Update 2026-07-27:** spec written and implemented — see
+`docs/superpowers/specs/2026-07-27-ai-assisted-post-type-authoring-design.md`
+and `docs/superpowers/plans/2026-07-27-ai-assisted-post-type-authoring.md`.
+
 ---
 
 ## 6. Operational

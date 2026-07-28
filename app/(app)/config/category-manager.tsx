@@ -1,6 +1,7 @@
 "use client";
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,9 +9,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  createCategory, updateCategory, deleteCategory, uploadStyleRefImage,
-  type CategoryFields,
+  createCategory, updateCategory, deleteCategory, uploadStyleRefImage, clearRoleRefUrl,
 } from "./actions";
+import type { CategoryFields } from "@/lib/categories";
 import type { BufferChannel, Category } from "@/lib/types";
 
 const EMPTY: CategoryFields = {
@@ -85,7 +86,16 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         <div className="flex items-center gap-3">
           <Switch checked={form.active} onCheckedChange={(v) => set("active", v)} />
           {category && (
-            <Button variant="destructive" size="sm" disabled={pending} onClick={remove}>Delete</Button>
+            <>
+              <Button
+                render={<Link href={`/config/draft?category=${category.id}`} />}
+                variant="outline"
+                size="sm"
+              >
+                Revise with AI
+              </Button>
+              <Button variant="destructive" size="sm" disabled={pending} onClick={remove}>Delete</Button>
+            </>
           )}
         </div>
       </div>
@@ -141,6 +151,43 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           ))}
         </div>
       )}
+
+      {category && category.role_ref_urls && Object.keys(category.role_ref_urls).length > 0 && (
+        <div className="space-y-2 rounded-lg border p-3">
+          <Label>Reference images (cemented from test runs)</Label>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(category.role_ref_urls).map(([role, url]) => (
+              <div key={role} className="w-24 text-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={`${role} reference`} className="h-24 w-24 rounded border object-cover" />
+                <p className="mt-1 text-xs capitalize text-muted-foreground">{role}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-1 h-6 px-2 text-xs"
+                  disabled={pending}
+                  onClick={() => {
+                    startTransition(async () => {
+                      try {
+                        await clearRoleRefUrl(category.id, role as "hook" | "beat" | "payoff" | "single");
+                        router.refresh();
+                      } catch (e) {
+                        setMsg(`Failed to clear ${role} ref: ${e instanceof Error ? e.message : String(e)}`);
+                      }
+                    });
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Cleared roles fall back to the brand style reference.
+          </p>
+        </div>
+      )}
+
       <div><Label>Output format (how ideas in this category are structured)</Label>
         <Textarea rows={3} value={form.output_format} onChange={(e) => set("output_format", e.target.value)} /></div>
       <div><Label>Style reference image</Label>
@@ -192,7 +239,12 @@ export function CategoryManager({ categories, channels }: { categories: Category
       <CardContent className="space-y-4">
         {categories.map((c) => <CategoryEditor key={c.id} category={c} channels={channels} />)}
         <div>
-          <p className="mb-2 text-sm font-medium">Add a new category</p>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium">Add a new category</p>
+            <Button render={<Link href="/config/draft" />} variant="outline" size="sm">
+              ✨ Draft with AI
+            </Button>
+          </div>
           <CategoryEditor channels={channels} />
         </div>
       </CardContent>

@@ -89,3 +89,15 @@ Verified against the actual code: `uploadStyleRef`, `buildSlidePrompt`, `createK
 - Any cleanup job for abandoned drafts.
 - Video.
 - Brand extraction / onboarding wizard (separate, sibling work — see §2).
+
+## 10. Addendum (2026-07-28): cementing test runs as per-role reference images
+
+Decided with Rayyan after the branch's final review. A successful test run can be promoted to become the category's permanent per-role reference images — the initial brand reference inspires the category; once it produces a good post, that output cements it. Because this repo's measured finding is that the reference image beats art-direction prose, a promoted hook ref *carries* the hook's treatment (tag, strike-through) and a promoted payoff ref carries its clean look — attacking §1 of the carousels followups (role_guides prose vs. anchor image) with images instead of prose.
+
+**Schema:** `categories.role_ref_urls` jsonb (`{hook?, beat?, payoff?, single?}` — durable Cloudinary URLs), defaulting `{}`. Migration 0010. `style_ref_url` remains the fallback for any role without a ref.
+
+**Resolution rule (one helper, used by every first-assembly site):** `resolveRoleRef(category, role)` → `role_ref_urls[role] ?? style_ref_url`. Role ref *replaces* the brand style ref (stays in Kie's tested 2-ref regime): anchor gets `[roleRef(hook|single)]`; fanned slides get `[roleRef(role), anchorImage]`. Kie uploads of role refs use fileName `<CATEGORY_KEY>_<role>.jpg` to avoid clobbering the brand ref copy. Rows still store what they used in `generations.kie_style_url`, so all retry paths replay the stored value unchanged.
+
+**Promotion (wizard test runs only, this iteration):** after a test run, the preview pane lets the user pick one generated image per role (click-to-choose; multiple beats → user picks the beat). "Cement as reference images" POSTs the picked Kie result URLs; the server re-uploads each to Cloudinary (Kie URLs are ephemeral) and merges into `role_ref_urls`. The manual editor displays existing role refs with per-role clear buttons (correction surface); manual saves never write `role_ref_urls` (`CategoryFields` deliberately excludes it), so only promotion writes it and only clear removes it. The drafting LLM schema continues to exclude all URL fields.
+
+**Deferred:** promoting from the gallery (real posts), multiple refs per role, 3-ref Kie calls.
