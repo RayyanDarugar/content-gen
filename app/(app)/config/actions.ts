@@ -6,6 +6,7 @@ import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { storeBufferToken, disconnectBuffer } from "@/lib/settings/buffer";
 import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
+import type { RoleRefUrls } from "@/lib/types";
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
@@ -50,6 +51,23 @@ export async function updateCategory(id: string, fields: CategoryFields) {
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
   }).eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/config");
+}
+
+// Correction surface for the manual editor: removes one promoted role ref
+// so that role falls back to style_ref_url again (spec §10). Only this
+// action and the promotion endpoint touch role_ref_urls — manual saves
+// never do (CategoryFields deliberately excludes it).
+export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
+  await requireUser();
+  const supabase = await createServerSupabase();
+  const { data: category } = await supabase
+    .from("categories").select("role_ref_urls").eq("id", categoryId).maybeSingle();
+  if (!category) throw new Error("unknown category");
+  const next: RoleRefUrls = { ...(category.role_ref_urls ?? {}) };
+  delete next[role];
+  const { error } = await supabase.from("categories").update({ role_ref_urls: next }).eq("id", categoryId);
   if (error) throw new Error(error.message);
   revalidatePath("/config");
 }
