@@ -8,6 +8,11 @@ export type PostType = "independent" | "narrative";
 // panel; these hold the treatment belonging to one role only.
 export type RoleGuides = Partial<Record<Slide["role"], string>>;
 
+// Per-role cemented reference images (spec §10): a promoted role ref
+// replaces the brand style ref for that role. Same shape as RoleGuides,
+// but values are durable Cloudinary URLs instead of prose.
+export type RoleRefUrls = Partial<Record<Slide["role"], string>>;
+
 export interface Slide {
   role: "hook" | "beat" | "payoff" | "single";
   text: string;   // the words that appear on the panel
@@ -23,6 +28,7 @@ export interface Category {
   output_format: string;
   post_type: PostType;
   role_guides: RoleGuides;
+  role_ref_urls: RoleRefUrls;
   style_ref_url: string;
   post_caption: string;
   buffer_channel_id: string;
