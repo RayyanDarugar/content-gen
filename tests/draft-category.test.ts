@@ -78,6 +78,10 @@ describe("buildDraftSystemPrompt", () => {
     expect(p).toContain("ONLY structure and copy pattern");
     expect(p).toContain("NEVER copy its colors, palette, fonts");
   });
+  it("treats multiple screenshots as slides of one carousel", () => {
+    const p = buildDraftSystemPrompt(brand);
+    expect(p).toContain("slides of ONE post, in order");
+  });
   it("explains the style_guide vs role_guides split", () => {
     const p = buildDraftSystemPrompt(brand);
     expect(p.toLowerCase()).toContain("every panel");
@@ -104,6 +108,16 @@ describe("toAnthropicMessages", () => {
     const content = msgs[0].content as { type: string }[];
     expect(content[0].type).toBe("image");
     expect(content[1].type).toBe("text");
+  });
+  it("turns multiple carousel-slide screenshots into one image block per slide", () => {
+    const turns: DraftTurn[] = [
+      { role: "user", text: "Like this carousel", imageUrls: ["https://x/slide1.png", "https://x/slide2.png"] },
+    ];
+    const msgs = toAnthropicMessages(turns);
+    const content = msgs[0].content as { type: string }[];
+    expect(content[0].type).toBe("image");
+    expect(content[1].type).toBe("image");
+    expect(content[2].type).toBe("text");
   });
   it("serializes assistant turns as the full draft JSON", () => {
     const draft = normalizeDraft(rawDraft);

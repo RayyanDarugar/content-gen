@@ -23,7 +23,7 @@ export function DraftWizard({ initialCategory, keys }: Props) {
 
   // Start-screen input slots
   const [description, setDescription] = useState("");
-  const [formatUrl, setFormatUrl] = useState("");        // "show it" screenshot
+  const [formatUrls, setFormatUrls] = useState<string[]>([]);   // "show it" screenshots
   const [brandRefUrl, setBrandRefUrl] = useState(initialCategory?.style_ref_url ?? "");
   // A brand ref uploaded but not yet sent with a turn
   const [pendingStyleRef, setPendingStyleRef] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function DraftWizard({ initialCategory, keys }: Props) {
     [...turns].reverse().find((t) => t.role === "assistant")?.draft ??
     (initialCategory ? categoryToDraft(initialCategory) : null);
 
-  async function upload(kind: "format" | "brand", file: File) {
+  async function upload(kind: "brand", file: File) {
     setUploading(kind);
     setError("");
     const fd = new FormData();
@@ -45,8 +45,24 @@ export function DraftWizard({ initialCategory, keys }: Props) {
     const res = await uploadStyleRefImage(fd);
     setUploading(null);
     if (res.error || !res.url) { setError(`Upload failed: ${res.error ?? "no url"}`); return; }
-    if (kind === "format") setFormatUrl(res.url);
-    else { setBrandRefUrl(res.url); setPendingStyleRef(res.url); }
+    setBrandRefUrl(res.url);
+    setPendingStyleRef(res.url);
+  }
+
+  async function uploadFormatFiles(files: FileList) {
+    setUploading("format");
+    setError("");
+    for (const file of Array.from(files)) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await uploadStyleRefImage(fd);
+      if (res.error || !res.url) {
+        setError(`Upload failed: ${res.error ?? "no url"}`);
+        break;
+      }
+      setFormatUrls((prev) => [...prev, res.url!]);
+    }
+    setUploading(null);
   }
 
   async function send(text: string, imageUrls?: string[]) {
@@ -83,8 +99,8 @@ export function DraftWizard({ initialCategory, keys }: Props) {
   }
 
   function start() {
-    if (!description.trim() && !formatUrl) return;
-    void send(description.trim(), formatUrl ? [formatUrl] : undefined);
+    if (!description.trim() && formatUrls.length === 0) return;
+    void send(description.trim(), formatUrls.length ? formatUrls : undefined);
   }
 
   if (!keys.anthropic) {
@@ -122,16 +138,21 @@ export function DraftWizard({ initialCategory, keys }: Props) {
                   />
                 </div>
                 <div>
-                  <Label>Or show it — screenshot of a post whose format you like (optional)</Label>
+                  <Label>Or show it — screenshots of a post whose format you like (optional)</Label>
                   <p className="text-xs text-muted-foreground">
-                    Only its structure and copy pattern are used — never its colors or art style.
+                    Only their structure and copy pattern are used — never their colors or art style.
+                    For a carousel, upload one screenshot per slide, in order.
                   </p>
-                  <input type="file" accept="image/*" className="block text-sm"
-                    onChange={(e) => e.target.files?.[0] && upload("format", e.target.files[0])} />
+                  <input type="file" accept="image/*" multiple className="block text-sm"
+                    onChange={(e) => e.target.files && e.target.files.length > 0 && uploadFormatFiles(e.target.files)} />
                   {uploading === "format" && <p className="text-xs text-muted-foreground">Uploading…</p>}
-                  {formatUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={formatUrl} alt="format example" className="mt-2 h-32 rounded border object-cover" />
+                  {formatUrls.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {formatUrls.map((u) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={u} src={u} alt="format example" className="h-32 rounded border object-cover" />
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div>
@@ -149,7 +170,7 @@ export function DraftWizard({ initialCategory, keys }: Props) {
                     <img src={brandRefUrl} alt="brand reference" className="mt-2 h-32 rounded border object-cover" />
                   )}
                 </div>
-                <Button onClick={start} disabled={sending || (!description.trim() && !formatUrl)}>
+                <Button onClick={start} disabled={sending || (!description.trim() && formatUrls.length === 0)}>
                   {sending ? "Drafting…" : "Start drafting"}
                 </Button>
               </div>

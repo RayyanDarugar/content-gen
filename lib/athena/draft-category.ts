@@ -104,8 +104,9 @@ export function buildDraftSystemPrompt(brand: BrandContext, seed?: NormalizedDra
     "- images_per_carousel: for narrative, the slide count of the story (2-10). For independent, how many standalone images one batch produces.",
     "- aspect_ratio: like \"4:5\" or \"9:16\".",
     "",
-    "IF THE USER PROVIDES A SCREENSHOT OF A POST THEY LIKE:",
+    "IF THE USER PROVIDES SCREENSHOTS OF A POST THEY LIKE:",
     "Extract ONLY structure and copy pattern from it: panel count, the job each panel does, pacing, how the text is worded.",
+    "Multiple screenshots are the slides of ONE post, in order — read them as one sequential carousel, not separate posts.",
     "NEVER copy its colors, palette, fonts, photography style, or illustration style — this brand's visual identity comes from its own reference image, not from the example. Do not describe the screenshot's visual style in any field.",
   ];
   if (seed) {
