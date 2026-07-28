@@ -19,11 +19,29 @@ export function brandBlock(brand: BrandContext): string {
   return lines.length ? lines.join("\n") : "(No brand profile set yet — keep it generic and on-topic.)";
 }
 
+// Platform conventions, most general layer of the copy stack. Case-
+// insensitive; Buffer's exact service string for X is unverified, so both
+// "twitter" and "x" match. Unknown/empty service gets a generic preset.
+export function platformPresetFor(service: string): string {
+  switch (service.trim().toLowerCase()) {
+    case "linkedin":
+      return "LinkedIn long-form thought leadership: a scroll-stopping hook line first, short paragraphs with line breaks, a concrete takeaway, no hashtag spam (2-3 max, at the end, if any). Roughly 600-1300 characters.";
+    case "twitter":
+    case "x":
+      return "X post: tight and punchy, under 280 characters, no hashtags unless the guide asks.";
+    case "instagram":
+      return "Instagram caption: one to three short lines, then a blank line, then relevant hashtags.";
+    default:
+      return "A short platform-neutral caption: one or two sentences that frame the post.";
+  }
+}
+
 export function buildIdeaSystemPrompt(
   brand: BrandContext,
   categories: {
     key: string; style_guide: string; output_format: string;
     images_per_carousel: number; post_type: PostType;
+    caption_guide: string; buffer_channel_service: string;
   }[],
 ): string {
   const guides = categories
@@ -40,6 +58,24 @@ export function buildIdeaSystemPrompt(
     })
     .join("\n\n");
 
+  const copyCats = categories.filter((c) => c.caption_guide.trim());
+  const copyBlock = copyCats.length
+    ? [
+        "",
+        "POST COPY (the 'post_text' field):",
+        "Some categories below carry copy instructions. For THOSE categories only, also write post_text: the full text published alongside the images — it is the primary asset on text-first platforms, the images support it. Write it from the same conception as the slides, but never duplicate the slide text verbatim.",
+        `For every other category, post_text must be the empty string "".`,
+        "Layering, most general to most specific — where they conflict, the category's guide wins:",
+        ...copyCats.map((c) =>
+          [
+            `POST COPY for ${c.key}:`,
+            `Platform: ${platformPresetFor(c.buffer_channel_service)}`,
+            `Guide: ${c.caption_guide}`,
+          ].join("\n"),
+        ),
+      ]
+    : [];
+
   return [
     "You are the creative content strategist for this business.",
     "",
@@ -48,6 +84,7 @@ export function buildIdeaSystemPrompt(
     "",
     "CATEGORY STYLE GUIDES (for context only — do NOT repeat these back in your output, they are stored separately):",
     guides,
+    ...copyBlock,
     "",
     "CRITICAL INSTRUCTION FOR concept:",
     "'concept' is a ONE-LINE summary of the post this idea becomes — a label, not a prompt.",
@@ -95,6 +132,9 @@ export const IdeasOutput = z.object({
   ideas: z.array(z.object({
     category: z.string(),
     concept: z.string().describe("one-line summary of the post this idea becomes"),
+    post_text: z.string().describe(
+      "full post copy for categories with copy instructions; the empty string for all others",
+    ),
     slides: z.array(z.object({
       role: z.enum(["hook", "beat", "payoff", "single"]),
       text: z.string().describe("the exact words appearing on this panel — short"),

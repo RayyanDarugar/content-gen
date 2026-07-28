@@ -69,6 +69,9 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   if (!generated) throw new Error(`idea generation returned no parseable output (stop_reason: ${genResponse.stop_reason})`);
 
   const catByKey = new Map(cats.map((c) => [c.key, c]));
+  // A static category (no caption_guide) can never store stray post_text,
+  // even if the model writes something into that field anyway.
+  const copyModeKeys = new Set(cats.filter((c) => c.caption_guide.trim()).map((c) => c.key));
   let droppedForShape = 0;
   const raw = generated.ideas
     .filter((i) => activeKeys.includes(i.category))
@@ -88,6 +91,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
     .map((i, idx) => ({
       idea_id: `idea_${idx}`, category: i.category, concept: i.concept,
       slides: i.slides as Slide[],
+      post_text: copyModeKeys.has(i.category) ? (i.post_text ?? "") : "",
     }));
   if (!raw.length) throw new Error("Claude returned zero usable ideas");
 
@@ -115,6 +119,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
         concept: i.concept,
         resolved_prompt: i.concept,
         slides: i.slides,
+        post_text: i.post_text,
         ai_filter_reason: i.ai_filter_reason,
         approved: false,
         status: "pending_review",
