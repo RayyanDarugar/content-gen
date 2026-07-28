@@ -31,7 +31,7 @@ export default async function ConfigPage() {
       <KeysSection status={status} />
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
       <ConnectionsSection groups={groups} />
-      <CategoryManager categories={(data ?? []) as Category[]} channels={groups.flatMap((g) => g.channels)} />
+      <CategoryManager categories={(data ?? []) as Category[]} groups={groups} />
     </div>
   );
 }
