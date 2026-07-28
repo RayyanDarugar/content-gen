@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { buildPreviewPrompts } from "@/lib/athena/preview";
+import { describe, expect, it, vi } from "vitest";
+import { buildPreviewPrompts, submitPreviewAnchor } from "@/lib/athena/preview";
 import type { Slide } from "@/lib/types";
+
+// Mock server-only for this test file only
+vi.mock("server-only", () => ({}));
 
 const slides: Slide[] = [
   { role: "hook", text: "MYTH: cramming works", visual: "wide shot, desk at night" },
@@ -32,5 +35,14 @@ describe("buildPreviewPrompts", () => {
     const { anchor, fanout } = buildPreviewPrompts(category, single);
     expect(anchor).toContain("One tip");
     expect(fanout).toEqual([]);
+  });
+});
+
+describe("submitPreviewAnchor", () => {
+  it("rejects when category has no style_ref_url", async () => {
+    const catWithoutRef = { ...category, style_ref_url: "" } as any;
+    await expect(submitPreviewAnchor("u1", catWithoutRef, slides)).rejects.toThrow(
+      /brand visual reference/,
+    );
   });
 });
