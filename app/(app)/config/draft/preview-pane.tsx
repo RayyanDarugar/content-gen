@@ -29,11 +29,20 @@ const FAILED_STATE = "fail";
 
 async function pollTask(taskId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
   for (let i = 0; i < 60; i++) {
-    const res = await fetch(`/api/categories/draft/preview?taskId=${encodeURIComponent(taskId)}`);
-    const json = await res.json().catch(() => null);
-    if (!res.ok) return { ok: false, error: json?.error ?? `HTTP ${res.status}` };
-    if (json.state === DONE_STATE && json.resultUrl) return { ok: true, url: json.resultUrl };
-    if (json.state === FAILED_STATE) return { ok: false, error: "image generation failed" };
+    try {
+      const res = await fetch(`/api/categories/draft/preview?taskId=${encodeURIComponent(taskId)}`);
+      const json = await res.json().catch(() => null);
+      if (!res.ok) return { ok: false, error: json?.error ?? `HTTP ${res.status}` };
+      if (json.state === DONE_STATE) {
+        if (json.resultUrl) return { ok: true, url: json.resultUrl };
+        return { ok: false, error: "generation reported success but returned no image" };
+      }
+      if (json.state === FAILED_STATE) return { ok: false, error: "image generation failed" };
+    } catch (e) {
+      // A network-level failure (fetch rejects) — treat like any other
+      // failed poll rather than throwing out of the caller's Promise.all.
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
     await new Promise((r) => setTimeout(r, 5000));
   }
   return { ok: false, error: "timed out after 5 minutes" };
@@ -90,9 +99,18 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       const taskIds: string[] = json.taskIds;
       setRun((p) => p && { ...p, fanout: taskIds.map((taskId) => ({ taskId, status: "pending" as const })) });
+      // Each slide polls independently; one slide's failure — including an
+      // unexpected throw — must not strand its siblings in "generating…"
+      // forever, so every callback catches its own errors and always
+      // resolves (Promise.all never rejects here).
       await Promise.all(
         taskIds.map(async (taskId, i) => {
-          const done = await pollTask(taskId);
+          let done: { ok: boolean; url?: string; error?: string };
+          try {
+            done = await pollTask(taskId);
+          } catch (e) {
+            done = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
           setRun((p) => {
             if (!p?.fanout) return p;
             const fanout = [...p.fanout];
