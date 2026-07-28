@@ -61,8 +61,15 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
   function save() {
     startTransition(async () => {
       try {
-        if (category) await updateCategory(category.id, form);
-        else { await createCategory(form); setForm(EMPTY); }
+        // The service is normally captured by the channel dropdown's onChange,
+        // but re-saving a pre-existing category without re-picking the channel
+        // would otherwise write back whatever was already in form (possibly
+        // ''). Re-derive it from the current channel list so it self-heals.
+        const service = channels.find((c) => c.id === form.buffer_channel_id)?.service
+          ?? form.buffer_channel_service;
+        const payload = { ...form, buffer_channel_service: service };
+        if (category) await updateCategory(category.id, payload);
+        else { await createCategory(payload); setForm(EMPTY); }
         setMsg("Saved.");
         router.refresh();
       } catch (e) {

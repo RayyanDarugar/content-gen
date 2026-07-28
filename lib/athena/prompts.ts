@@ -111,6 +111,16 @@ export function buildIdeaSystemPrompt(
   ].join("\n");
 }
 
+// Copy-mode ideas carry post_text (up to ~1300 chars each) on top of their
+// slides, which pushes a full 20-idea batch past the non-streaming token
+// ceiling (see IDEA_GENERATION_MAX_TOKENS in generate-ideas.ts). Clamp rather
+// than truncate: a truncated batch discards the whole paid call.
+const COPY_MODE_MAX_IDEAS = 12;
+
+export function clampIdeaCount(count: number, anyCopyMode: boolean): number {
+  return anyCopyMode ? Math.min(count, COPY_MODE_MAX_IDEAS) : count;
+}
+
 export function buildIdeaUserPrompt(count: number, activeKeys: string[]): string {
   return activeKeys.length === 1
     ? `Generate exactly ${count} content ideas for the ${activeKeys[0]} category.`

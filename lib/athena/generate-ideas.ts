@@ -4,7 +4,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
-  buildIdeaSystemPrompt, buildIdeaUserPrompt,
+  buildIdeaSystemPrompt, buildIdeaUserPrompt, clampIdeaCount,
   buildFilterSystemPrompt, IdeasOutput, FilterOutput,
   type BrandContext,
 } from "@/lib/athena/prompts";
@@ -58,11 +58,13 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   // call ("returned no parseable output"). IDEA_GENERATION_MAX_TOKENS is
   // capped by the SDK's non-streaming ceiling — see its definition — so this
   // is roughly double the original budget rather than the full worst case.
+  const anyCopyMode = cats.some((c) => c.caption_guide.trim());
+  const effectiveCount = clampIdeaCount(count, anyCopyMode);
   const genResponse = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: IDEA_GENERATION_MAX_TOKENS,
     system: buildIdeaSystemPrompt(brand, cats),
-    messages: [{ role: "user", content: buildIdeaUserPrompt(count, activeKeys) }],
+    messages: [{ role: "user", content: buildIdeaUserPrompt(effectiveCount, activeKeys) }],
     output_config: { format: zodOutputFormat(IdeasOutput) },
   });
   const generated = genResponse.parsed_output;

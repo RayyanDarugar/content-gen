@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIdeaSystemPrompt, buildFilterSystemPrompt, buildIdeaUserPrompt,
-  platformPresetFor,
+  platformPresetFor, clampIdeaCount,
   type BrandContext,
 } from "@/lib/athena/prompts";
 
@@ -168,6 +168,22 @@ describe("buildIdeaSystemPrompt — post copy", () => {
   it("emits no copy instructions at all when no category has a guide", () => {
     const p = buildIdeaSystemPrompt(brand, [staticCat]);
     expect(p).not.toContain("POST COPY");
+  });
+});
+
+describe("clampIdeaCount", () => {
+  it("clamps a copy-mode batch requesting more than the cap", () => {
+    expect(clampIdeaCount(20, true)).toBe(12);
+  });
+  it("clamps a copy-mode batch requesting just above the cap", () => {
+    expect(clampIdeaCount(13, true)).toBe(12);
+  });
+  it("passes through a copy-mode batch already at or under the cap", () => {
+    expect(clampIdeaCount(12, true)).toBe(12);
+    expect(clampIdeaCount(5, true)).toBe(5);
+  });
+  it("passes through any count when no category in the batch is copy-mode", () => {
+    expect(clampIdeaCount(20, false)).toBe(20);
   });
 });
 

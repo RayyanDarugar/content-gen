@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
       style_ref_url: styleRefUrl ?? existing?.style_ref_url ?? "",
       post_caption: existing?.post_caption ?? "",
       buffer_channel_id: existing?.buffer_channel_id ?? "",
-      caption_guide: existing?.caption_guide ?? "",
+      caption_guide: draft.caption_guide,
       buffer_channel_service: existing?.buffer_channel_service ?? "",
       active: existing?.active ?? false,
     };
