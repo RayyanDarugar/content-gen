@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { pickCaption, selectAutoFill, type Postable } from "@/lib/athena/carousel";
+import { resolveInitialCaption, selectAutoFill, type Postable } from "@/lib/athena/carousel";
 import { categoryColor } from "@/lib/category-colors";
 import type { Category } from "@/lib/types";
 
@@ -21,9 +21,12 @@ export function PostComposer({
   const [selectedIds, setSelectedIds] = useState<string[]>(
     initial.map((p) => p.generation_id),
   );
-  const [caption, setCaption] = useState(() => pickCaption(category.post_caption));
+  const [caption, setCaption] = useState(() => resolveInitialCaption(initial, category));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [rewriteNote, setRewriteNote] = useState("");
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteError, setRewriteError] = useState("");
 
   const byId = useMemo(
     () => new Map(postables.map((p) => [p.generation_id, p])),
@@ -48,6 +51,8 @@ export function PostComposer({
   const selected = selectedIds.map((id) => byId.get(id)!).filter(Boolean);
   const pool = postables.filter((p) => !selectedIds.includes(p.generation_id));
   const ready = postables.length >= n;
+  const sameIdea = selected.length > 0 && new Set(selected.map((s) => s.idea_id)).size === 1;
+  const ideaCopy = sameIdea ? selected[0].post_text.trim() : "";
 
   function remove(id: string) {
     setSelectedIds((ids) => ids.filter((x) => x !== id));
@@ -86,6 +91,32 @@ export function PostComposer({
       setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function rewrite() {
+    setRewriting(true);
+    setRewriteError("");
+    try {
+      const res = await fetch("/api/posts/rewrite-caption", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          categoryKey: category.key,
+          ideaId: sameIdea ? selected[0].idea_id : undefined,
+          note: rewriteNote,
+          imageUrls: selected.map((s) => s.public_url),
+          currentText: caption,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setCaption(json.text);
+      setRewriteNote("");
+    } catch (e) {
+      setRewriteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRewriting(false);
     }
   }
 
@@ -159,6 +190,28 @@ export function PostComposer({
             onChange={(e) => setCaption(e.target.value)}
             placeholder="Caption"
           />
+          {ideaCopy && caption !== ideaCopy && (
+            <Button variant="outline" size="sm" onClick={() => setCaption(ideaCopy)}>
+              Use this idea&apos;s copy
+            </Button>
+          )}
+          <div className="flex gap-2">
+            <Textarea
+              rows={1}
+              placeholder="Rewrite the copy… (e.g. shorter, punchier hook)"
+              value={rewriteNote}
+              onChange={(e) => setRewriteNote(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={rewriting || !rewriteNote.trim()}
+              onClick={rewrite}
+            >
+              {rewriting ? "Rewriting…" : "Rewrite with notes"}
+            </Button>
+          </div>
+          {rewriteError && <p className="text-sm text-destructive">{rewriteError}</p>}
           <div className="flex items-center gap-3">
             <Button onClick={post} disabled={busy || selectedIds.length !== n} className="rounded-full">
               {busy ? "Posting…" : `Post ${n === 1 ? "image" : "carousel"} to Buffer`}

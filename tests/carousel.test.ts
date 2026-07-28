@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
-  type Postable,
+  resolveInitialCaption, type Postable,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
   return {
     generation_id: "g1", idea_id: "i1", idea_created_at: "2026-07-01T00:00:00Z",
     public_url: "https://res.cloudinary.com/x/a.jpg", concept: "c",
-    slide_index: 0, slide_count: 1,
+    slide_index: 0, slide_count: 1, post_text: "",
     ...overrides,
   };
 }
@@ -73,6 +73,7 @@ describe("selectAutoFill with multi-slide ideas", () => {
   const p = (id: string, ideaId: string, created: string, slideCount: number) => ({
     generation_id: id, idea_id: ideaId, idea_created_at: created,
     public_url: `u/${id}`, concept: "c", slide_index: 0, slide_count: slideCount,
+    post_text: "",
   });
 
   it("skips slides belonging to a multi-slide carousel", () => {
@@ -169,5 +170,30 @@ describe("findSupersededGenerationIds", () => {
       sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
     ];
     expect(findSupersededGenerationIds(selected, siblings)).toEqual(["old-s1", "old-s2"]);
+  });
+});
+
+describe("resolveInitialCaption", () => {
+  const p = (idea_id: string, post_text: string): Postable => ({
+    generation_id: `g-${Math.random()}`, idea_id, idea_created_at: "2026-07-28",
+    public_url: "https://x/y.png", concept: "c", slide_index: 0, slide_count: 1,
+    post_text,
+  });
+  const category = { post_caption: "one||two" };
+
+  it("uses the idea's copy when every selected image is that idea and it has copy", () => {
+    expect(resolveInitialCaption([p("a", "the copy"), p("a", "the copy")], category)).toBe("the copy");
+  });
+  it("falls back to rotation for mixed ideas", () => {
+    const out = resolveInitialCaption([p("a", "the copy"), p("b", "other")], category);
+    expect(["one", "two"]).toContain(out);
+  });
+  it("falls back to rotation when the idea has no copy", () => {
+    const out = resolveInitialCaption([p("a", "")], category);
+    expect(["one", "two"]).toContain(out);
+  });
+  it("falls back to rotation for an empty selection", () => {
+    const out = resolveInitialCaption([], category);
+    expect(["one", "two"]).toContain(out);
   });
 });

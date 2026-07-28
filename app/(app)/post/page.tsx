@@ -54,6 +54,7 @@ export default async function PostPage() {
         concept: idea.concept,
         slide_index: g.slide_index,
         slide_count: slideCount,
+        post_text: idea.post_text ?? "",
       });
     }
     postablesByCategory.set(idea.category_key, list);
