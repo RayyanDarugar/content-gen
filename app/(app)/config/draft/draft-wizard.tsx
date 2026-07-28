@@ -190,7 +190,7 @@ export function DraftWizard({ initialCategory, keys }: Props) {
           <PreviewPane
             categoryId={categoryId}
             postType={lastDraft.post_type}
-            hasStyleRef={!!brandRefUrl}
+            hasStyleRef={!!brandRefUrl && !pendingStyleRef}
             hasKieKey={keys.kie}
           />
         )}

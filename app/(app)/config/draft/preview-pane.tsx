@@ -27,12 +27,28 @@ interface PreviewRun {
 const DONE_STATE = "success";
 const FAILED_STATE = "fail";
 
+// Kie polling is documented as intermittently flaky, and production tolerates
+// this via cron re-polls (see repo docs). A single bad poll — a network
+// blip, a malformed body, or one non-ok response — must not permanently fail
+// a slide when the underlying task may still succeed seconds later. Only
+// give up after this many CONSECUTIVE poll errors.
+const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+
 async function pollTask(taskId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
+  let consecutiveErrors = 0;
+  let lastError: string | undefined;
   for (let i = 0; i < 60; i++) {
     try {
       const res = await fetch(`/api/categories/draft/preview?taskId=${encodeURIComponent(taskId)}`);
       const json = await res.json().catch(() => null);
-      if (!res.ok) return { ok: false, error: json?.error ?? `HTTP ${res.status}` };
+      if (!res.ok || json == null) {
+        lastError = json?.error ?? `HTTP ${res.status}`;
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) return { ok: false, error: lastError };
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      consecutiveErrors = 0;
       if (json.state === DONE_STATE) {
         if (json.resultUrl) return { ok: true, url: json.resultUrl };
         return { ok: false, error: "generation reported success but returned no image" };
@@ -40,8 +56,13 @@ async function pollTask(taskId: string): Promise<{ ok: boolean; url?: string; er
       if (json.state === FAILED_STATE) return { ok: false, error: "image generation failed" };
     } catch (e) {
       // A network-level failure (fetch rejects) — treat like any other
-      // failed poll rather than throwing out of the caller's Promise.all.
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      // transient failed poll rather than throwing out of the caller's
+      // Promise.all.
+      lastError = e instanceof Error ? e.message : String(e);
+      consecutiveErrors++;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) return { ok: false, error: lastError };
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
     }
     await new Promise((r) => setTimeout(r, 5000));
   }
@@ -135,7 +156,10 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
         </p>
         {!hasKieKey && <p className="text-muted-foreground">Add your Kie.ai API key in Config to run tests.</p>}
         {hasKieKey && !hasStyleRef && (
-          <p className="text-muted-foreground">Add a brand visual reference above to run a test.</p>
+          <p className="text-muted-foreground">
+            This draft has no brand visual reference image — add one on the start screen or in the category editor,
+            then re-open the wizard.
+          </p>
         )}
         {hasKieKey && hasStyleRef && (
           <div className="flex gap-2">
