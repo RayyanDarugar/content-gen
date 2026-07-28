@@ -4,7 +4,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
-  buildIdeaSystemPrompt, buildIdeaUserPrompt,
+  buildIdeaSystemPrompt, buildIdeaUserPrompt, clampIdeaCount,
   buildFilterSystemPrompt, IdeasOutput, FilterOutput,
   type BrandContext,
 } from "@/lib/athena/prompts";
@@ -58,17 +58,22 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   // call ("returned no parseable output"). IDEA_GENERATION_MAX_TOKENS is
   // capped by the SDK's non-streaming ceiling — see its definition — so this
   // is roughly double the original budget rather than the full worst case.
+  const anyCopyMode = cats.some((c) => c.caption_guide.trim());
+  const effectiveCount = clampIdeaCount(count, anyCopyMode);
   const genResponse = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: IDEA_GENERATION_MAX_TOKENS,
     system: buildIdeaSystemPrompt(brand, cats),
-    messages: [{ role: "user", content: buildIdeaUserPrompt(count, activeKeys) }],
+    messages: [{ role: "user", content: buildIdeaUserPrompt(effectiveCount, activeKeys) }],
     output_config: { format: zodOutputFormat(IdeasOutput) },
   });
   const generated = genResponse.parsed_output;
   if (!generated) throw new Error(`idea generation returned no parseable output (stop_reason: ${genResponse.stop_reason})`);
 
   const catByKey = new Map(cats.map((c) => [c.key, c]));
+  // A static category (no caption_guide) can never store stray post_text,
+  // even if the model writes something into that field anyway.
+  const copyModeKeys = new Set(cats.filter((c) => c.caption_guide.trim()).map((c) => c.key));
   let droppedForShape = 0;
   const raw = generated.ideas
     .filter((i) => activeKeys.includes(i.category))
@@ -88,6 +93,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
     .map((i, idx) => ({
       idea_id: `idea_${idx}`, category: i.category, concept: i.concept,
       slides: i.slides as Slide[],
+      post_text: copyModeKeys.has(i.category) ? (i.post_text ?? "") : "",
     }));
   if (!raw.length) throw new Error("Claude returned zero usable ideas");
 
@@ -115,6 +121,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
         concept: i.concept,
         resolved_prompt: i.concept,
         slides: i.slides,
+        post_text: i.post_text,
         ai_filter_reason: i.ai_filter_reason,
         approved: false,
         status: "pending_review",

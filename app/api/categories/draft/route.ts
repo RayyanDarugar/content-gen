@@ -28,6 +28,7 @@ function draftColumns(draft: NormalizedDraft) {
     output_format: draft.output_format,
     post_type: draft.post_type,
     role_guides: draft.role_guides,
+    caption_guide: draft.caption_guide,
     images_per_carousel: draft.images_per_carousel,
     aspect_ratio: draft.aspect_ratio,
   };
@@ -106,6 +107,8 @@ export async function POST(request: NextRequest) {
       style_ref_url: styleRefUrl ?? existing?.style_ref_url ?? "",
       post_caption: existing?.post_caption ?? "",
       buffer_channel_id: existing?.buffer_channel_id ?? "",
+      caption_guide: draft.caption_guide,
+      buffer_channel_service: existing?.buffer_channel_service ?? "",
       active: existing?.active ?? false,
     };
     validateCategoryFields(fields);

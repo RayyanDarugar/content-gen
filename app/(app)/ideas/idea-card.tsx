@@ -14,6 +14,7 @@ const statusVariant: Record<string, "outline" | "pending" | "destructive" | "suc
 
 export function IdeaCard({ idea }: { idea: Idea }) {
   const [expanded, setExpanded] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const reviewable = ["pending_review", "approved", "rejected"].includes(idea.status);
   const slides = idea.slides ?? [];
@@ -75,6 +76,20 @@ export function IdeaCard({ idea }: { idea: Idea }) {
             {expanded ? "hide visuals" : "show visuals"}
           </button>
         )}
+
+        {idea.post_text?.trim() && (
+          <div className="mt-2 rounded-md border bg-muted/40 p-2">
+            <button
+              type="button"
+              className="text-xs font-medium text-muted-foreground"
+              onClick={() => setCopyOpen((v) => !v)}
+            >
+              {copyOpen ? "Hide post copy" : "Show post copy"}
+            </button>
+            {copyOpen && <p className="mt-1 whitespace-pre-wrap text-sm">{idea.post_text}</p>}
+          </div>
+        )}
+
         {idea.ai_filter_reason && (
           <p className="text-xs text-muted-foreground">AI filter: {idea.ai_filter_reason}</p>
         )}

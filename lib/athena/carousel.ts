@@ -1,3 +1,5 @@
+import type { Category } from "@/lib/types";
+
 export interface Postable {
   generation_id: string;
   idea_id: string;
@@ -6,12 +8,29 @@ export interface Postable {
   concept: string;
   slide_index: number;
   slide_count: number;
+  post_text: string;
 }
 
 export function pickCaption(raw: string, rand: () => number = Math.random): string {
   const variants = raw.split("||").map((s) => s.trim()).filter(Boolean);
   if (variants.length === 0) return "";
   return variants[Math.floor(rand() * variants.length)];
+}
+
+// Spec §5 prefill rule: the caption box starts from the idea's AI-written
+// copy only when the whole selection IS that one idea; anything mixed or
+// copy-less keeps today's rotating variants.
+export function resolveInitialCaption(
+  selected: Postable[],
+  category: Pick<Category, "post_caption">,
+  rand: () => number = Math.random,
+): string {
+  const ideaIds = new Set(selected.map((s) => s.idea_id));
+  if (ideaIds.size === 1) {
+    const text = selected[0].post_text.trim();
+    if (text) return text;
+  }
+  return pickCaption(category.post_caption, rand);
 }
 
 // Phase A: the default fill deliberately skips multi-slide carousels. All

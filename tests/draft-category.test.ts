@@ -22,6 +22,7 @@ const rawDraft = {
   role_guides: { hook: "Orange MYTH tag", beat: "", payoff: "  ", single: "" },
   images_per_carousel: 5,
   aspect_ratio: "4:5",
+  caption_guide: "Punchy first person.",
 };
 
 describe("DraftTurnOutput", () => {
@@ -61,6 +62,7 @@ describe("categoryToDraft", () => {
     const d = categoryToDraft({
       name: "N", style_guide: "S", output_format: "O", post_type: "independent",
       role_guides: null as never, images_per_carousel: 3, aspect_ratio: "9:16",
+      caption_guide: null as never,
     });
     expect(d.role_guides).toEqual({});
     expect(d.aspect_ratio).toBe("9:16");
@@ -134,5 +136,22 @@ describe("toAnthropicMessages", () => {
     const msgs = toAnthropicMessages([{ role: "user", text: "", imageUrls: ["https://x/y.png"] }]);
     const content = msgs[0].content as { type: string; text?: string }[];
     expect(content[1].text).toBeTruthy();
+  });
+});
+
+describe("caption_guide in the draft", () => {
+  it("passes through normalizeDraft", () => {
+    expect(normalizeDraft(rawDraft).caption_guide).toBe("Punchy first person.");
+  });
+  it("maps from a category row, defaulting missing to empty", () => {
+    const d = categoryToDraft({
+      name: "N", style_guide: "S", output_format: "O", post_type: "independent",
+      role_guides: {}, images_per_carousel: 3, aspect_ratio: "4:5",
+      caption_guide: undefined as never,
+    });
+    expect(d.caption_guide).toBe("");
+  });
+  it("appears in the system prompt's field rules", () => {
+    expect(buildDraftSystemPrompt(brand)).toContain("caption_guide");
   });
 });

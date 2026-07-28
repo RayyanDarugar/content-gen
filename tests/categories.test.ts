@@ -3,7 +3,7 @@ import { slugify, validateCategoryFields, type CategoryFields } from "@/lib/cate
 
 const base: CategoryFields = {
   name: "Test", style_guide: "", output_format: "", style_ref_url: "",
-  post_caption: "", buffer_channel_id: "", images_per_carousel: 5,
+  post_caption: "", buffer_channel_id: "", caption_guide: "", buffer_channel_service: "", images_per_carousel: 5,
   aspect_ratio: "4:5", active: true, post_type: "independent", role_guides: {},
 };
 
@@ -40,5 +40,17 @@ describe("validateCategoryFields", () => {
   });
   it("rejects out-of-range images_per_carousel", () => {
     expect(() => validateCategoryFields({ ...base, images_per_carousel: 11 })).toThrow(/1-10/);
+  });
+});
+
+describe("CategoryFields copy fields", () => {
+  it("accepts caption_guide and buffer_channel_service as plain strings", () => {
+    expect(() =>
+      validateCategoryFields({
+        ...base,
+        caption_guide: "Long-form thought leadership.",
+        buffer_channel_service: "linkedin",
+      }),
+    ).not.toThrow();
   });
 });

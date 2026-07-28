@@ -234,6 +234,7 @@ export function DraftWizard({ initialCategory, keys }: Props) {
                 {Object.entries(lastDraft.role_guides).map(([role, guide]) => (
                   <DraftField key={role} label={`Treatment: ${role}`} value={guide ?? ""} />
                 ))}
+                <DraftField label="Copy guide" value={lastDraft.caption_guide} />
                 <DraftField label="Aspect ratio" value={lastDraft.aspect_ratio} />
               </>
             )}

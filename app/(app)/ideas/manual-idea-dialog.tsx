@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { createManualIdea } from "./actions";
 import type { Category, Slide } from "@/lib/types";
 
@@ -38,6 +39,7 @@ export function ManualIdeaDialog({ categories }: { categories: Category[] }) {
   const [categoryKey, setCategoryKey] = useState(categories[0]?.key ?? "");
   const [concept, setConcept] = useState("");
   const [slides, setSlides] = useState<Slide[]>(defaultSlidesForCategory(categories[0]));
+  const [postText, setPostText] = useState("");
   const [busy, setBusy] = useState(false);
 
   function pickCategory(key: string) {
@@ -53,10 +55,11 @@ export function ManualIdeaDialog({ categories }: { categories: Category[] }) {
   async function save() {
     setBusy(true);
     try {
-      await createManualIdea({ categoryKey, concept, slides });
+      await createManualIdea({ categoryKey, concept, slides, postText });
       toast.success("Idea created");
       setOpen(false);
       setConcept("");
+      setPostText("");
       const cat = categories.find((c) => c.key === categoryKey);
       setSlides(defaultSlidesForCategory(cat));
     } catch (e) {
@@ -145,6 +148,14 @@ export function ManualIdeaDialog({ categories }: { categories: Category[] }) {
                 />
               </div>
             ))}
+          </div>
+
+          <div>
+            <Label>Post copy (optional)</Label>
+            <p className="text-xs text-muted-foreground">
+              The text published with the post — used on text-first platforms like LinkedIn.
+            </p>
+            <Textarea rows={4} value={postText} onChange={(e) => setPostText(e.target.value)} />
           </div>
 
           <Button onClick={save} disabled={busy || !concept.trim()} className="rounded-full">

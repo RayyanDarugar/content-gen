@@ -24,6 +24,9 @@ export const DraftTurnOutput = z.object({
     payoff: z.string().describe("Treatment belonging to the final panel only — empty string if none"),
     single: z.string().describe("Treatment for standalone images — empty string if none"),
   }),
+  caption_guide: z.string().describe(
+    "Copy instructions for the platform this category posts to — voice, structure, length, hashtags. Empty string if the category should keep static rotating captions instead of AI-written copy.",
+  ),
   images_per_carousel: z.number().int().min(1).max(10),
   aspect_ratio: z.string().describe('Like "4:5" or "9:16"'),
 });
@@ -34,6 +37,7 @@ export interface NormalizedDraft {
   output_format: string;
   post_type: PostType;
   role_guides: RoleGuides;
+  caption_guide: string;
   images_per_carousel: number;
   aspect_ratio: string;
 }
@@ -61,6 +65,7 @@ export function normalizeDraft(
     output_format: d.output_format,
     post_type: d.post_type,
     role_guides,
+    caption_guide: d.caption_guide,
     // The DB check constraint (migration 0009) rejects narrative with < 2
     // slides, and JSON Schema can't express the conditional — clamp here.
     images_per_carousel:
@@ -73,7 +78,7 @@ export function categoryToDraft(
   c: Pick<
     Category,
     "name" | "style_guide" | "output_format" | "post_type" | "role_guides" |
-    "images_per_carousel" | "aspect_ratio"
+    "caption_guide" | "images_per_carousel" | "aspect_ratio"
   >,
 ): NormalizedDraft {
   return {
@@ -82,6 +87,7 @@ export function categoryToDraft(
     output_format: c.output_format,
     post_type: c.post_type,
     role_guides: c.role_guides ?? {},
+    caption_guide: c.caption_guide ?? "",
     images_per_carousel: c.images_per_carousel,
     aspect_ratio: c.aspect_ratio,
   };
@@ -101,6 +107,7 @@ export function buildDraftSystemPrompt(brand: BrandContext, seed?: NormalizedDra
     "- style_guide holds what EVERY panel shares: palette, subject or character, typography, layout, any persistent footer. Write it as direct instructions to an image model.",
     "- post_type is 'independent' when each image stands completely alone, 'narrative' when the slides tell ONE story (hook, beats, payoff).",
     "- role_guides holds ONLY treatment that belongs to a single role — a tag or strike-through on the hook, say. Anything named here must NOT also appear in style_guide: a per-panel element left in the style guide lands on every panel, including panels it must not. Use an empty string when a role needs nothing special.",
+    "- caption_guide: how the post's published TEXT is written (voice, structure, length) for the platform it posts to. Leave it an empty string when static rotating captions are the right fit — e.g. simple image-first posts.",
     "- images_per_carousel: for narrative, the slide count of the story (2-10). For independent, how many standalone images one batch produces.",
     "- aspect_ratio: like \"4:5\" or \"9:16\".",
     "",

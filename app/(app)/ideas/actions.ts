@@ -28,6 +28,7 @@ export async function createManualIdea(input: {
   categoryKey: string;
   concept: string;
   slides: Slide[];
+  postText?: string;
 }): Promise<void> {
   const user = await requireUser();
   const supabase = await createServerSupabase();
@@ -63,6 +64,7 @@ export async function createManualIdea(input: {
     status: "approved",
     batch_id: randomUUID(),
     slides: input.slides,
+    post_text: input.postText?.trim() ?? "",
   });
   if (error) throw new Error(error.message);
   revalidatePath("/ideas");

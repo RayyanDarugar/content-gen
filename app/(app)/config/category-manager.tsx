@@ -16,7 +16,7 @@ import type { BufferChannel, Category } from "@/lib/types";
 
 const EMPTY: CategoryFields = {
   name: "", style_guide: "", output_format: "", style_ref_url: "",
-  post_caption: "", buffer_channel_id: "",
+  post_caption: "", buffer_channel_id: "", caption_guide: "", buffer_channel_service: "",
   images_per_carousel: 5, aspect_ratio: "4:5", active: true,
   post_type: "independent", role_guides: {},
 };
@@ -29,6 +29,7 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
           name: category.name, style_guide: category.style_guide,
           output_format: category.output_format, style_ref_url: category.style_ref_url,
           post_caption: category.post_caption, buffer_channel_id: category.buffer_channel_id,
+          caption_guide: category.caption_guide, buffer_channel_service: category.buffer_channel_service ?? "",
           images_per_carousel: category.images_per_carousel,
           aspect_ratio: category.aspect_ratio, active: category.active,
           post_type: category.post_type, role_guides: category.role_guides ?? {},
@@ -60,8 +61,15 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
   function save() {
     startTransition(async () => {
       try {
-        if (category) await updateCategory(category.id, form);
-        else { await createCategory(form); setForm(EMPTY); }
+        // The service is normally captured by the channel dropdown's onChange,
+        // but re-saving a pre-existing category without re-picking the channel
+        // would otherwise write back whatever was already in form (possibly
+        // ''). Re-derive it from the current channel list so it self-heals.
+        const service = channels.find((c) => c.id === form.buffer_channel_id)?.service
+          ?? form.buffer_channel_service;
+        const payload = { ...form, buffer_channel_service: service };
+        if (category) await updateCategory(category.id, payload);
+        else { await createCategory(payload); setForm(EMPTY); }
         setMsg("Saved.");
         router.refresh();
       } catch (e) {
@@ -205,6 +213,14 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         <div><Label>Aspect ratio</Label>
           <Input value={form.aspect_ratio} onChange={(e) => set("aspect_ratio", e.target.value)} /></div>
       </div>
+      <div><Label>Copy guide (AI-written post text)</Label>
+        <p className="text-xs text-muted-foreground">
+          Filled in: the AI writes each post&apos;s copy in this voice, shaped for the
+          platform of the Buffer channel below. Empty: the rotating captions below
+          are used, exactly as before.
+        </p>
+        <Textarea rows={4} value={form.caption_guide}
+          onChange={(e) => set("caption_guide", e.target.value)} /></div>
       <div><Label>Post caption (use || to separate rotating variants)</Label>
         <Textarea rows={3} value={form.post_caption}
           onChange={(e) => set("post_caption", e.target.value)} /></div>
@@ -214,7 +230,11 @@ function CategoryEditor({ category, channels }: { category?: Category; channels:
         ) : (
           <select className="block w-full rounded-md border bg-background p-2 text-sm"
             value={form.buffer_channel_id}
-            onChange={(e) => set("buffer_channel_id", e.target.value)}>
+            onChange={(e) => {
+              const id = e.target.value;
+              const service = channels.find((c) => c.id === id)?.service ?? "";
+              setForm((f) => ({ ...f, buffer_channel_id: id, buffer_channel_service: service }));
+            }}>
             <option value="">— none —</option>
             {channels.map((c) => (
               <option key={c.id} value={c.id}>{c.displayName || c.name} ({c.service})</option>
