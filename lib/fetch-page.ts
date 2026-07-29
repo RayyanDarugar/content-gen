@@ -236,6 +236,24 @@ const MAX_STYLESHEETS = 3;
 // Not handled, deliberately: unquoted attribute values (`<link rel=stylesheet
 // href=/a.css>`). Accepted and carried, not an oversight.
 export function stylesheetHrefs(html: string, baseUrl: string): string[] {
+  // Strip well-formed <script> and <style> blocks BEFORE the comment pass,
+  // in the same order extractReadableText uses (its pass 1, mirrored here).
+  // An unbalanced literal `<!--` inside a script string (e.g. `var s =
+  // "<!--";`) would otherwise open a pseudo-comment that runs to the next
+  // real `-->` once the comment pass below sees it, swallowing every real
+  // tag — including a live <link> — sitting in between. NON-greedy, same as
+  // extractReadableText's pass 1: script/style elements don't nest, and a
+  // greedy version here would repeat the exact bug already fixed once in
+  // this file (see extractReadableText above, and the comment-stripping
+  // regex just below).
+  let withoutScriptsAndStyles = html;
+  for (const tagName of ["script", "style"]) {
+    withoutScriptsAndStyles = withoutScriptsAndStyles.replace(
+      new RegExp(`<${tagName}\\b[^>]*>[\\s\\S]*?</${tagName}\\b[^>]*>`, "gi"),
+      " ",
+    );
+  }
+
   // Commented-out <link>s are dead markup, but to a regex they are still
   // <link> tags — and hand-maintained templates are full of them. Three
   // stale links in a comment ahead of the live one burn the whole
@@ -246,7 +264,7 @@ export function stylesheetHrefs(html: string, baseUrl: string): string[] {
   // version of precisely this pattern has already shipped as a bug in this
   // file once — it deletes every element sitting between two ordinary
   // unrelated comments. Do not "simplify" it back to `<!--[\s\S]*-->`.
-  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, " ");
+  const withoutComments = withoutScriptsAndStyles.replace(/<!--[\s\S]*?-->/g, " ");
 
   const out: string[] = [];
   const seen = new Set<string>();

@@ -298,6 +298,46 @@ describe("stylesheetHrefs", () => {
     ]);
   });
 
+  it("does not let an unbalanced <!-- inside a script string swallow a following link (regression)", () => {
+    // A literal `<!--` inside a script string is not a real comment opener,
+    // but if script/style content isn't stripped before the comment pass,
+    // the comment regex treats it as one anyway and runs to the next real
+    // `-->` in the document — here, the one that legitimately closes the
+    // trailing "<!-- x -->" — swallowing the live <link> in between.
+    const html = `<script>var s="<!--";</script><link rel="stylesheet" href="/real.css"><!-- x -->`;
+    expect(stylesheetHrefs(html, base)).toEqual(["https://example.com/real.css"]);
+  });
+
+  it("keeps a link sitting between two script blocks (regression)", () => {
+    // Guards the non-greedy requirement on the new script/style strip itself:
+    // a greedy `<script>...</script>` match spanning from the first opening
+    // tag to the LAST closing tag would delete the live link sitting between
+    // two separate script blocks — the exact bug this file has shipped
+    // before (see extractReadableText's script/style tests above).
+    const html = `<script>a()</script><link rel="stylesheet" href="/mid.css"><script>b()</script>`;
+    expect(stylesheetHrefs(html, base)).toEqual(["https://example.com/mid.css"]);
+  });
+
+  it("still ignores a link genuinely inside an HTML comment (no regression)", () => {
+    // The deliberate behaviour from the original comment-stripping fix must
+    // be unchanged: a <link> that really is inside a comment (no script/style
+    // involved) is still not discovered.
+    const html = `<!-- <link rel="stylesheet" href="/dead.css"> --><link rel="stylesheet" href="/live.css">`;
+    expect(stylesheetHrefs(html, base)).toEqual(["https://example.com/live.css"]);
+  });
+
+  it("does not let a <!-- inside a style block swallow a following link (regression)", () => {
+    // Legacy CSS-hiding technique: `<style><!-- ... --></style>`. The `<!--`
+    // is inside the style block's own (non-comment, in HTML terms) content.
+    // If style content isn't stripped before the comment pass, this `<!--`
+    // opens a pseudo-comment that runs to the next real `-->` in the
+    // document — here, the one closing the trailing "<!-- end -->" — which
+    // swallows the </style> tag, the live <link>, and everything between.
+    const html =
+      `<style>/* <!-- */ .a{color:red}</style><link rel="stylesheet" href="/after.css"><!-- end -->`;
+    expect(stylesheetHrefs(html, base)).toEqual(["https://example.com/after.css"]);
+  });
+
   it("does not read data-href / data-rel as href / rel", () => {
     // Without a left boundary on the attribute regexes, `data-href=` matches
     // as `href=` and wins by coming first in the tag, so the fetch is aimed
