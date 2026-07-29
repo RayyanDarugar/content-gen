@@ -6,6 +6,7 @@ import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { BrandExtractOutput, buildBrandExtractSystemPrompt } from "@/lib/athena/prompts";
 import { fetchPageText } from "@/lib/fetch-page";
 import { preflightDocument } from "@/lib/document-preflight";
+import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
@@ -89,7 +90,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: warnings[0] ?? "Nothing readable was provided." }, { status: 400 });
     }
 
-    const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(user.id) });
+    // A one-shot, user-initiated call the user is actively waiting on
+    // (maxDuration = 120 above) — worth riding out a transient capacity
+    // blip (529) with the SDK's own backoff rather than failing at the
+    // default 2-retry budget (~5s). Do not "normalize" this back down.
+    const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(user.id), maxRetries: 5 });
     const response = await anthropic.messages.parse({
       model: MODEL,
       max_tokens: 4000,
@@ -103,6 +108,6 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("brand extraction failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendlyLlmError(e) }, { status: 500 });
   }
 }

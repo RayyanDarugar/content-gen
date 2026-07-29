@@ -28,7 +28,13 @@ const IDEA_GENERATION_MAX_TOKENS = 16000;
 
 export async function generateIdeas(userId: string, categoryKey: string, count: number) {
   const supabase = createAdminSupabase();
-  const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId) });
+  // A one-shot, user-initiated call the user is actively waiting on (the
+  // caller, app/api/ideas/generate/route.ts, sets maxDuration = 120) — worth
+  // riding out a transient capacity blip (529) with the SDK's own backoff
+  // rather than failing at the default 2-retry budget (~5s). This makes two
+  // Anthropic calls (ideas, then the self-filter pass below); both benefit.
+  // Do not "normalize" this back down.
+  const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId), maxRetries: 5 });
 
   let query = supabase.from("categories").select("*").eq("user_id", userId).eq("active", true);
   if (categoryKey !== "ALL") query = query.eq("key", categoryKey);

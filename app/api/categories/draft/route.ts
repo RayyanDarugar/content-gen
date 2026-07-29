@@ -11,6 +11,7 @@ import {
 } from "@/lib/athena/draft-category";
 import type { BrandContext } from "@/lib/athena/prompts";
 import type { Category } from "@/lib/types";
+import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("draft turn failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendlyLlmError(e) }, { status: 500 });
   }
 }
 

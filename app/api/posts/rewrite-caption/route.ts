@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { brandBlock, platformPresetFor, type BrandContext } from "@/lib/athena/prompts";
 import type { Category, Idea } from "@/lib/types";
+import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
@@ -97,6 +98,6 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("caption rewrite failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendlyLlmError(e) }, { status: 500 });
   }
 }

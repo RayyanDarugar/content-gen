@@ -7,6 +7,7 @@ import {
   generateSamplePreviewIdea, submitPreviewAnchor, submitPreviewFanout,
 } from "@/lib/athena/preview";
 import type { Category, Slide } from "@/lib/types";
+import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("preview failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendlyLlmError(e) }, { status: 500 });
   }
 }
 

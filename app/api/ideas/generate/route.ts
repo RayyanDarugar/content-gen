@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
 import { requireUser } from "@/lib/auth/require-user";
+import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
@@ -26,6 +27,6 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("idea generation failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendlyLlmError(e) }, { status: 500 });
   }
 }
