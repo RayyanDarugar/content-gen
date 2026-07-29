@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isBlockedHost, assertFetchableUrl, extractReadableText } from "@/lib/fetch-page";
+import { isBlockedHost, assertFetchableUrl, extractReadableText, stylesheetHrefs } from "@/lib/fetch-page";
 
 // Mock server-only for this test file only
 vi.mock("server-only", () => ({}));
@@ -155,5 +155,35 @@ describe("extractReadableText", () => {
     expect(out).toContain("More");
     expect(out).not.toContain("color:red");
     expect(out).not.toContain("color:blue");
+  });
+});
+
+describe("stylesheetHrefs", () => {
+  const base = "https://example.com/about/";
+  it("resolves relative and absolute hrefs against the final url", () => {
+    const html = `
+      <link rel="stylesheet" href="/assets/app.css">
+      <link rel="stylesheet" href="theme.css">
+      <link rel="stylesheet" href="https://cdn.example.com/x.css">`;
+    expect(stylesheetHrefs(html, base)).toEqual([
+      "https://example.com/assets/app.css",
+      "https://example.com/about/theme.css",
+      "https://cdn.example.com/x.css",
+    ]);
+  });
+  it("ignores non-stylesheet links", () => {
+    const html = `<link rel="icon" href="/favicon.ico"><link rel="preconnect" href="https://fonts.gstatic.com">`;
+    expect(stylesheetHrefs(html, base)).toEqual([]);
+  });
+  it("handles attribute order and extra rel tokens", () => {
+    const html = `<link href="/a.css" rel="stylesheet"><link rel="preload stylesheet" href="/b.css">`;
+    expect(stylesheetHrefs(html, base)).toContain("https://example.com/a.css");
+    expect(stylesheetHrefs(html, base)).toContain("https://example.com/b.css");
+  });
+  it("caps at 3 and drops unparseable hrefs", () => {
+    const html = ["/1.css", "/2.css", "/3.css", "/4.css"]
+      .map((h) => `<link rel="stylesheet" href="${h}">`).join("") +
+      `<link rel="stylesheet" href="::::">`;
+    expect(stylesheetHrefs(html, base)).toHaveLength(3);
   });
 });

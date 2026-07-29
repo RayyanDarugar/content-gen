@@ -127,10 +127,14 @@ export function extractReadableText(html: string, maxChars = DEFAULT_MAX_CHARS):
   return decoded.replace(/\s+/g, " ").trim().slice(0, maxChars);
 }
 
-// Fetches a page's readable text with redirects validated per hop — the
-// initial URL being https and public is not enough, since a redirect can
-// otherwise land on http or a private address.
-export async function fetchPageText(rawUrl: string): Promise<string> {
+// The raw fetch, shared so one page load can serve both readable text and
+// design-token parsing. fetchPageText is a thin wrapper over this — its
+// behaviour is unchanged, and its tests are the proof.
+//
+// Fetches a page with redirects validated per hop — the initial URL being
+// https and public is not enough, since a redirect can otherwise land on
+// http or a private address.
+export async function fetchPageHtml(rawUrl: string): Promise<{ html: string; finalUrl: string }> {
   let url = assertFetchableUrl(rawUrl);
   let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -192,5 +196,53 @@ export async function fetchPageText(rawUrl: string): Promise<string> {
       return merged;
     }, new Uint8Array()),
   );
+  return { html, finalUrl: url.toString() };
+}
+
+// Fetches a page's readable text. A thin wrapper over fetchPageHtml — kept
+// as its own export so its signature and behaviour never change.
+export async function fetchPageText(rawUrl: string): Promise<string> {
+  const { html } = await fetchPageHtml(rawUrl);
   return extractReadableText(html);
+}
+
+const MAX_STYLESHEETS = 3;
+
+// Finds <link rel="stylesheet"> hrefs in html and resolves them against
+// baseUrl (the final URL reached after redirects, so relative hrefs land
+// correctly). Non-greedy tag matching: <link> elements don't nest, and a
+// greedy match across multiple tags would blur their boundaries.
+export function stylesheetHrefs(html: string, baseUrl: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/<link\b[^>]*?>/gi)) {
+    const tag = m[0];
+    const rel = tag.match(/rel\s*=\s*["']([^"']+)["']/i)?.[1] ?? "";
+    if (!/\bstylesheet\b/i.test(rel)) continue;
+    const href = tag.match(/href\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    try {
+      out.push(new URL(href, baseUrl).toString());
+    } catch {
+      // An unparseable href is skipped, not fatal.
+    }
+    if (out.length === MAX_STYLESHEETS) break;
+  }
+  return out;
+}
+
+// Best-effort: a sheet that fails to load degrades the design-token
+// result, it never fails the extraction run. Each goes through the same
+// assertFetchableUrl/redirect/timeout path as the page itself, via
+// fetchPageHtml — no second fetch helper.
+export async function fetchStylesheets(html: string, baseUrl: string): Promise<string[]> {
+  const sheets: string[] = [];
+  for (const href of stylesheetHrefs(html, baseUrl)) {
+    try {
+      const { html: css } = await fetchPageHtml(href);
+      sheets.push(css);
+    } catch {
+      // skipped
+    }
+  }
+  return sheets;
 }
