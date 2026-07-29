@@ -9,6 +9,9 @@ export interface BrandContext {
   avoid: string;
   proof_points: string[];
   standing: string[];
+  colors: string[];
+  fonts: string[];
+  visual_notes: string;
 }
 
 export function brandBlock(brand: BrandContext): string {
@@ -33,6 +36,15 @@ export function brandBlock(brand: BrandContext): string {
       "",
       `STANDING — this brand has authority to speak on: ${brand.standing.join(", ")}.`,
       "Decline angles outside that; do not claim expertise it has not earned.",
+    );
+  }
+  if (brand.colors.length || brand.fonts.length || brand.visual_notes.trim()) {
+    lines.push("", "VISUAL IDENTITY — the brand's own look, taken from its site:");
+    if (brand.colors.length) lines.push(`- Palette: ${brand.colors.join(", ")}`);
+    if (brand.fonts.length) lines.push(`- Type: ${brand.fonts.join(", ")}`);
+    if (brand.visual_notes.trim()) lines.push(`- Notes: ${brand.visual_notes.trim()}`);
+    lines.push(
+      "Use these as the DEFAULT look for anything visual. A specific post type may deliberately override them — a meme format in corporate brand colors would be wrong — so treat them as the starting point, not a rule.",
     );
   }
   return lines.length ? lines.join("\n") : "(No brand profile set yet — keep it generic and on-topic.)";
@@ -208,6 +220,9 @@ export const BrandExtractOutput = z.object({
     "concrete claims the brand can point at, each one short and specific; empty array if the sources support none",
   ),
   standing: z.array(z.string()).describe("topics the sources show this brand has authority to speak on"),
+  colors: z.array(z.string()).describe("hex colors that are genuinely this brand's, most prominent first; empty array if the candidates show none"),
+  fonts: z.array(z.string()).describe("font families this brand actually uses; empty array if unclear"),
+  visual_notes: z.string().describe("one short line on the visual style — imagery, logo treatment — or empty string"),
 });
 export type BrandExtractOutputT = z.infer<typeof BrandExtractOutput>;
 
@@ -224,5 +239,9 @@ export function buildBrandExtractSystemPrompt(): string {
     "voice describes how the brand sounds, in a way another writer could imitate. avoid captures what it should never lead with — jargon, claims it can't back, or framings that would read wrong for its audience.",
     "",
     "Leave a field as an empty string when the sources genuinely don't say. Do not pad.",
+    "",
+    "DESIGN CANDIDATES:",
+    "When candidates are provided they are UNJUDGED — scraped from the site's markup and CSS and ranked by a crude heuristic. Most are noise: shadows, borders, grays, framework defaults. Your job is to pick the few that are actually the brand's, in order of prominence, and discard the rest.",
+    "Do not invent a palette or a typeface. If the candidates don't show a clear brand identity, return empty arrays — that is the correct answer, exactly as it is for proof points.",
   ].join("\n");
 }

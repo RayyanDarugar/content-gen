@@ -14,6 +14,9 @@ const brand: BrandContext = {
   avoid: "AI-powered, dashboards, analytics",
   proof_points: [],
   standing: [],
+  colors: [],
+  fonts: [],
+  visual_notes: "",
 };
 
 const cats = [
@@ -35,7 +38,7 @@ describe("buildIdeaSystemPrompt", () => {
     expect(p).toContain("myth, scene, insight line");
   });
   it("degrades gracefully on empty brand and empty category fields", () => {
-    const empty: BrandContext = { business_name: "", business_description: "", audience: "", voice: "", avoid: "", proof_points: [], standing: [] };
+    const empty: BrandContext = { business_name: "", business_description: "", audience: "", voice: "", avoid: "", proof_points: [], standing: [], colors: [], fonts: [], visual_notes: "" };
     const p = buildIdeaSystemPrompt(empty, [{ key: "X", style_guide: "", output_format: "", images_per_carousel: 1, post_type: "narrative" as const, caption_guide: "", buffer_channel_service: "" }]);
     expect(typeof p).toBe("string");
     expect(p).toContain("X");
@@ -65,6 +68,7 @@ describe("buildIdeaSystemPrompt — carousel instructions", () => {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
     proof_points: [] as string[], standing: [] as string[],
+    colors: [] as string[], fonts: [] as string[], visual_notes: "",
   };
   const cats = [{ key: "SAT_MYTH", style_guide: "GUIDE", output_format: "", images_per_carousel: 5, post_type: "narrative" as const, caption_guide: "", buffer_channel_service: "" }];
 
@@ -90,6 +94,7 @@ describe("buildIdeaSystemPrompt — post type", () => {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
     proof_points: [] as string[], standing: [] as string[],
+    colors: [] as string[], fonts: [] as string[], visual_notes: "",
   };
   const cat = (post_type: "independent" | "narrative") => [{
     key: "SAT_MYTH", style_guide: "GUIDE", output_format: "",
@@ -207,6 +212,7 @@ describe("buildAdaptCaptionSystemPrompt", () => {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
     proof_points: [] as string[], standing: [] as string[],
+    colors: [] as string[], fonts: [] as string[], visual_notes: "",
   };
   it("carries the target platform's conventions", () => {
     const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
@@ -239,6 +245,7 @@ describe("brandBlock — material", () => {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
     proof_points: [] as string[], standing: [] as string[],
+    colors: [] as string[], fonts: [] as string[], visual_notes: "",
   };
 
   it("is byte-identical to the pre-material output when both lists are empty", () => {
@@ -257,7 +264,7 @@ describe("brandBlock — material", () => {
     expect(
       brandBlock({
         business_name: "", business_description: "", audience: "", voice: "", avoid: "",
-        proof_points: [], standing: [],
+        proof_points: [], standing: [], colors: [], fonts: [], visual_notes: "",
       }),
     ).toBe("(No brand profile set yet — keep it generic and on-topic.)");
   });
@@ -291,5 +298,52 @@ describe("buildBrandExtractSystemPrompt", () => {
   it("scopes standing to what the sources evidence", () => {
     expect(p.toLowerCase()).toContain("standing");
     expect(p.toLowerCase()).toContain("evidence");
+  });
+});
+
+describe("brandBlock — visual identity", () => {
+  const base = {
+    business_name: "Athena", business_description: "SAT prep",
+    audience: "parents", voice: "warm", avoid: "AI jargon",
+    proof_points: [] as string[], standing: [] as string[],
+    colors: [] as string[], fonts: [] as string[], visual_notes: "",
+  };
+
+  it("is byte-identical to the pre-visual output when all three are empty", () => {
+    expect(brandBlock(base)).toBe(
+      [
+        "Business: Athena",
+        "What it is: SAT prep",
+        "Primary audience: parents",
+        "Voice / tone: warm",
+        "Never lead with / avoid: AI jargon",
+      ].join("\n"),
+    );
+  });
+
+  it("carries colors and fonts when set", () => {
+    const p = brandBlock({ ...base, colors: ["#0f172a", "#f97316"], fonts: ["Inter"] });
+    expect(p).toContain("#0f172a");
+    expect(p).toContain("Inter");
+  });
+
+  it("says the visual identity is a default a post type may override", () => {
+    const p = brandBlock({ ...base, colors: ["#0f172a"] });
+    expect(p.toLowerCase()).toContain("override");
+  });
+
+  it("carries visual_notes alone", () => {
+    expect(brandBlock({ ...base, visual_notes: "Photography, never illustration." }))
+      .toContain("Photography, never illustration.");
+  });
+});
+
+describe("buildBrandExtractSystemPrompt — design tokens", () => {
+  const p = buildBrandExtractSystemPrompt();
+  it("explains the candidates are unjudged", () => {
+    expect(p.toLowerCase()).toContain("candidate");
+  });
+  it("forbids inventing a palette", () => {
+    expect(p.toLowerCase()).toContain("do not invent");
   });
 });

@@ -112,6 +112,9 @@ export interface BrandProfile {
   avoid: string;
   proof_points: string[];
   standing: string[];
+  colors: string[];
+  fonts: string[];
+  visual_notes: string;
   created_at: string;
   updated_at: string;
 }

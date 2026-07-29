@@ -56,6 +56,9 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
     avoid: brandRow?.avoid ?? "",
     proof_points: brandRow?.proof_points ?? [],
     standing: brandRow?.standing ?? [],
+    colors: brandRow?.colors ?? [],
+    fonts: brandRow?.fonts ?? [],
+    visual_notes: brandRow?.visual_notes ?? "",
   };
 
   // Call 1: generate ideas (structured output replaces the old JSON-repair parse)

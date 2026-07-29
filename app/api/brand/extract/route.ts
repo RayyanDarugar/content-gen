@@ -5,13 +5,35 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { BrandExtractOutput, buildBrandExtractSystemPrompt } from "@/lib/athena/prompts";
-import { fetchPageText } from "@/lib/fetch-page";
+import { fetchPageHtml, fetchStylesheets, extractReadableText } from "@/lib/fetch-page";
+import { parseDesignCandidates, type DesignCandidates } from "@/lib/design-tokens";
 import { preflightDocument } from "@/lib/document-preflight";
 import { friendlyLlmError } from "@/lib/llm-errors";
 
 export const maxDuration = 120;
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
+
+// The page fetch (fetchPageHtml) already costs up to MAX_REDIRECTS+1 hops *
+// its own per-hop timeout — 40s worst case — before design-token work even
+// starts. fetchStylesheets fans out up to 3 sheets concurrently but each one
+// carries that same 40s worst case, and this route (maxDuration = 120) still
+// has document preflights and a maxRetries: 5 Anthropic call ahead of it.
+// Bounding the stylesheet phase at a fraction of its own worst case keeps
+// the addition from being able to blow the route's budget on a slow host:
+// on timeout we fall back to parsing design candidates from the page's own
+// markup and inline <style> blocks alone, which is degraded, not fatal.
+const DESIGN_TOKEN_BUDGET_MS = 15_000;
+
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("design-token fetch exceeded its budget")), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 export async function POST(request: NextRequest) {
   let user;
@@ -42,9 +64,22 @@ export async function POST(request: NextRequest) {
   const warnings: string[] = [];
   try {
     let pageText = "";
+    let designCandidates: DesignCandidates | null = null;
     if (url) {
       try {
-        pageText = await fetchPageText(url);
+        const { html, finalUrl } = await fetchPageHtml(url);
+        pageText = extractReadableText(html);
+        // Best-effort on top of best-effort: a hung or slow-redirecting
+        // stylesheet degrades design-token extraction, never the whole
+        // brand extraction, which still has to succeed on website text plus
+        // documents alone. See DESIGN_TOKEN_BUDGET_MS above for why this is
+        // bounded well below fetchStylesheets' own worst case.
+        try {
+          const sheets = await withDeadline(fetchStylesheets(html, finalUrl), DESIGN_TOKEN_BUDGET_MS);
+          designCandidates = parseDesignCandidates(html, sheets);
+        } catch {
+          designCandidates = parseDesignCandidates(html);
+        }
       } catch (e) {
         warnings.push(`Couldn't read ${url}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -82,6 +117,9 @@ export async function POST(request: NextRequest) {
 
     const content: Anthropic.ContentBlockParam[] = [
       ...documentBlocks,
+      ...(designCandidates && (designCandidates.colors.length || designCandidates.fonts.length)
+        ? [{ type: "text" as const, text: `DESIGN CANDIDATES (unjudged, ranked):\n${JSON.stringify(designCandidates)}` }]
+        : []),
       ...(pageText ? [{ type: "text" as const, text: `WEBSITE TEXT (${url}):\n${pageText}` }] : []),
       ...(turns.length
         ? [{ type: "text" as const, text: `WHAT THE USER TOLD YOU:\n${turns.map((t) => `${t.role}: ${t.text}`).join("\n")}` }]

@@ -14,6 +14,9 @@ const brand: BrandContext = {
   avoid: "AI-powered, dashboards, analytics",
   proof_points: [],
   standing: [],
+  colors: [],
+  fonts: [],
+  visual_notes: "",
 };
 
 const rawDraft = {

@@ -57,6 +57,9 @@ export async function POST(request: NextRequest) {
       avoid: brandRow?.avoid ?? "",
       proof_points: brandRow?.proof_points ?? [],
       standing: brandRow?.standing ?? [],
+      colors: brandRow?.colors ?? [],
+      fonts: brandRow?.fonts ?? [],
+      visual_notes: brandRow?.visual_notes ?? "",
     };
 
     const anthropic = createAnthropicClient({

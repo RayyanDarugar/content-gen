@@ -170,6 +170,9 @@ export async function saveBrandProfile(
         avoid: String(formData.get("avoid") ?? "").trim(),
         proof_points: parseBrandList(formData.get("proof_points")),
         standing: parseBrandList(formData.get("standing")),
+        colors: parseBrandList(formData.get("colors")),
+        fonts: parseBrandList(formData.get("fonts")),
+        visual_notes: String(formData.get("visual_notes") ?? "").trim(),
       },
       { onConflict: "user_id" },
     );
