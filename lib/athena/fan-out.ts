@@ -3,6 +3,13 @@ export interface ChannelResult {
   status: "queued" | "failed";
   bufferUpdateId?: string;
   error?: string;
+  // Set when the channel genuinely posted (status stays "queued") but some
+  // bookkeeping after the Buffer call failed even after a retry — e.g. the
+  // post_images insert, whose absence would make per-channel posted memory
+  // (Task 2) think this channel's slides never went out. A Buffer post can't
+  // be un-posted, so the channel still counts as queued; this just tells the
+  // caller its record-keeping may be stale.
+  warning?: string;
 }
 
 // A multi-channel submission is never wholly "posted" or "failed" when it

@@ -24,4 +24,16 @@ describe("summarizeFanOut", () => {
     const s = summarizeFanOut([]);
     expect(s).toMatchObject({ queued: 0, failed: 0, allFailed: false });
   });
+
+  it("still counts a queued result carrying a warning as queued, not failed", () => {
+    const warned: ChannelResult = {
+      channelId: "a",
+      status: "queued",
+      bufferUpdateId: "u1",
+      warning: "posted but image records failed — this channel's slides may be offered again",
+    };
+    const s = summarizeFanOut([warned, bad("b")]);
+    expect(s).toMatchObject({ queued: 1, failed: 1, allFailed: false });
+    expect(s.label).toBe("1 queued · 1 failed");
+  });
 });

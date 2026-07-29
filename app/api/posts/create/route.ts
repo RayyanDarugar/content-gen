@@ -224,17 +224,39 @@ export async function POST(request: NextRequest) {
       });
       continue;
     }
+    let imagesWarning: string | undefined;
     if (r.success) {
       // post_images rows are inserted ONLY for channels that actually
       // posted — per-channel posted memory reads them, so a failed channel
-      // must not look like it published.
-      await supabase.from("post_images").insert(
-        ordered.map((g, idx) => ({ user_id: user.id, post_id: postRow.id, generation_id: g.id, sort_order: idx })),
-      );
+      // must not look like it published. The Buffer post already went out
+      // and can't be un-posted, so a failure here can't fail the channel —
+      // but silently swallowing it would let the composer's alreadyPosted
+      // filter miss these slides and resubmit them to the same channel
+      // (see composer.tsx), so retry once, then log loudly and surface a
+      // warning rather than mis-tracking it as if nothing happened.
+      const images = ordered.map((g, idx) => ({
+        user_id: user.id, post_id: postRow.id, generation_id: g.id, sort_order: idx,
+      }));
+      let imagesErr = (await supabase.from("post_images").insert(images)).error;
+      if (imagesErr) {
+        imagesErr = (await supabase.from("post_images").insert(images)).error;
+      }
+      if (imagesErr) {
+        console.error(
+          "posts/create: post_images insert failed after retry — channel posted but its slides may be offered again:",
+          { postId: postRow.id, channelId: ch.channelId, generationIds: ordered.map((g) => g.id), error: imagesErr.message },
+        );
+        imagesWarning = "posted but image records failed — this channel's slides may be offered again";
+      }
     }
     results.push(
       r.success
-        ? { channelId: ch.channelId, status: "queued", bufferUpdateId: r.postId }
+        ? {
+            channelId: ch.channelId,
+            status: "queued",
+            bufferUpdateId: r.postId,
+            ...(imagesWarning ? { warning: imagesWarning } : {}),
+          }
         : { channelId: ch.channelId, status: "failed", error: r.error || r.rawBody.slice(0, 500) },
     );
   }
