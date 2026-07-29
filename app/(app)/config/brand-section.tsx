@@ -9,6 +9,7 @@ import { saveBrandProfile } from "./actions";
 import type { BrandProfile } from "@/lib/types";
 import { mergeList } from "@/lib/brand";
 import { BrandListEditor } from "./brand-list-editor";
+import { ColorListEditor } from "./color-list-editor";
 import { BrandExtractPanel, type BrandDraft } from "./brand-extract-panel";
 
 interface TextFields {
@@ -17,6 +18,7 @@ interface TextFields {
   audience: string;
   voice: string;
   avoid: string;
+  visual_notes: string;
 }
 
 function ProposalRow({ value, onUse, onKeep }: { value: string; onUse(): void; onKeep(): void }) {
@@ -51,12 +53,17 @@ export function BrandSection({
     audience: brand?.audience ?? "",
     voice: brand?.voice ?? "",
     avoid: brand?.avoid ?? "",
+    visual_notes: brand?.visual_notes ?? "",
   });
   const [proposals, setProposals] = useState<Partial<TextFields>>({});
   const [proofPoints, setProofPoints] = useState<string[]>(brand?.proof_points ?? []);
   const [standing, setStanding] = useState<string[]>(brand?.standing ?? []);
+  const [colors, setColors] = useState<string[]>(brand?.colors ?? []);
+  const [fonts, setFonts] = useState<string[]>(brand?.fonts ?? []);
   const [addedProof, setAddedProof] = useState<string[]>([]);
   const [addedStanding, setAddedStanding] = useState<string[]>([]);
+  const [addedColors, setAddedColors] = useState<string[]>([]);
+  const [addedFonts, setAddedFonts] = useState<string[]>([]);
 
   // "Added, not yet saved" must clear on a SUCCESSFUL save, not merely on
   // submit — an onSubmit handler would clear it the instant Save is clicked,
@@ -73,6 +80,8 @@ export function BrandSection({
     if (state?.ok) {
       setAddedProof([]);
       setAddedStanding([]);
+      setAddedColors([]);
+      setAddedFonts([]);
     }
   }
 
@@ -137,6 +146,14 @@ export function BrandSection({
   useEffect(() => {
     standingRef.current = standing;
   });
+  const colorsRef = useRef(colors);
+  useEffect(() => {
+    colorsRef.current = colors;
+  });
+  const fontsRef = useRef(fonts);
+  useEffect(() => {
+    fontsRef.current = fonts;
+  });
 
   // A field whose current value is empty just gets filled. A field that
   // already has a different hand-written value is never overwritten
@@ -177,6 +194,7 @@ export function BrandSection({
     propose("audience", draft.audience);
     propose("voice", draft.voice);
     propose("avoid", draft.avoid);
+    propose("visual_notes", draft.visual_notes);
 
     // mergeList is computed against the CURRENT list (via the ref, not a
     // stale closure) outside of any updater, then the two setters are called
@@ -192,6 +210,14 @@ export function BrandSection({
     const standingMerge = mergeList(standingRef.current, draft.standing);
     setStanding(standingMerge.merged);
     if (standingMerge.added.length) setAddedStanding((prev) => [...prev, ...standingMerge.added]);
+
+    const colorsMerge = mergeList(colorsRef.current, draft.colors);
+    setColors(colorsMerge.merged);
+    if (colorsMerge.added.length) setAddedColors((prev) => [...prev, ...colorsMerge.added]);
+
+    const fontsMerge = mergeList(fontsRef.current, draft.fonts);
+    setFonts(fontsMerge.merged);
+    if (fontsMerge.added.length) setAddedFonts((prev) => [...prev, ...fontsMerge.added]);
   }
 
   // Deleting an item via BrandListEditor's × shouldn't leave it named in the
@@ -199,6 +225,8 @@ export function BrandSection({
   // whatever is still actually present in the list being rendered.
   const visibleAddedProof = addedProof.filter((item) => proofPoints.includes(item));
   const visibleAddedStanding = addedStanding.filter((item) => standing.includes(item));
+  const visibleAddedColors = addedColors.filter((item) => colors.includes(item));
+  const visibleAddedFonts = addedFonts.filter((item) => fonts.includes(item));
 
   return (
     <Card>
@@ -296,8 +324,60 @@ export function BrandSection({
             </p>
           )}
 
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div>
+              <h3 className="text-sm font-medium">Found on your site — check these</h3>
+              <p className="text-xs text-muted-foreground">
+                Pulled from your site&rsquo;s own CSS, not guaranteed accurate — a wrong swatch is one click to remove.
+              </p>
+            </div>
+
+            <ColorListEditor
+              label="Colors"
+              hint="Hex values found in your site's markup and stylesheets."
+              items={colors}
+              onChange={setColors}
+            />
+            {visibleAddedColors.length > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Added from extraction: {visibleAddedColors.join(", ")} — save to keep.
+              </p>
+            )}
+
+            <BrandListEditor
+              label="Fonts"
+              hint="Font families found in your site's markup and stylesheets."
+              items={fonts}
+              onChange={setFonts}
+            />
+            {visibleAddedFonts.length > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Added from extraction: {visibleAddedFonts.join(", ")} — save to keep.
+              </p>
+            )}
+
+            <div>
+              <Label>Visual notes</Label>
+              <Textarea
+                name="visual_notes"
+                rows={2}
+                value={fields.visual_notes}
+                onChange={(e) => set("visual_notes", e.target.value)}
+              />
+              {proposals.visual_notes !== undefined && (
+                <ProposalRow
+                  value={proposals.visual_notes}
+                  onUse={() => applyProposal("visual_notes")}
+                  onKeep={() => keepProposal("visual_notes")}
+                />
+              )}
+            </div>
+          </div>
+
           <input type="hidden" name="proof_points" value={JSON.stringify(proofPoints)} readOnly />
           <input type="hidden" name="standing" value={JSON.stringify(standing)} readOnly />
+          <input type="hidden" name="colors" value={JSON.stringify(colors)} readOnly />
+          <input type="hidden" name="fonts" value={JSON.stringify(fonts)} readOnly />
 
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={pending}>{pending ? "Saving…" : "Save brand"}</Button>

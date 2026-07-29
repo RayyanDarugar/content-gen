@@ -15,6 +15,9 @@ export interface BrandDraft {
   avoid: string;
   proof_points: string[];
   standing: string[];
+  colors: string[];
+  fonts: string[];
+  visual_notes: string;
 }
 
 type ExtractResponse = (BrandDraft & { warnings: string[] }) | { error: string };
