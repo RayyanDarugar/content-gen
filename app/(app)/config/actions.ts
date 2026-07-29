@@ -154,11 +154,16 @@ export async function saveBrandProfile(
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
   const supabase = await createServerSupabase();
+  const businessName = String(formData.get("business_name") ?? "").trim();
+  // A brand profile with no name is broken on its own terms: it's what the
+  // onboarding wizard's `brandDone` keys on and what `brandBlock` leads with
+  // downstream. Reject rather than upsert an unnamed row.
+  if (!businessName) return { error: "Give the brand a name." };
   try {
     const { error } = await supabase.from("brand_profiles").upsert(
       {
         user_id: user.id,
-        business_name: String(formData.get("business_name") ?? "").trim(),
+        business_name: businessName,
         business_description: String(formData.get("business_description") ?? "").trim(),
         audience: String(formData.get("audience") ?? "").trim(),
         voice: String(formData.get("voice") ?? "").trim(),

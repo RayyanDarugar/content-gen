@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,9 +81,36 @@ export function BrandSection({
   // the `react-hooks/set-state-in-effect` rule that forced the pattern above
   // doesn't apply here, and a genuine side effect (asking the router to
   // refetch this route's server data) belongs in an effect, not render.
+  //
+  // Two things had to be true to avoid a refresh loop when the caller passes
+  // an inline callback (as the onboarding wizard does):
+  //   1. `onSaved`'s identity must NOT be a dependency. A fresh closure each
+  //      render is normal for an inline arrow function; if the effect below
+  //      depended on it, every parent re-render (including the one caused BY
+  //      calling onSaved -> router.refresh()) would re-run the effect,
+  //      independent of whether the save state actually changed — a loop
+  //      with no stop condition. Keeping the latest callback in a ref instead
+  //      (synced from a dependency-free effect, per React's documented
+  //      pattern for this) means only an actual new `state` object can ever
+  //      trigger this effect.
+  //   2. Firing must key off the TRANSITION to a new successful state, not
+  //      "state.ok is currently true" — `state.ok` stays true across
+  //      re-renders until the next submit, so anything that reruns this
+  //      effect while ok is still true would refire it. `firedForRef` records
+  //      which state object has already been handled, so even if the deps
+  //      array above were ever widened again by a future edit, this check
+  //      alone would still stop a repeat firing for the same result.
+  const onSavedRef = useRef(onSaved);
   useEffect(() => {
-    if (state?.ok) onSaved?.();
-  }, [state, onSaved]);
+    onSavedRef.current = onSaved;
+  });
+  const firedForRef = useRef<typeof state>(undefined);
+  useEffect(() => {
+    if (state?.ok && firedForRef.current !== state) {
+      firedForRef.current = state;
+      onSavedRef.current?.();
+    }
+  }, [state]);
 
   function set<K extends keyof TextFields>(key: K, value: string) {
     setFields((f) => ({ ...f, [key]: value }));
@@ -150,7 +177,12 @@ export function BrandSection({
         <form action={action} className="space-y-3">
           <div>
             <Label>Business name</Label>
-            <Input name="business_name" value={fields.business_name} onChange={(e) => set("business_name", e.target.value)} />
+            <Input
+              name="business_name"
+              required
+              value={fields.business_name}
+              onChange={(e) => set("business_name", e.target.value)}
+            />
             {proposals.business_name !== undefined && (
               <ProposalRow
                 value={proposals.business_name}
