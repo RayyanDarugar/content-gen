@@ -32,6 +32,23 @@ describe("isBlockedHost", () => {
     expect(isBlockedHost("example.com")).toBe(false);
     expect(isBlockedHost("athena.study")).toBe(false);
   });
+  it("blocks IPv4-mapped IPv6 loopback in dotted form", () => {
+    expect(isBlockedHost("::ffff:127.0.0.1")).toBe(true);
+  });
+  it("blocks IPv4-mapped IPv6 metadata in dotted form", () => {
+    expect(isBlockedHost("::ffff:169.254.169.254")).toBe(true);
+  });
+  it("blocks IPv4-mapped IPv6 private ranges in dotted form", () => {
+    expect(isBlockedHost("::ffff:10.0.0.1")).toBe(true);
+    expect(isBlockedHost("::ffff:192.168.1.1")).toBe(true);
+  });
+  it("blocks IPv4-mapped IPv6 in hex-normalized form", () => {
+    expect(isBlockedHost("::ffff:7f00:1")).toBe(true);        // 127.0.0.1
+    expect(isBlockedHost("::ffff:a9fe:a9fe")).toBe(true);    // 169.254.169.254
+  });
+  it("allows IPv4-mapped IPv6 public addresses", () => {
+    expect(isBlockedHost("::ffff:8.8.8.8")).toBe(false);
+  });
 });
 
 describe("assertFetchableUrl", () => {
@@ -69,5 +86,27 @@ describe("extractReadableText", () => {
   });
   it("truncates to the cap", () => {
     expect(extractReadableText(`<p>${"x".repeat(500)}</p>`, 100)).toHaveLength(100);
+  });
+  it("handles unclosed script tags", () => {
+    const out = extractReadableText("<p>Safe</p><script>alert('injected');");
+    expect(out).not.toContain("alert");
+    expect(out).not.toContain("injected");
+    expect(out).toContain("Safe");
+  });
+  it("handles script tags with embedded closing delimiter", () => {
+    const out = extractReadableText(
+      '<p>Safe</p><script>var x = "</script>"; alert(1);</script><p>Also safe</p>',
+    );
+    expect(out).not.toContain("alert");
+    expect(out).not.toContain("injected");
+    expect(out).toContain("Safe");
+    expect(out).toContain("Also safe");
+  });
+  it("handles nested HTML comments correctly", () => {
+    const out = extractReadableText("<!-- a <!-- b --> c --><p>Text</p>");
+    expect(out).toContain("Text");
+    expect(out).not.toContain("a");
+    expect(out).not.toContain("b");
+    expect(out).not.toContain("c");
   });
 });
