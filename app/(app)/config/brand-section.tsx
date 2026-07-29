@@ -328,7 +328,7 @@ export function BrandSection({
             <div>
               <h3 className="text-sm font-medium">Found on your site — check these</h3>
               <p className="text-xs text-muted-foreground">
-                Pulled from your site&rsquo;s own CSS, not guaranteed accurate — a wrong swatch is one click to remove.
+                From your site and anything else you gave us — not guaranteed accurate, a wrong swatch is one click to remove.
               </p>
             </div>
 

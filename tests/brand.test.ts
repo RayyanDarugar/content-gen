@@ -1,5 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { mergeList, parseBrandList } from "@/lib/brand";
+import { BrandSection } from "@/app/(app)/config/brand-section";
+import type { BrandProfile } from "@/lib/types";
 
 describe("parseBrandList", () => {
   it("accepts an array of strings, trimming and dropping empties", () => {
@@ -61,39 +65,56 @@ describe("mergeList", () => {
 // in brand-section.tsx: hidden inputs (colors, fonts) seeded from the
 // current list state and a named visual_notes textarea now always ride
 // along in the FormData, exactly as proof_points/standing already did.
-// There's no jsdom/RTL harness in this repo to mount that component, so
-// this test exercises the same two functions saveBrandProfile calls
-// (parseBrandList and the visual_notes trim) against FormData built the two
-// ways the form can produce it: what brand-section.tsx emits post-fix, and
-// what it would have emitted pre-fix (the fields simply absent).
-describe("brand form round trip (guards the design-token zero-out defect)", () => {
-  const brand = {
+//
+// This has to actually mount BrandSection, not just re-exercise
+// parseBrandList/mergeList (lib/brand.ts is already covered above) — a test
+// that only calls those two functions can't fail if brand-section.tsx stops
+// emitting the fields at all, which is exactly the defect. This repo's
+// vitest config is plain node with no jsdom/RTL, but react-dom/server is
+// already a dependency and renderToStaticMarkup works as an ordinary
+// node-environment test — no config change, no stubbing of ./actions.
+describe("BrandSection markup (guards the design-token zero-out defect)", () => {
+  const brand: BrandProfile = {
+    user_id: "u1",
+    business_name: "Acme",
+    business_description: "",
+    audience: "",
+    voice: "",
+    avoid: "",
+    proof_points: [],
+    standing: [],
     colors: ["#111111", "#ffffff"],
     fonts: ["Inter", "Georgia"],
     visual_notes: "Clean, editorial, lots of white space.",
+    created_at: "",
+    updated_at: "",
   };
 
-  it("preserves colors/fonts/visual_notes on a save that never touches them", () => {
-    // Mirrors brand-section.tsx exactly: hidden inputs carry JSON.stringify
-    // of whatever list state was seeded from `brand`, unchanged by the user.
-    const formData = new FormData();
-    formData.set("colors", JSON.stringify(brand.colors));
-    formData.set("fonts", JSON.stringify(brand.fonts));
-    formData.set("visual_notes", brand.visual_notes);
+  it("always emits colors/fonts/visual_notes fields carrying the current values", () => {
+    const html = renderToStaticMarkup(createElement(BrandSection, { brand }));
 
-    expect(parseBrandList(formData.get("colors"))).toEqual(brand.colors);
-    expect(parseBrandList(formData.get("fonts"))).toEqual(brand.fonts);
-    expect(String(formData.get("visual_notes") ?? "").trim()).toEqual(brand.visual_notes);
+    expect(html).toContain('name="colors"');
+    expect(html).toContain('name="fonts"');
+    expect(html).toContain('name="visual_notes"');
+
+    // The hidden inputs must actually carry the serialized current lists,
+    // not just be present with some other value — HTML-attribute-encode the
+    // JSON the same way React does (" -> &quot;) since this is markup, not
+    // a live DOM.
+    const encode = (s: string) => s.replace(/"/g, "&quot;");
+    expect(html).toContain(encode(JSON.stringify(brand.colors)));
+    expect(html).toContain(encode(JSON.stringify(brand.fonts)));
   });
 
-  it("demonstrates the defect this guards against: an omitted field reads back empty", () => {
-    // The pre-fix shape: a form with no colors/fonts/visual_notes fields at
-    // all. This is exactly what would zero out a brand's real design tokens
-    // on the very next save after extraction populated them.
-    const formData = new FormData();
+  it("still emits the (empty) fields when there is no brand yet", () => {
+    // Confirms parseBrandList(formData.get("colors")) sees "[]", not a
+    // missing key, even before any brand row exists — a save on a
+    // never-before-saved brand must not throw or silently omit the field.
+    const html = renderToStaticMarkup(createElement(BrandSection, { brand: null }));
 
-    expect(parseBrandList(formData.get("colors"))).toEqual([]);
-    expect(parseBrandList(formData.get("fonts"))).toEqual([]);
-    expect(String(formData.get("visual_notes") ?? "").trim()).toEqual("");
+    expect(html).toContain('name="colors"');
+    expect(html).toContain('name="fonts"');
+    expect(html).toContain('name="visual_notes"');
+    expect(html).toContain('value="[]"');
   });
 });
