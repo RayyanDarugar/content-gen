@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { buildQueueRows } from "@/lib/athena/queue";
 import { postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
+import { groupPosts } from "@/lib/athena/post-groups";
 import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
@@ -74,6 +75,7 @@ export default async function PostPage() {
     posted_slide_indexes: Array.from(postedByIdea.get(idea.id) ?? []),
   }));
   const rows = buildQueueRows(ideasWithPosted, urlById);
+  const postGroups = groupPosts(posts);
 
   return (
     <div className="space-y-8">
@@ -134,7 +136,7 @@ export default async function PostPage() {
       </div>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">History</h2>
-        {posts.length === 0 ? (
+        {postGroups.length === 0 ? (
           <p className="text-sm text-muted-foreground">No posts yet.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -144,23 +146,41 @@ export default async function PostPage() {
                   <th className="py-2 pr-4">Date</th>
                   <th className="py-2 pr-4">Category</th>
                   <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Buffer ID</th>
+                  <th className="py-2 pr-4">Channels</th>
                   <th className="py-2">Caption / Error</th>
                 </tr>
               </thead>
               <tbody>
-                {posts.map((p) => (
-                  <tr key={p.id} className="border-b align-top">
+                {postGroups.map((group) => (
+                  <tr key={group.postGroupId} className="border-b align-top">
                     <td className="py-2 pr-4 whitespace-nowrap">
-                      {new Date(p.created_at).toLocaleString()}
+                      {new Date(group.createdAt).toLocaleString()}
                     </td>
-                    <td className="py-2 pr-4">{p.category_key}</td>
+                    <td className="py-2 pr-4">{group.categoryKey}</td>
                     <td className="py-2 pr-4">
-                      <Badge variant={statusVariant[p.status] ?? "outline"}>{p.status}</Badge>
+                      <Badge variant={statusVariant[group.channels[0]?.status] ?? "outline"}>
+                        {group.label}
+                      </Badge>
                     </td>
-                    <td className="py-2 pr-4 font-mono text-xs">{p.buffer_update_id || "—"}</td>
-                    <td className="py-2 max-w-md truncate" title={p.error || p.caption}>
-                      {p.status === "failed" ? p.error : p.caption}
+                    <td className="py-2 pr-4">
+                      {group.channels.length === 1 ? (
+                        <span className="text-xs text-muted-foreground">{group.channels[0]?.service}</span>
+                      ) : (
+                        <details className="cursor-pointer">
+                          <summary className="text-xs font-medium">{group.channels.length} channels</summary>
+                          <div className="mt-2 space-y-1 text-xs">
+                            {group.channels.map((channel, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-muted-foreground">
+                                <span>{channel.service}</span>
+                                <span>{channel.channelId}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </td>
+                    <td className="py-2 max-w-md truncate" title={group.channels[0]?.error || group.channels[0]?.caption}>
+                      {group.channels[0]?.status === "failed" ? group.channels[0]?.error : group.channels[0]?.caption}
                     </td>
                   </tr>
                 ))}
