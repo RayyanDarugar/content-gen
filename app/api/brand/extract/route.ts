@@ -9,31 +9,33 @@ import { fetchPageHtml, fetchStylesheets, extractReadableText } from "@/lib/fetc
 import { parseDesignCandidates, type DesignCandidates } from "@/lib/design-tokens";
 import { preflightDocument } from "@/lib/document-preflight";
 import { friendlyLlmError } from "@/lib/llm-errors";
+import { withDeadline } from "@/lib/with-deadline";
 
 export const maxDuration = 120;
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
-// The page fetch (fetchPageHtml) already costs up to MAX_REDIRECTS+1 hops *
-// its own per-hop timeout — 40s worst case — before design-token work even
-// starts. fetchStylesheets fans out up to 3 sheets concurrently but each one
-// carries that same 40s worst case, and this route (maxDuration = 120) still
-// has document preflights and a maxRetries: 5 Anthropic call ahead of it.
-// Bounding the stylesheet phase at a fraction of its own worst case keeps
-// the addition from being able to blow the route's budget on a slow host:
-// on timeout we fall back to parsing design candidates from the page's own
-// markup and inline <style> blocks alone, which is degraded, not fatal.
-const DESIGN_TOKEN_BUDGET_MS = 15_000;
-
-function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("design-token fetch exceeded its budget")), ms);
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); },
-    );
-  });
-}
+// The page fetch (fetchPageHtml) already costs up to (MAX_REDIRECTS + 1)
+// hops * FETCH_TIMEOUT_MS = 4 * 10s = 40s worst case before design-token
+// work even starts. Document preflights (preflightDocument, see
+// lib/document-preflight.ts) can themselves cost up to 2 *
+// (MAX_REDIRECTS + 1) * PREFLIGHT_TIMEOUT_MS = 2 * 4 * 5s = 40s worst case
+// per document — a HEAD walk, then a ranged-GET walk when the HEAD is
+// non-ok or omits content-type — and Promise.all across documents bounds
+// that phase at one document's worst case, not the sum, but it's still 40s,
+// not 20s. So pre-task this route already spent up to 40 (page) + 40
+// (preflights) = 80s of its 120s maxDuration ahead of the Anthropic call,
+// leaving 40s of headroom for a maxRetries: 5 call to ride out a capacity
+// blip. Design tokens are the most expendable input here — the run is
+// required to succeed on website text plus documents alone — so on a slow
+// host they should be the thing that yields, not the thing that eats
+// that headroom. DESIGN_TOKEN_BUDGET_MS is kept short enough that even its
+// full worst case only takes this route to 85s (35s of headroom, 5s less
+// than pre-task), while still giving a same-origin, non-redirecting
+// stylesheet fetch — the common case — a real chance to land before it
+// gives up and falls back to parsing design candidates from the page's own
+// markup and inline <style> blocks alone.
+const DESIGN_TOKEN_BUDGET_MS = 5_000;
 
 export async function POST(request: NextRequest) {
   let user;
@@ -69,16 +71,22 @@ export async function POST(request: NextRequest) {
       try {
         const { html, finalUrl } = await fetchPageHtml(url);
         pageText = extractReadableText(html);
-        // Best-effort on top of best-effort: a hung or slow-redirecting
-        // stylesheet degrades design-token extraction, never the whole
-        // brand extraction, which still has to succeed on website text plus
-        // documents alone. See DESIGN_TOKEN_BUDGET_MS above for why this is
-        // bounded well below fetchStylesheets' own worst case.
+        // Best-effort on top of best-effort: a hung, slow-redirecting, or
+        // outright failing stylesheet fetch degrades design-token
+        // extraction, never the whole brand extraction — pageText above
+        // already succeeded and will still be sent to the model regardless
+        // of what happens here. withDeadline resolves to the empty-sheets
+        // fallback rather than rejecting on timeout or on any failure from
+        // fetchStylesheets, so there is nothing here that can throw its way
+        // into the outer catch and mislabel this as "couldn't read <url>".
+        // The only remaining failure mode is parseDesignCandidates itself
+        // throwing, which is guarded separately so it can never produce a
+        // page-level warning for a page that was, in fact, read fine.
         try {
-          const sheets = await withDeadline(fetchStylesheets(html, finalUrl), DESIGN_TOKEN_BUDGET_MS);
+          const sheets = await withDeadline(fetchStylesheets(html, finalUrl), DESIGN_TOKEN_BUDGET_MS, [] as string[]);
           designCandidates = parseDesignCandidates(html, sheets);
         } catch {
-          designCandidates = parseDesignCandidates(html);
+          designCandidates = null;
         }
       } catch (e) {
         warnings.push(`Couldn't read ${url}: ${e instanceof Error ? e.message : String(e)}`);
