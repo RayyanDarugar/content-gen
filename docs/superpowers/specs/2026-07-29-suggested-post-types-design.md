@@ -3,6 +3,7 @@
 **Date:** 2026-07-29
 **Status:** approved for planning
 **Depends on:** the AI post-type wizard (merge `b6fbc9e`) and brand extraction (merge `ec0a7a4`) — this reuses both and adds no new drafting surface.
+**Sequenced after:** brand design-token extraction (colors, fonts, visual notes scraped from the site). Decided 2026-07-29: that lands first, because a suggested `style_guide` written without the brand's actual palette and type says "clean modern palette" — the generic output this feature exists to avoid. Once it exists, the suggestion prompt must cite the brand's real colors and fonts in the `style_guide` it drafts, treating them as the default a post type may deliberately override.
 
 ## 1. Summary
 
