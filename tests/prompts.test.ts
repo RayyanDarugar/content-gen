@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIdeaSystemPrompt, buildFilterSystemPrompt, buildIdeaUserPrompt,
-  platformPresetFor, clampIdeaCount,
+  platformPresetFor, clampIdeaCount, buildAdaptCaptionSystemPrompt,
   type BrandContext,
 } from "@/lib/athena/prompts";
 
@@ -194,5 +194,36 @@ describe("platformPresetFor", () => {
     expect(platformPresetFor("x")).toContain("280");
     expect(platformPresetFor("Instagram")).toContain("hashtags");
     expect(platformPresetFor("")).toContain("caption");
+  });
+});
+
+describe("buildAdaptCaptionSystemPrompt", () => {
+  const brand = {
+    business_name: "Athena", business_description: "SAT prep",
+    audience: "parents", voice: "warm", avoid: "AI jargon",
+  };
+  it("carries the target platform's conventions", () => {
+    const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
+    expect(p).toContain("280");
+  });
+  it("layers the category's copy guide over the platform preset", () => {
+    const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "Always end with a question." }, "linkedin");
+    const preset = p.indexOf("thought leadership");
+    const guide = p.indexOf("Always end with a question.");
+    expect(preset).toBeGreaterThan(-1);
+    expect(guide).toBeGreaterThan(preset);
+  });
+  it("injects the brand context", () => {
+    const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "linkedin");
+    expect(p).toContain("Athena");
+    expect(p).toContain("parents");
+  });
+  it("instructs preserving the point rather than restating verbatim", () => {
+    const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
+    expect(p.toLowerCase()).toContain("same point");
+  });
+  it("omits the guide section entirely when the category has none", () => {
+    const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
+    expect(p).not.toContain("COPY GUIDE");
   });
 });
