@@ -13,8 +13,9 @@ export async function postToBuffer(
   channelId: string,
   imageUrls: string[],
   caption: string,
+  scheduledAt?: string,
 ): Promise<BufferResult> {
-  const body = buildCreatePostMutation(channelId, imageUrls, caption);
+  const body = buildCreatePostMutation(channelId, imageUrls, caption, scheduledAt);
   const res = await fetch("https://api.buffer.com", {
     method: "POST",
     headers: {

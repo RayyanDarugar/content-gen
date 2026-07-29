@@ -144,21 +144,36 @@ export function findSupersededGenerationIds(
 
 // Port of n8n Workflow C "Group Into Carousels". channelId and image URLs are
 // app-controlled values; the caption is user text and travels as a variable.
+//
+// scheduledAt, when given, is a caller-normalized ISO 8601 (UTC) string (the
+// composer sends `new Date(...).toISOString()`; the route re-validates via
+// `new Date(...)` before it ever reaches here) — never raw user text — so
+// inlining it alongside channelId/imageUrls follows the same trust boundary
+// they already use. Confirmed against Buffer's GraphQL docs: a custom-time
+// post uses `mode: customScheduled` with a `dueAt: DateTime` field (see
+// https://developers.buffer.com/guides/posts-and-scheduling.html and
+// https://developers.buffer.com/reference.html, CreatePostInput.dueAt /
+// ShareMode.customScheduled). When scheduledAt is absent the emitted query
+// is byte-identical to the queue-only mutation this replaces.
 export function buildCreatePostMutation(
   channelId: string,
   imageUrls: string[],
   caption: string,
+  scheduledAt?: string,
 ): { query: string; variables: { text: string } } {
   const assetsBlock = imageUrls
     .map((url) => `{ image: { url: "${url}" } }`)
     .join("\n        ");
+  const schedulingBlock = scheduledAt
+    ? `mode: customScheduled\n      dueAt: "${scheduledAt}"`
+    : `mode: addToQueue`;
   const query = `mutation CreatePost($text: String!) {
   createPost(
     input: {
       text: $text
       channelId: "${channelId}"
       schedulingType: automatic
-      mode: addToQueue
+      ${schedulingBlock}
       assets: [
         ${assetsBlock}
       ]

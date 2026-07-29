@@ -254,3 +254,34 @@ describe("resolveInitialCaption", () => {
     expect(["one", "two"]).toContain(out);
   });
 });
+
+describe("buildCreatePostMutation", () => {
+  it("uses the queue mode when no time is given", () => {
+    const { query } = buildCreatePostMutation("chan-1", ["https://x/a.png"], "hello");
+    expect(query).toContain("schedulingType: automatic");
+    expect(query).toContain("mode: addToQueue");
+  });
+  it("passes the caption as a variable, never inlined", () => {
+    const { query, variables } = buildCreatePostMutation("chan-1", ["https://x/a.png"], 'has "quotes"');
+    expect(variables.text).toBe('has "quotes"');
+    expect(query).not.toContain('has "quotes"');
+  });
+  it("includes every image url as an asset", () => {
+    const { query } = buildCreatePostMutation("chan-1", ["https://x/a.png", "https://x/b.png"], "c");
+    expect(query).toContain("https://x/a.png");
+    expect(query).toContain("https://x/b.png");
+  });
+  // Buffer's GraphQL docs confirm mode: customScheduled + a `dueAt` ISO 8601
+  // (UTC) field for a custom-time post — see
+  // https://developers.buffer.com/guides/posts-and-scheduling.html and
+  // https://developers.buffer.com/reference.html (CreatePostInput.dueAt,
+  // ShareMode.customScheduled).
+  it("uses customScheduled mode with dueAt when a time is given, and drops the queue mode", () => {
+    const { query } = buildCreatePostMutation(
+      "chan-1", ["https://x/a.png"], "c", "2026-03-10T15:00:00.000Z",
+    );
+    expect(query).toContain("mode: customScheduled");
+    expect(query).toContain('dueAt: "2026-03-10T15:00:00.000Z"');
+    expect(query).not.toContain("mode: addToQueue");
+  });
+});

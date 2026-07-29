@@ -8,10 +8,10 @@ import type { BrandProfile, BufferChannel, Category, Generation, Idea } from "@/
 
 type IdeaWithGenerations = Idea & { generations: Generation[] };
 
-// Task 5 confirms whether Buffer's scheduled-post mutation can be wired up;
-// until then the picker renders disabled and every post joins Buffer's
-// default queue.
-const SCHEDULING_ENABLED = false;
+// Task 5 confirmed Buffer's scheduled-post mutation shape (mode:
+// customScheduled + dueAt: DateTime — see lib/athena/carousel.ts), so the
+// composer's time picker is enabled.
+const SCHEDULING_ENABLED = true;
 
 export default async function ComposerPage({
   params,
