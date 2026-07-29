@@ -116,13 +116,39 @@ export function BrandSection({
     setFields((f) => ({ ...f, [key]: value }));
   }
 
+  // Extraction (onDraft, below) is triggered from an async fetch that can
+  // take 10-60s to resolve. propose() and onDraft() need to decide against
+  // whatever the user has typed by the time the draft actually lands, not
+  // against whatever fields/proofPoints/standing were at the moment the
+  // request was kicked off — reading those state variables directly here
+  // would close over stale render-time values. These refs are mirrored from
+  // state on every render (the same pattern this file already uses for
+  // onSavedRef below) so async callbacks can read the latest committed
+  // value instead.
+  const fieldsRef = useRef(fields);
+  useEffect(() => {
+    fieldsRef.current = fields;
+  });
+  const proofPointsRef = useRef(proofPoints);
+  useEffect(() => {
+    proofPointsRef.current = proofPoints;
+  });
+  const standingRef = useRef(standing);
+  useEffect(() => {
+    standingRef.current = standing;
+  });
+
   // A field whose current value is empty just gets filled. A field that
   // already has a different hand-written value is never overwritten
   // silently — it's staged as a proposal until the user picks Use or Keep.
+  // Reads fieldsRef (current), not `fields` (the stale render closure), so a
+  // user typing into a field while extraction is in flight doesn't get it
+  // silently overwritten once the draft lands.
   function propose<K extends keyof TextFields>(key: K, value: string) {
     const trimmed = value.trim();
-    if (!trimmed || fields[key].trim() === trimmed) return;
-    if (!fields[key].trim()) set(key, trimmed);
+    const current = fieldsRef.current[key].trim();
+    if (!trimmed || current === trimmed) return;
+    if (!current) set(key, trimmed);
     else setProposals((p) => ({ ...p, [key]: trimmed }));
   }
 
@@ -151,16 +177,21 @@ export function BrandSection({
     propose("audience", draft.audience);
     propose("voice", draft.voice);
     propose("avoid", draft.avoid);
-    setProofPoints((existing) => {
-      const { merged, added } = mergeList(existing, draft.proof_points);
-      if (added.length) setAddedProof((prev) => [...prev, ...added]);
-      return merged;
-    });
-    setStanding((existing) => {
-      const { merged, added } = mergeList(existing, draft.standing);
-      if (added.length) setAddedStanding((prev) => [...prev, ...added]);
-      return merged;
-    });
+
+    // mergeList is computed against the CURRENT list (via the ref, not a
+    // stale closure) outside of any updater, then the two setters are called
+    // separately rather than nesting setAddedProof inside setProofPoints's
+    // updater. React requires state updaters to be pure; calling a second
+    // setState from inside one is impure and StrictMode's double-invocation
+    // (and concurrent re-basing in production) would duplicate entries in
+    // the "Added from extraction" summary.
+    const proofMerge = mergeList(proofPointsRef.current, draft.proof_points);
+    setProofPoints(proofMerge.merged);
+    if (proofMerge.added.length) setAddedProof((prev) => [...prev, ...proofMerge.added]);
+
+    const standingMerge = mergeList(standingRef.current, draft.standing);
+    setStanding(standingMerge.merged);
+    if (standingMerge.added.length) setAddedStanding((prev) => [...prev, ...standingMerge.added]);
   }
 
   // Deleting an item via BrandListEditor's × shouldn't leave it named in the

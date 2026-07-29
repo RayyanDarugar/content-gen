@@ -106,17 +106,22 @@ export function extractReadableText(html: string, maxChars = DEFAULT_MAX_CHARS):
     );
   }
 
-  // Strip HTML comments resiliently using greedy match to handle nested comments.
-  // Greedy [\s\S]* ensures we match from first <!-- to the LAST --> in the sequence,
-  // preventing leaks of content between nested comment markers.
-  stripped = stripped.replace(/<!--[\s\S]*-->/g, " ");
+  // Strip HTML comments with NON-greedy matching. Per the HTML spec, comments
+  // do not nest — a comment ends at the first `-->` encountered, full stop.
+  // A greedy match here (matching from the first `<!--` to the LAST `-->` in
+  // the whole document) silently deletes every real element between two
+  // ordinary, unrelated comments, which is virtually every page (IE
+  // conditionals, framework markers, analytics snippets all add comments).
+  // This is the same greedy-vs-non-greedy bug already fixed once above for
+  // <script>/<style> — don't reintroduce it here.
+  stripped = stripped.replace(/<!--[\s\S]*?-->/g, " ");
 
   // Strip remaining tags
   const tagless = stripped.replace(/<[^>]+>/g, " ");
 
   // Decode entities
   const decoded = tagless
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&[a-z]+;/gi, (m) => ENTITIES[m.toLowerCase()] ?? " ");
 
   return decoded.replace(/\s+/g, " ").trim().slice(0, maxChars);

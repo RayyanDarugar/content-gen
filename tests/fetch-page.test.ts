@@ -105,12 +105,34 @@ describe("extractReadableText", () => {
     expect(out).toContain("alert");  // This is now plain text, not in a script tag
     expect(out).toContain("Also safe");
   });
-  it("handles nested HTML comments correctly", () => {
+  it("ends a comment at the first --> per HTML spec (comments do not nest)", () => {
+    // Per the HTML spec, a comment ends at the FIRST `-->` it encounters —
+    // there is no such thing as a nested comment. So in
+    // "<!-- a <!-- b --> c -->", the comment is exactly "<!-- a <!-- b -->"
+    // and the trailing " c -->" is legitimate body text, not more comment.
+    // A greedy match (from the first <!-- to the LAST --> in the document)
+    // would swallow " c -->" too, and on a real page with multiple unrelated
+    // comments it would swallow everything between them — the bug this test
+    // guards against. Do not "fix" this back to greedy.
     const out = extractReadableText("<!-- a <!-- b --> c --><p>Text</p>");
     expect(out).toContain("Text");
+    expect(out).toContain("c -->");
     expect(out).not.toContain("a");
     expect(out).not.toContain("b");
-    expect(out).not.toContain("c");
+  });
+  it("preserves body content between two separate HTML comments (regression test)", () => {
+    // The greedy version of the comment-strip regex matched from the FIRST
+    // <!-- to the LAST --> in the whole document, deleting everything in
+    // between — including real body copy sitting between two ordinary,
+    // unrelated comments (IE conditionals, framework markers, analytics
+    // snippets). Almost every real page has at least two comments, so this
+    // silently emptied extraction input. Guard against regressing to greedy.
+    const out = extractReadableText(
+      "<!-- header marker --><p>Real body copy</p><!-- footer marker -->",
+    );
+    expect(out).toContain("Real body copy");
+    expect(out).not.toContain("header marker");
+    expect(out).not.toContain("footer marker");
   });
   it("preserves body content between multiple script blocks (regression test)", () => {
     // Ensure non-greedy /g matching handles multiple script tags correctly.

@@ -1,4 +1,8 @@
-const MAX_ITEMS = 50;
+// Exported so the list editor UI (BrandListEditor) can cap additions at the
+// same limit and tell the user why, instead of letting them add past it and
+// having parseBrandList silently truncate on save — which used to make
+// items vanish on reload with no explanation.
+export const MAX_ITEMS = 50;
 
 // Brand lists arrive either as a real array (the extraction endpoint's
 // structured output) or as a JSON string (the brand form posts FormData).

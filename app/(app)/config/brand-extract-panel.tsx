@@ -34,18 +34,31 @@ export function BrandExtractPanel({ onDraft }: { onDraft(draft: BrandDraft): voi
     if (!files.length) return;
     setUploading(true);
     setError("");
-    for (const file of files) {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await uploadBrandDocument(fd);
-      if (res.error) {
-        setError(`${file.name}: ${res.error}`);
-      } else if (res.url) {
-        setDocs((d) => [...d, { url: res.url as string, name: file.name }]);
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const res = await uploadBrandDocument(fd);
+          if (res.error) {
+            setError(`${file.name}: ${res.error}`);
+          } else if (res.url) {
+            setDocs((d) => [...d, { url: res.url as string, name: file.name }]);
+          }
+        } catch (e) {
+          // A rejected action promise (e.g. the request itself was refused,
+          // rather than uploadBrandDocument returning a handled error) must
+          // still surface as the existing inline error and, critically,
+          // still let `finally` below clear the "Uploading…" spinner — an
+          // unhandled rejection here used to skip setUploading(false)
+          // entirely and stick the panel on "Uploading…" until reload.
+          setError(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
-    setUploading(false);
-    if (fileRef.current) fileRef.current.value = "";
   }
 
   function removeDoc(index: number) {

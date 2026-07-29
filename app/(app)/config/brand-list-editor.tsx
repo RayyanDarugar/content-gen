@@ -2,6 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MAX_ITEMS } from "@/lib/brand";
 
 export function BrandListEditor({
   label,
@@ -27,8 +28,15 @@ export function BrandListEditor({
   }
 
   function addItem() {
+    if (items.length >= MAX_ITEMS) return;
     onChange([...items, ""]);
   }
+
+  // parseBrandList (lib/brand.ts) silently truncates to MAX_ITEMS on save.
+  // Capping additions here — and saying so — means that limit is never hit
+  // as a surprise: nothing the user added in this session can vanish on
+  // reload without warning.
+  const atLimit = items.length >= MAX_ITEMS;
 
   return (
     <div>
@@ -50,9 +58,12 @@ export function BrandListEditor({
           </div>
         ))}
       </div>
-      <Button type="button" variant="outline" size="sm" className="mt-2" onClick={addItem}>
+      <Button type="button" variant="outline" size="sm" className="mt-2" onClick={addItem} disabled={atLimit}>
         + Add
       </Button>
+      {atLimit && (
+        <p className="mt-1 text-xs text-muted-foreground">Limit of {MAX_ITEMS} reached — remove one to add another.</p>
+      )}
     </div>
   );
 }

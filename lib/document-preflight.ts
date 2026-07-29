@@ -95,5 +95,11 @@ export async function preflightDocument(
   }
   if (!res.ok) throw new Error(`Could not read that document (HTTP ${res.status})`);
   const contentType = res.headers.get("content-type") ?? "";
+  // Only headers are ever read here — the ranged-GET fallback still gets a
+  // body (even if just the requested 1 byte, or the whole thing if a host
+  // ignores Range), which is otherwise never consumed or canceled, leaving
+  // the connection lingering. Cancel it explicitly; swallow any error since
+  // a failed cancel shouldn't fail a preflight that already has what it needs.
+  await res.body?.cancel().catch(() => {});
   return { kind: classifyDocumentContentType(contentType), contentType };
 }
