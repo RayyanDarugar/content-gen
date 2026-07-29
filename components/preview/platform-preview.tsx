@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Bookmark, ChevronLeft, ChevronRight, Heart, ImageOff, MessageCircle,
   Repeat2, Send, Share2, ThumbsUp,
@@ -7,6 +7,12 @@ import {
 import { cn } from "@/lib/utils";
 import { normalizeService, platformCharLimit } from "@/lib/platform";
 import { PhoneFrame } from "./phone-frame";
+
+// useLayoutEffect warns when it runs during SSR; these previews are only
+// ever rendered client-side, but the app router still server-renders
+// "use client" components once before hydration, so fall back to a no-op
+// effect on the server rather than fighting that warning.
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 interface PreviewProps {
   imageUrls: string[];
@@ -101,6 +107,23 @@ function SlideNav({ onPrev, onNext }: { onPrev: () => void; onNext: () => void }
   );
 }
 
+// Real overflow measurement rather than a character-count guess — where a
+// line-clamped column actually wraps depends on font metrics, a bold
+// username prefix, and container width, all of which a length heuristic
+// gets wrong in both directions. Silently clipping caption text nobody was
+// told about is the one failure mode this preview exists to prevent.
+function useIsClamped<T extends HTMLElement>(
+  deps: React.DependencyList,
+): [React.RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null);
+  const [clamped, setClamped] = useState(false);
+  useIsomorphicLayoutEffect(() => {
+    const el = ref.current;
+    setClamped(!!el && el.scrollHeight - el.clientHeight > 1);
+  }, deps);
+  return [ref, clamped];
+}
+
 function TikTokPreview({ imageUrls, caption, accountName, avatarUrl, aspectRatio }: PreviewProps) {
   const slides = imageUrls.length > 0 ? imageUrls : [undefined];
   const { current, prev, next } = useSlideIndex(slides.length);
@@ -151,7 +174,7 @@ function InstagramPreview({ imageUrls, caption, accountName, avatarUrl, aspectRa
   const slides = imageUrls.length > 0 ? imageUrls : [undefined];
   const { current, prev, next } = useSlideIndex(slides.length);
   const multi = slides.length > 1;
-  const long = caption.length > 90;
+  const [captionRef, clamped] = useIsClamped<HTMLParagraphElement>([caption, accountName]);
   return (
     <PhoneFrame aspectRatio={aspectRatio}>
       <div className="absolute inset-0 flex flex-col bg-black">
@@ -189,9 +212,9 @@ function InstagramPreview({ imageUrls, caption, accountName, avatarUrl, aspectRa
           <Bookmark className="ml-auto size-6" />
         </div>
 
-        <p className="shrink-0 line-clamp-2 px-3 pb-2.5 pt-1.5 text-xs leading-snug text-white">
+        <p ref={captionRef} className="shrink-0 line-clamp-2 px-3 pb-2.5 pt-1.5 text-xs leading-snug text-white">
           <span className="font-semibold">{accountName}</span> {caption}
-          {long && <span className="text-white/50"> … more</span>}
+          {clamped && <span className="text-white/50"> … more</span>}
         </p>
       </div>
     </PhoneFrame>
@@ -199,7 +222,10 @@ function InstagramPreview({ imageUrls, caption, accountName, avatarUrl, aspectRa
 }
 
 function LinkedInPreview({ imageUrls, caption, accountName, avatarUrl, aspectRatio }: PreviewProps) {
-  const long = caption.length > 210;
+  const slides = imageUrls.length > 0 ? imageUrls : [undefined];
+  const { current, prev, next } = useSlideIndex(slides.length);
+  const multi = slides.length > 1;
+  const [captionRef, clamped] = useIsClamped<HTMLParagraphElement>([caption]);
   return (
     <PhoneFrame aspectRatio={aspectRatio}>
       <div className="absolute inset-0 flex flex-col bg-white text-neutral-900">
@@ -211,13 +237,31 @@ function LinkedInPreview({ imageUrls, caption, accountName, avatarUrl, aspectRat
           </div>
         </div>
 
-        <p className="shrink-0 line-clamp-3 px-3 pt-2 text-[13px] leading-snug">
+        <p ref={captionRef} className="shrink-0 line-clamp-3 px-3 pt-2 text-[13px] leading-snug">
           {caption}
-          {long && <span className="font-semibold text-neutral-500"> …see more</span>}
+          {clamped && <span className="font-semibold text-neutral-500"> …see more</span>}
         </p>
 
         <div className="relative mt-2 flex-1 bg-neutral-100">
-          <PreviewImage src={imageUrls[0]} alt="Post image" className="absolute inset-0 h-full w-full" />
+          <PreviewImage
+            key={`${current}-${slides[current] ?? "empty"}`}
+            src={slides[current]}
+            alt={`Slide ${current + 1}`}
+            className="absolute inset-0 h-full w-full"
+          />
+          {multi && (
+            <>
+              <SlideNav onPrev={prev} onNext={next} />
+              <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1 rounded-full bg-black/30 px-1.5 py-1">
+                {slides.map((_, i) => (
+                  <span
+                    key={i}
+                    className={cn("size-1.5 rounded-full", i === current ? "bg-white" : "bg-white/50")}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center justify-around border-t px-2 py-2 text-neutral-600">
