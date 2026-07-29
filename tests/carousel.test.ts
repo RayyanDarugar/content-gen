@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
-  resolveInitialCaption, type Postable,
+  resolveInitialCaption, resolveValidSlides, type Postable,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
@@ -170,6 +170,63 @@ describe("findSupersededGenerationIds", () => {
       sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
     ];
     expect(findSupersededGenerationIds(selected, siblings)).toEqual(["old-s1", "old-s2"]);
+  });
+});
+
+const gen = (
+  id: string, slide_index: number, anchor: string | null,
+  created_at: string, status = "succeeded",
+) => ({ id, idea_id: "i1", slide_index, anchor_generation_id: anchor, status, created_at });
+
+describe("resolveValidSlides", () => {
+  it("resolves a complete carousel in slide order", () => {
+    const out = resolveValidSlides(3, [
+      gen("a", 0, null, "2026-01-01"),
+      gen("b", 1, "a", "2026-01-02"),
+      gen("c", 2, "a", "2026-01-03"),
+    ]);
+    expect(out.map((s) => s.slideIndex)).toEqual([0, 1, 2]);
+    expect(out.map((s) => s.generationId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns null for a slide with no succeeded generation", () => {
+    const out = resolveValidSlides(3, [gen("a", 0, null, "2026-01-01"), gen("b", 1, "a", "2026-01-02")]);
+    expect(out[2].generationId).toBeNull();
+  });
+
+  it("prefers the newest generation for a retried slide", () => {
+    const out = resolveValidSlides(2, [
+      gen("a", 0, null, "2026-01-01"),
+      gen("b", 1, "a", "2026-01-02"),
+      gen("b2", 1, "a", "2026-01-05"),
+    ]);
+    expect(out[1].generationId).toBe("b2");
+  });
+
+  it("ignores siblings of a superseded anchor after a re-anchor", () => {
+    const out = resolveValidSlides(2, [
+      gen("a1", 0, null, "2026-01-01"),
+      gen("b1", 1, "a1", "2026-01-02"),
+      gen("a2", 0, null, "2026-01-10"), // re-anchored
+    ]);
+    expect(out[0].generationId).toBe("a2");
+    expect(out[1].generationId).toBeNull(); // b1 belonged to the old anchor
+  });
+
+  it("ignores failed generations", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01", "failed")]);
+    expect(out[0].generationId).toBeNull();
+  });
+
+  it("fills publicUrl from the provided map", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01")], new Map([["a", "https://x/a.png"]]));
+    expect(out[0].publicUrl).toBe("https://x/a.png");
+  });
+
+  it("handles a single-slide idea", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01")]);
+    expect(out).toHaveLength(1);
+    expect(out[0].generationId).toBe("a");
   });
 });
 

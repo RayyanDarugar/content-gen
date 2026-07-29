@@ -54,6 +54,56 @@ export interface SiblingGeneration {
   created_at: string;
 }
 
+export interface SlideResolution {
+  slideIndex: number;
+  generationId: string | null;
+  publicUrl: string;
+}
+
+// The single source of truth for "which generation is this slide's current
+// image". The queue, the composer, and posts/create all read it, so they
+// cannot disagree about whether a carousel is postable. findSupersededGenerationIds
+// is implemented over it for the same reason.
+//
+// Rule: an idea's anchor is the newest succeeded slide-0 generation; a
+// non-anchor slide's valid generation is the newest succeeded row whose
+// anchor_generation_id equals that anchor's id. Re-anchoring invalidates
+// the previous anchor's siblings, even though they remain the newest
+// succeeded row for their own slide index — they no longer belong to the
+// current anchor.
+export function resolveValidSlides(
+  slideCount: number,
+  siblings: SiblingGeneration[],
+  urlById?: Map<string, string>,
+): SlideResolution[] {
+  const succeeded = siblings.filter((g) => g.status === "succeeded");
+  const anchors = succeeded.filter((g) => g.slide_index === 0);
+  const anchor = anchors.length
+    ? anchors.reduce((newest, g) => (g.created_at > newest.created_at ? g : newest))
+    : null;
+
+  const bestForSlide = new Map<number, { id: string; created_at: string }>();
+  if (anchor) {
+    bestForSlide.set(0, { id: anchor.id, created_at: anchor.created_at });
+    for (const g of succeeded) {
+      if (g.slide_index === 0 || g.anchor_generation_id !== anchor.id) continue;
+      const cur = bestForSlide.get(g.slide_index);
+      if (!cur || g.created_at > cur.created_at) {
+        bestForSlide.set(g.slide_index, { id: g.id, created_at: g.created_at });
+      }
+    }
+  }
+
+  return Array.from({ length: slideCount }, (_, slideIndex) => {
+    const best = bestForSlide.get(slideIndex);
+    return {
+      slideIndex,
+      generationId: best?.id ?? null,
+      publicUrl: best ? (urlById?.get(best.id) ?? "") : "",
+    };
+  });
+}
+
 // A generation is superseded unless it is the newest succeeded row for its
 // own (idea, slide) *under the idea's current anchor* — not by a newer row
 // anywhere else in the same idea, and not by a row that succeeded under a
@@ -80,22 +130,10 @@ export function findSupersededGenerationIds(
 
   const validIdByKey = new Map<string, string>();
   for (const [ideaId, gens] of byIdea) {
-    const succeeded = gens.filter((g) => g.status === "succeeded");
-    const anchors = succeeded.filter((g) => g.slide_index === 0);
-    if (!anchors.length) continue; // nothing has succeeded under any anchor
-    const anchor = anchors.reduce((newest, g) => (g.created_at > newest.created_at ? g : newest));
-    validIdByKey.set(`${ideaId}:0`, anchor.id);
-
-    const bestForSlide = new Map<number, { id: string; created_at: string }>();
-    for (const g of succeeded) {
-      if (g.slide_index === 0 || g.anchor_generation_id !== anchor.id) continue;
-      const cur = bestForSlide.get(g.slide_index);
-      if (!cur || g.created_at > cur.created_at) {
-        bestForSlide.set(g.slide_index, { id: g.id, created_at: g.created_at });
-      }
-    }
-    for (const [slideIndex, best] of bestForSlide) {
-      validIdByKey.set(`${ideaId}:${slideIndex}`, best.id);
+    const slideCount = gens.reduce((max, g) => Math.max(max, g.slide_index + 1), 0);
+    const resolved = resolveValidSlides(slideCount, gens);
+    for (const slide of resolved) {
+      if (slide.generationId) validIdByKey.set(`${ideaId}:${slide.slideIndex}`, slide.generationId);
     }
   }
 
