@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { getKeyStatus } from "@/lib/settings/user-secrets";
@@ -29,6 +30,11 @@ export default async function ConfigPage() {
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold">Config</h1>
       <KeysSection status={status} />
+      <div className="flex justify-end">
+        <Link href="/onboarding" className="text-sm text-primary underline-offset-4 hover:underline">
+          Run setup again
+        </Link>
+      </div>
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
       <ConnectionsSection groups={groups} />
       <CategoryManager categories={(data ?? []) as Category[]} groups={groups} />
