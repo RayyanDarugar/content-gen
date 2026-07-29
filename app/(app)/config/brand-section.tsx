@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { saveBrandProfile } from "./actions";
 import type { BrandProfile } from "@/lib/types";
+import { mergeList } from "@/lib/brand";
 import { BrandListEditor } from "./brand-list-editor";
 import { BrandExtractPanel, type BrandDraft } from "./brand-extract-panel";
 
@@ -28,21 +29,6 @@ function ProposalRow({ value, onUse, onKeep }: { value: string; onUse(): void; o
   );
 }
 
-// Case-insensitive, trimmed merge: items already present are kept as-is,
-// new ones are appended. Returns which incoming items actually landed so
-// the caller can surface an "added, not yet saved" marker for them.
-function mergeList(existing: string[], incoming: string[]): { merged: string[]; added: string[] } {
-  const seen = new Set(existing.map((s) => s.trim().toLowerCase()));
-  const added: string[] = [];
-  for (const raw of incoming) {
-    const item = raw.trim();
-    if (!item || seen.has(item.toLowerCase())) continue;
-    seen.add(item.toLowerCase());
-    added.push(item);
-  }
-  return { merged: [...existing, ...added], added };
-}
-
 export function BrandSection({ brand }: { brand: BrandProfile | null }) {
   const [state, action, pending] = useActionState(saveBrandProfile, undefined);
   const [fields, setFields] = useState<TextFields>({
@@ -58,12 +44,22 @@ export function BrandSection({ brand }: { brand: BrandProfile | null }) {
   const [addedProof, setAddedProof] = useState<string[]>([]);
   const [addedStanding, setAddedStanding] = useState<string[]>([]);
 
-  // "Added, not yet saved" is staged UI state — clear it the moment a save
-  // is actually submitted (a plain form event, not an effect reacting to
-  // the action's result) so the form reads as settled again once it lands.
-  function onSubmit() {
-    setAddedProof([]);
-    setAddedStanding([]);
+  // "Added, not yet saved" must clear on a SUCCESSFUL save, not merely on
+  // submit — an onSubmit handler would clear it the instant Save is clicked,
+  // before the server action resolves, so a failed save would silently drop
+  // the "not yet saved" signal even though nothing persisted. Reacting to
+  // `state` (the useActionState result) from a useEffect is the natural fit,
+  // but this project's `react-hooks/set-state-in-effect` rule disallows a
+  // direct setState call in an effect body. Adjusting state during render by
+  // comparing against the previous render's value — React's documented
+  // alternative to an effect for this exact case — satisfies it instead.
+  const [handledState, setHandledState] = useState(state);
+  if (state !== handledState) {
+    setHandledState(state);
+    if (state?.ok) {
+      setAddedProof([]);
+      setAddedStanding([]);
+    }
   }
 
   function set<K extends keyof TextFields>(key: K, value: string) {
@@ -117,12 +113,18 @@ export function BrandSection({ brand }: { brand: BrandProfile | null }) {
     });
   }
 
+  // Deleting an item via BrandListEditor's × shouldn't leave it named in the
+  // "added from extraction" summary — filter the tracked additions down to
+  // whatever is still actually present in the list being rendered.
+  const visibleAddedProof = addedProof.filter((item) => proofPoints.includes(item));
+  const visibleAddedStanding = addedStanding.filter((item) => standing.includes(item));
+
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Brand</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <BrandExtractPanel onDraft={onDraft} />
-        <form action={action} onSubmit={onSubmit} className="space-y-3">
+        <form action={action} className="space-y-3">
           <div>
             <Label>Business name</Label>
             <Input name="business_name" value={fields.business_name} onChange={(e) => set("business_name", e.target.value)} />
@@ -190,9 +192,9 @@ export function BrandSection({ brand }: { brand: BrandProfile | null }) {
             items={proofPoints}
             onChange={setProofPoints}
           />
-          {addedProof.length > 0 && (
+          {visibleAddedProof.length > 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              Added from extraction: {addedProof.join(", ")} — save to keep.
+              Added from extraction: {visibleAddedProof.join(", ")} — save to keep.
             </p>
           )}
 
@@ -202,9 +204,9 @@ export function BrandSection({ brand }: { brand: BrandProfile | null }) {
             items={standing}
             onChange={setStanding}
           />
-          {addedStanding.length > 0 && (
+          {visibleAddedStanding.length > 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              Added from extraction: {addedStanding.join(", ")} — save to keep.
+              Added from extraction: {visibleAddedStanding.join(", ")} — save to keep.
             </p>
           )}
 

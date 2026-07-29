@@ -22,6 +22,29 @@ export async function uploadImageToCloudinary(
   return { publicId: json.public_id, url: json.secure_url };
 }
 
+// Maps a declared MIME type to the file extension Cloudinary's raw delivery
+// needs to serve the right content-type back. Preferred over trusting the
+// browser-supplied filename: a file whose MIME is genuinely application/pdf
+// but whose name doesn't end in .pdf (renamed, extension-less, etc.) would
+// otherwise produce an extension-less raw URL — reproducing the exact
+// octet-stream failure this upload path exists to avoid.
+const EXTENSION_BY_MIME: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+  "image/heic": "heic",
+  "image/heif": "heif",
+};
+
+function extensionFromFilename(filename: string): string | null {
+  const match = /\.([a-zA-Z0-9]+)$/.exec(filename);
+  return match ? match[1].toLowerCase() : null;
+}
+
 // Documents (PDFs especially) must NOT go through /image/upload. Cloudinary's
 // image pipeline treats PDF specially (per-page rasterization support), and
 // accounts that have the security setting restricting inline PDF/ZIP delivery
@@ -45,7 +68,13 @@ export async function uploadDocumentToCloudinary(
   const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
   if (!cloudName || !preset) throw new Error("Cloudinary env vars not configured");
 
-  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
+  // The extension actually delivered is derived from the MIME type first —
+  // the source of truth for what the bytes are — and only falls back to
+  // whatever extension the filename happens to carry when the MIME is
+  // unrecognized.
+  const extension = EXTENSION_BY_MIME[mime.toLowerCase()] ?? extensionFromFilename(filename) ?? "bin";
+  const stem = filename.replace(/\.[^./\\]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
+  const safeName = `${stem}.${extension}`;
   const publicId = `brand-docs/${Date.now()}-${safeName}`;
   const dataUri = `data:${mime};base64,${buffer.toString("base64")}`;
   const body = new URLSearchParams({ file: dataUri, upload_preset: preset, public_id: publicId });

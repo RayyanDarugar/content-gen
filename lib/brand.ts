@@ -12,3 +12,21 @@ export function parseBrandList(raw: unknown): string[] {
   }
   return (value as string[]).map((s) => s.trim()).filter(Boolean).slice(0, MAX_ITEMS);
 }
+
+// Case-insensitive, trimmed merge for brand lists (proof points, standing):
+// existing items are kept as-is and never reordered, incoming items are
+// appended in order, deduped against both what's already there AND each
+// other (so the same extraction can't add "Acme" twice). Returns which
+// incoming items actually landed as `added`, so the UI can mark them
+// "added, not yet saved" without needing to diff the merge result itself.
+export function mergeList(existing: string[], incoming: string[]): { merged: string[]; added: string[] } {
+  const seen = new Set(existing.map((s) => s.trim().toLowerCase()));
+  const added: string[] = [];
+  for (const raw of incoming) {
+    const item = raw.trim();
+    if (!item || seen.has(item.toLowerCase())) continue;
+    seen.add(item.toLowerCase());
+    added.push(item);
+  }
+  return { merged: [...existing, ...added], added };
+}
