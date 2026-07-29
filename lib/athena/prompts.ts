@@ -7,6 +7,8 @@ export interface BrandContext {
   audience: string;
   voice: string;
   avoid: string;
+  proof_points: string[];
+  standing: string[];
 }
 
 export function brandBlock(brand: BrandContext): string {
@@ -16,6 +18,23 @@ export function brandBlock(brand: BrandContext): string {
   if (brand.audience) lines.push(`Primary audience: ${brand.audience}`);
   if (brand.voice) lines.push(`Voice / tone: ${brand.voice}`);
   if (brand.avoid) lines.push(`Never lead with / avoid: ${brand.avoid}`);
+  // The material. Ground ideas in these specifics rather than generic
+  // claims — a brand with proof points and no instruction to use them
+  // still produces the generic output this exists to fix.
+  if (brand.proof_points.length) {
+    lines.push(
+      "",
+      "MATERIAL — concrete things this brand can point at. Ground ideas in these specifics rather than generic benefits:",
+      ...brand.proof_points.map((p) => `- ${p}`),
+    );
+  }
+  if (brand.standing.length) {
+    lines.push(
+      "",
+      `STANDING — this brand has authority to speak on: ${brand.standing.join(", ")}.`,
+      "Decline angles outside that; do not claim expertise it has not earned.",
+    );
+  }
   return lines.length ? lines.join("\n") : "(No brand profile set yet — keep it generic and on-topic.)";
 }
 
@@ -177,4 +196,33 @@ export function buildAdaptCaptionSystemPrompt(
     "",
     "Make the same point the original makes — this is the same post going to another audience, not a new idea. Restructure freely for the target platform's conventions: its length, its hook style, its formatting. Never simply copy the original across.",
   ].filter(Boolean).join("\n");
+}
+
+export const BrandExtractOutput = z.object({
+  business_name: z.string().describe("the business's name, empty string if the sources don't say"),
+  business_description: z.string().describe("one or two sentences on what it actually is"),
+  audience: z.string().describe("who it is for"),
+  voice: z.string().describe("how it sounds — tone, register, characteristic moves"),
+  avoid: z.string().describe("words, claims, or framings this brand should never lead with"),
+  proof_points: z.array(z.string()).describe(
+    "concrete claims the brand can point at, each one short and specific; empty array if the sources support none",
+  ),
+  standing: z.array(z.string()).describe("topics the sources show this brand has authority to speak on"),
+});
+export type BrandExtractOutputT = z.infer<typeof BrandExtractOutput>;
+
+export function buildBrandExtractSystemPrompt(): string {
+  return [
+    "You are building a brand profile from the sources the user provides — a website's text, uploaded documents, and/or a conversation.",
+    "",
+    "Your job is to extract MATERIAL, not adjectives. The point of this profile is to give a content generator something specific to work with, so:",
+    "- Prefer specifics: numbers, named results, dates, credentials, customer names, scale.",
+    "- A proof point is something the brand can point at — \"5,000 students raised scores 120+ points\" — not a quality it claims, like \"we care about results\".",
+    "- NEVER invent a claim the sources do not support. Returning an empty proof_points array is the correct answer for a thin source; a fabricated one is not.",
+    "- standing lists only topics the sources actually evidence expertise in. If the sources show a tutoring service, standing is test prep and study habits — not education policy.",
+    "",
+    "voice describes how the brand sounds, in a way another writer could imitate. avoid captures what it should never lead with — jargon, claims it can't back, or framings that would read wrong for its audience.",
+    "",
+    "Leave a field as an empty string when the sources genuinely don't say. Do not pad.",
+  ].join("\n");
 }

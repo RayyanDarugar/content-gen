@@ -46,6 +46,8 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
     audience: brandRow?.audience ?? "",
     voice: brandRow?.voice ?? "",
     avoid: brandRow?.avoid ?? "",
+    proof_points: brandRow?.proof_points ?? [],
+    standing: brandRow?.standing ?? [],
   };
 
   // Call 1: generate ideas (structured output replaces the old JSON-repair parse)

@@ -1,9 +1,10 @@
+import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
 import { ManualIdeaDialog } from "./manual-idea-dialog";
 import { categoryColor } from "@/lib/category-colors";
-import type { Category, Idea } from "@/lib/types";
+import type { BrandProfile, Category, Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
   const supabase = await createServerSupabase();
@@ -13,6 +14,11 @@ export default async function IdeasPage() {
 
   const { data: catData } = await supabase
     .from("categories").select("*").eq("active", true).order("key");
+
+  const { data: brandRow } = await supabase
+    .from("brand_profiles").select("*").maybeSingle();
+  const brand = (brandRow as BrandProfile) ?? null;
+  const brandMissing = !brand?.business_name?.trim();
 
   const byCategory = new Map<string, Idea[]>();
   for (const idea of ideas) {
@@ -25,6 +31,22 @@ export default async function IdeasPage() {
         <h1 className="text-2xl font-bold">Ideas</h1>
         <ManualIdeaDialog categories={(catData ?? []) as Category[]} />
       </div>
+      {brandMissing && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+          <div>
+            <p className="font-semibold">Set up your brand</p>
+            <p className="text-sm text-muted-foreground">
+              The generator works from what you tell it about your business.
+            </p>
+          </div>
+          <Link
+            href="/onboarding"
+            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+          >
+            Set up your brand
+          </Link>
+        </div>
+      )}
       {ideas.length === 0 && <p>No ideas yet — go to Generate.</p>}
       {[...byCategory.entries()].map(([key, group]) => (
         <section key={key} className="space-y-3">

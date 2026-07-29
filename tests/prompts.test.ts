@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIdeaSystemPrompt, buildFilterSystemPrompt, buildIdeaUserPrompt,
-  platformPresetFor, clampIdeaCount, buildAdaptCaptionSystemPrompt,
+  platformPresetFor, clampIdeaCount, buildAdaptCaptionSystemPrompt, brandBlock,
+  buildBrandExtractSystemPrompt,
   type BrandContext,
 } from "@/lib/athena/prompts";
 
@@ -11,6 +12,8 @@ const brand: BrandContext = {
   audience: "Parents of high-schoolers",
   voice: "Warm, encouraging, plain-spoken",
   avoid: "AI-powered, dashboards, analytics",
+  proof_points: [],
+  standing: [],
 };
 
 const cats = [
@@ -32,7 +35,7 @@ describe("buildIdeaSystemPrompt", () => {
     expect(p).toContain("myth, scene, insight line");
   });
   it("degrades gracefully on empty brand and empty category fields", () => {
-    const empty: BrandContext = { business_name: "", business_description: "", audience: "", voice: "", avoid: "" };
+    const empty: BrandContext = { business_name: "", business_description: "", audience: "", voice: "", avoid: "", proof_points: [], standing: [] };
     const p = buildIdeaSystemPrompt(empty, [{ key: "X", style_guide: "", output_format: "", images_per_carousel: 1, post_type: "narrative" as const, caption_guide: "", buffer_channel_service: "" }]);
     expect(typeof p).toBe("string");
     expect(p).toContain("X");
@@ -61,6 +64,7 @@ describe("buildIdeaSystemPrompt — carousel instructions", () => {
   const brand = {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
+    proof_points: [] as string[], standing: [] as string[],
   };
   const cats = [{ key: "SAT_MYTH", style_guide: "GUIDE", output_format: "", images_per_carousel: 5, post_type: "narrative" as const, caption_guide: "", buffer_channel_service: "" }];
 
@@ -85,6 +89,7 @@ describe("buildIdeaSystemPrompt — post type", () => {
   const brand = {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
+    proof_points: [] as string[], standing: [] as string[],
   };
   const cat = (post_type: "independent" | "narrative") => [{
     key: "SAT_MYTH", style_guide: "GUIDE", output_format: "",
@@ -201,6 +206,7 @@ describe("buildAdaptCaptionSystemPrompt", () => {
   const brand = {
     business_name: "Athena", business_description: "SAT prep",
     audience: "parents", voice: "warm", avoid: "AI jargon",
+    proof_points: [] as string[], standing: [] as string[],
   };
   it("carries the target platform's conventions", () => {
     const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
@@ -225,5 +231,65 @@ describe("buildAdaptCaptionSystemPrompt", () => {
   it("omits the guide section entirely when the category has none", () => {
     const p = buildAdaptCaptionSystemPrompt(brand, { caption_guide: "" }, "x");
     expect(p).not.toContain("COPY GUIDE");
+  });
+});
+
+describe("brandBlock — material", () => {
+  const base = {
+    business_name: "Athena", business_description: "SAT prep",
+    audience: "parents", voice: "warm", avoid: "AI jargon",
+    proof_points: [] as string[], standing: [] as string[],
+  };
+
+  it("is byte-identical to the pre-material output when both lists are empty", () => {
+    expect(brandBlock(base)).toBe(
+      [
+        "Business: Athena",
+        "What it is: SAT prep",
+        "Primary audience: parents",
+        "Voice / tone: warm",
+        "Never lead with / avoid: AI jargon",
+      ].join("\n"),
+    );
+  });
+
+  it("still returns the no-profile fallback for a wholly empty brand", () => {
+    expect(
+      brandBlock({
+        business_name: "", business_description: "", audience: "", voice: "", avoid: "",
+        proof_points: [], standing: [],
+      }),
+    ).toBe("(No brand profile set yet — keep it generic and on-topic.)");
+  });
+
+  it("lists proof points as material when present", () => {
+    const p = brandBlock({ ...base, proof_points: ["5,000 students up 120+ pts", "Founded by a 1590 scorer"] });
+    expect(p).toContain("5,000 students up 120+ pts");
+    expect(p).toContain("Founded by a 1590 scorer");
+    expect(p.toLowerCase()).toContain("material");
+  });
+
+  it("lists standing when present", () => {
+    const p = brandBlock({ ...base, standing: ["test prep", "study habits"] });
+    expect(p).toContain("test prep");
+    expect(p).toContain("study habits");
+  });
+});
+
+describe("buildBrandExtractSystemPrompt", () => {
+  const p = buildBrandExtractSystemPrompt();
+  it("asks for concrete material, not adjectives", () => {
+    expect(p.toLowerCase()).toContain("specific");
+    expect(p.toLowerCase()).toContain("numbers");
+  });
+  it("forbids inventing claims", () => {
+    expect(p.toLowerCase()).toContain("never invent");
+  });
+  it("says an empty proof_points list is a valid answer", () => {
+    expect(p).toContain("empty");
+  });
+  it("scopes standing to what the sources evidence", () => {
+    expect(p.toLowerCase()).toContain("standing");
+    expect(p.toLowerCase()).toContain("evidence");
   });
 });

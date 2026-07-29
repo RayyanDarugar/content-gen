@@ -3,10 +3,11 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
-import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
 import type { RoleRefUrls } from "@/lib/types";
+import { parseBrandList } from "@/lib/brand";
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
@@ -122,24 +123,60 @@ export async function uploadStyleRefImage(
   }
 }
 
+// Sibling of uploadStyleRefImage, deliberately NOT reusing it: that action
+// posts to Cloudinary's /image/upload endpoint, which is unreliable for PDF
+// documents (see uploadDocumentToCloudinary's comment). Brand-extraction
+// documents (pitch decks, one-pagers) go through /raw/upload instead so the
+// content-type the extraction endpoint's preflight reads back is trustworthy.
+export async function uploadBrandDocument(
+  formData: FormData,
+): Promise<{ url?: string; error?: string }> {
+  await requireUser();
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "No file provided" };
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImage = file.type.startsWith("image/");
+  if (!isPdf && !isImage) return { error: "Only PDF or image documents are supported" };
+  if (file.size > 20 * 1024 * 1024) return { error: "Document must be under 20MB" };
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const mime = file.type || (isPdf ? "application/pdf" : "application/octet-stream");
+  try {
+    const { url } = await uploadDocumentToCloudinary(buffer, mime, file.name);
+    return { url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function saveBrandProfile(
   _prev: { error?: string; ok?: boolean } | undefined,
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
   const supabase = await createServerSupabase();
-  const { error } = await supabase.from("brand_profiles").upsert(
-    {
-      user_id: user.id,
-      business_name: String(formData.get("business_name") ?? "").trim(),
-      business_description: String(formData.get("business_description") ?? "").trim(),
-      audience: String(formData.get("audience") ?? "").trim(),
-      voice: String(formData.get("voice") ?? "").trim(),
-      avoid: String(formData.get("avoid") ?? "").trim(),
-    },
-    { onConflict: "user_id" },
-  );
-  if (error) return { error: error.message };
+  const businessName = String(formData.get("business_name") ?? "").trim();
+  // A brand profile with no name is broken on its own terms: it's what the
+  // onboarding wizard's `brandDone` keys on and what `brandBlock` leads with
+  // downstream. Reject rather than upsert an unnamed row.
+  if (!businessName) return { error: "Give the brand a name." };
+  try {
+    const { error } = await supabase.from("brand_profiles").upsert(
+      {
+        user_id: user.id,
+        business_name: businessName,
+        business_description: String(formData.get("business_description") ?? "").trim(),
+        audience: String(formData.get("audience") ?? "").trim(),
+        voice: String(formData.get("voice") ?? "").trim(),
+        avoid: String(formData.get("avoid") ?? "").trim(),
+        proof_points: parseBrandList(formData.get("proof_points")),
+        standing: parseBrandList(formData.get("standing")),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) return { error: error.message };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
   revalidatePath("/config");
   return { ok: true };
 }
