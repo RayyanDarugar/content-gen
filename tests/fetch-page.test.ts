@@ -245,6 +245,74 @@ describe("stylesheetHrefs", () => {
       "https://example.com/3.css",
     ]);
   });
+
+  it("ignores commented-out links, which would otherwise burn the whole cap", () => {
+    // Stale <link>s left inside comments are ordinary in hand-maintained
+    // templates. They are not live markup, but they are still <link> tags to
+    // a regex — three of them ahead of the real sheet spend all three slots
+    // and the live stylesheet is never fetched, with no warning anywhere.
+    const html = `
+      <!--
+        <link rel="stylesheet" href="/old1.css">
+        <link rel="stylesheet" href="/old2.css">
+        <link rel="stylesheet" href="/old3.css">
+      -->
+      <link rel="stylesheet" href="/real.css">`;
+    expect(stylesheetHrefs(html, base)).toEqual(["https://example.com/real.css"]);
+  });
+
+  it("ends each comment at its own first --> (two comments, live link between)", () => {
+    // The stripping must use the non-greedy `<!--[\s\S]*?-->`. Greedy, the
+    // "comment" would run from the FIRST <!-- to the LAST --> in the
+    // document, swallowing every live <link> sitting between two unrelated
+    // comments — the exact bug already shipped once in this file's text
+    // extractor. Two comments with real links between and after them is the
+    // fixture that can observe it; a single-comment fixture cannot.
+    const html = `
+      <!-- <link rel="stylesheet" href="/dead1.css"> -->
+      <link rel="stylesheet" href="/live1.css">
+      <!-- <link rel="stylesheet" href="/dead2.css"> -->
+      <link rel="stylesheet" href="/live2.css">`;
+    expect(stylesheetHrefs(html, base)).toEqual([
+      "https://example.com/live1.css",
+      "https://example.com/live2.css",
+    ]);
+  });
+
+  it("dedupes repeated hrefs on the resolved url before spending the cap", () => {
+    // The same sheet listed three times (here twice literally and once in a
+    // relative form resolving to the same URL) must not consume all three
+    // slots on identical fetches — the distinct sheets after it have to make
+    // it into the result.
+    const html = [
+      `<link rel="stylesheet" href="/a.css">`,
+      `<link rel="stylesheet" href="/a.css">`,
+      `<link rel="stylesheet" href="https://example.com/a.css">`,
+      `<link rel="stylesheet" href="/b.css">`,
+      `<link rel="stylesheet" href="/c.css">`,
+    ].join("");
+    expect(stylesheetHrefs(html, base)).toEqual([
+      "https://example.com/a.css",
+      "https://example.com/b.css",
+      "https://example.com/c.css",
+    ]);
+  });
+
+  it("does not read data-href / data-rel as href / rel", () => {
+    // Without a left boundary on the attribute regexes, `data-href=` matches
+    // as `href=` and wins by coming first in the tag, so the fetch is aimed
+    // at a URL the third-party page chose rather than at its real sheet.
+    // assertFetchableUrl still gates it, so this is wasted budget, not SSRF.
+    // Two tags: one probing href, one probing rel.
+    const html = [
+      `<link rel="stylesheet" data-href="https://evil.example/x.css" href="/real.css">`,
+      `<link data-rel="alternate" rel="stylesheet" href="/second.css">`,
+    ].join("");
+    expect(stylesheetHrefs(html, base)).toEqual([
+      "https://example.com/real.css",
+      "https://example.com/second.css",
+    ]);
+  });
 });
 
 describe("fetchPageHtml / fetchStylesheets (mocked fetch)", () => {

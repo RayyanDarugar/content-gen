@@ -227,16 +227,51 @@ const MAX_STYLESHEETS = 3;
 // baseUrl (the final URL reached after redirects, so relative hrefs land
 // correctly). Non-greedy tag matching: <link> elements don't nest, and a
 // greedy match across multiple tags would blur their boundaries.
+//
+// Every miss here fails the same silent way — the sheet budget gets spent on
+// something that isn't the site's real CSS, design tokens quietly fall back
+// to whatever the inline <style> blocks happen to hold, and nothing warns.
+// Hence the three guards below (comments, dedupe, attribute boundaries).
+//
+// Not handled, deliberately: unquoted attribute values (`<link rel=stylesheet
+// href=/a.css>`). Accepted and carried, not an oversight.
 export function stylesheetHrefs(html: string, baseUrl: string): string[] {
+  // Commented-out <link>s are dead markup, but to a regex they are still
+  // <link> tags — and hand-maintained templates are full of them. Three
+  // stale links in a comment ahead of the live one burn the whole
+  // MAX_STYLESHEETS budget and the real sheet is never fetched.
+  //
+  // NON-greedy, the exact `/<!--[\s\S]*?-->/g` extractReadableText uses:
+  // comments do not nest, a comment ends at the first `-->`, and a greedy
+  // version of precisely this pattern has already shipped as a bug in this
+  // file once — it deletes every element sitting between two ordinary
+  // unrelated comments. Do not "simplify" it back to `<!--[\s\S]*-->`.
+  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, " ");
+
   const out: string[] = [];
-  for (const m of html.matchAll(/<link\b[^>]*?>/gi)) {
+  const seen = new Set<string>();
+  for (const m of withoutComments.matchAll(/<link\b[^>]*?>/gi)) {
     const tag = m[0];
-    const rel = tag.match(/rel\s*=\s*["']([^"']+)["']/i)?.[1] ?? "";
+    // The leading [\s"'] is a left boundary. Without it, `rel=`/`href=` also
+    // match the tail of any *-rel / *-href attribute — notably
+    // `data-href="https://evil.example/x.css"`, which wins because it comes
+    // first in the tag and so hands the fetch a URL of the page author's
+    // choosing instead of the real sheet. (assertFetchableUrl still applies,
+    // so this is wasted budget rather than an SSRF hole.) An attribute name
+    // is always preceded by whitespace or by the quote closing the previous
+    // attribute's value, so those two classes are the complete left context.
+    const rel = tag.match(/[\s"']rel\s*=\s*["']([^"']+)["']/i)?.[1] ?? "";
     if (!/\bstylesheet\b/i.test(rel)) continue;
-    const href = tag.match(/href\s*=\s*["']([^"']+)["']/i)?.[1];
+    const href = tag.match(/[\s"']href\s*=\s*["']([^"']+)["']/i)?.[1];
     if (!href) continue;
     try {
-      out.push(new URL(href, baseUrl).toString());
+      const resolved = new URL(href, baseUrl).toString();
+      // Dedupe on the RESOLVED url, and before the cap check: a page that
+      // lists the same sheet three times (or lists it once relative and once
+      // absolute) would otherwise spend all three slots re-fetching one file.
+      if (seen.has(resolved)) continue;
+      seen.add(resolved);
+      out.push(resolved);
     } catch {
       // An unparseable href is skipped, not fatal.
     }

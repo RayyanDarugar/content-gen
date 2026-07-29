@@ -44,6 +44,15 @@ describe("normalizeFontFamily", () => {
   it("keeps a named font that could be a deliberate choice", () => {
     expect(normalizeFontFamily("Helvetica Neue")).toBe("Helvetica Neue");
   });
+  it("drops a var() indirection, which is not a family name", () => {
+    // Every next/font site emits `font-family: var(--font-sans)` — including
+    // this repo's own stack — and the raw token is not a typeface under any
+    // reading, so it must not reach the model as a candidate. The comma-split
+    // means the two-argument fallback form arrives truncated as `var(--a`.
+    expect(normalizeFontFamily("var(--font-sans)")).toBeNull();
+    expect(normalizeFontFamily("var(--font-heading), sans-serif")).toBeNull();
+    expect(normalizeFontFamily("var(--font-body, sans-serif)")).toBeNull();
+  });
 });
 
 describe("parseDesignCandidates", () => {
@@ -156,6 +165,48 @@ describe("parseDesignCandidates", () => {
     const many = Array.from({ length: 60 }, (_, i) => `.c${i}{color:#${i.toString(16).padStart(6, "0")}}`).join("");
     const { colors } = parseDesignCandidates("<html></html>", [many]);
     expect(colors.length).toBeLessThanOrEqual(24);
+  });
+
+  it("counts 8-digit alpha hex toward its own frequency, so the cap can't cut it", () => {
+    // Same failure as the 6-digit case above, for a site that writes its
+    // brand color with an alpha channel. Under a 6-and-3-only frequency
+    // pattern `#0f172aff` scores 0 occurrences (`{6}\b` correctly declines
+    // it — the trailing `ff` is still a word character), so it ties with the
+    // 30 one-off incidental hexes at weight 40 / count 0, loses on insertion
+    // order, lands 31st, and MAX_COLORS = 24 removes it from the result
+    // entirely: 24 incidental colors and no brand color.
+    const incidental = Array.from(
+      { length: 30 },
+      (_, i) => `.i${i}{color:#${(0x110000 + i).toString(16)}}`,
+    ).join("");
+    const brand = ".b{color:#0f172aff}".repeat(40);
+    const { colors } = parseDesignCandidates("<html></html>", [incidental + brand]);
+    expect(colors[0].value).toBe("#0f172a");
+    expect(colors[0].weight).toBe(40);
+  });
+
+  it("does not swallow the closing paren of an @import url() into the family name", () => {
+    // Pins the `)` exclusion in the URL character class. The other @import
+    // test cannot observe it: its fixture is `family=Inter:wght@400;700`,
+    // where the `:` terminates the family capture before the paren is ever
+    // reached. A colon-free family is the only fixture that can — remove the
+    // `)` and this reads back "Inter);" / "Open Sans);". Two imports, since
+    // the exclusion is what keeps each URL run inside its own url(...).
+    const css = [
+      `@import url(https://fonts.googleapis.com/css2?family=Inter);`,
+      `@import url(https://fonts.googleapis.com/css2?family=Open+Sans);`,
+    ].join("\n");
+    const { fonts } = parseDesignCandidates("<html></html>", [css]);
+    expect(fonts.map((f) => f.family).sort()).toEqual(["Inter", "Open Sans"]);
+  });
+
+  it("does not offer a var() indirection as a font candidate", () => {
+    // The whole-parse view of the normalizeFontFamily guard: a next/font
+    // stack declares its faces only through custom properties, and the
+    // literal "var(--font-sans)" must not be what the model is handed.
+    const css = `body{font-family:var(--font-sans)}h1{font-family:var(--font-display),serif}.real{font-family:"Söhne",sans-serif}`;
+    const { fonts } = parseDesignCandidates("<html></html>", [css]);
+    expect(fonts.map((f) => f.family)).toEqual(["Söhne"]);
   });
 
   it("does not double-count a <style>-block color relative to an equally-frequent inline one", () => {

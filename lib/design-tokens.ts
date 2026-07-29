@@ -58,6 +58,17 @@ export function normalizeFontFamily(raw: string): string | null {
   const first = raw.split(",")[0] ?? "";
   const cleaned = first.replace(/["']/g, "").replace(/\+/g, " ").trim();
   if (!cleaned) return null;
+  // `font-family: var(--font-sans)` is not a font name under any reading —
+  // it's an indirection whose target this parser can't resolve. Every site
+  // built with next/font emits exactly this (including our own), so without
+  // the guard the top declaration-tier candidate on those sites is the
+  // literal string "var(--font-sans)". This is not the code second-guessing
+  // the model: the "code finds, the model judges" rule is about not
+  // hand-filtering plausible *colors* down to a preferred palette, and no
+  // reading of this token makes it a typeface. Note the split on "," above
+  // means the fallback form `var(--a, sans-serif)` arrives here as the
+  // truncated `var(--a`, which the prefix test still catches.
+  if (cleaned.toLowerCase().startsWith("var(")) return null;
   if (GENERIC_FAMILIES.has(cleaned.toLowerCase())) return null;
   return cleaned;
 }
@@ -101,11 +112,20 @@ export function parseDesignCandidates(html: string, stylesheets: string[] = []):
   // equally-frequent color that only appears in an inline style="" attribute
   // or plain text. Non-greedy, matching the same style-block extraction
   // above — <style> blocks don't nest, so this can't eat past its own tag.
+  //
+  // The alternation covers 8- and 4-digit (alpha) hex as well as 6- and 3-,
+  // ordered LONGEST FIRST so it binds to the whole token: a site whose brand
+  // color is written `#0f172aff` counted 0 occurrences of it under a
+  // 6-and-3-only pattern (`{6}\b` correctly declines `#0f172aff`, since the
+  // trailing `ff` is still word characters), which is precisely the tie the
+  // frequency signal exists to break — 40 declarations of the brand color
+  // scored the same 0 as a one-off, and MAX_COLORS cut it out entirely.
+  // normalizeHex strips the alpha, so all four forms key to the same count.
   const htmlOutsideStyleBlocks = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
   const counts = new Map<string, number>();
   for (const m of [
-    ...css.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g),
-    ...htmlOutsideStyleBlocks.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g),
+    ...css.matchAll(/#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{4}\b|#[0-9a-fA-F]{3}\b/g),
+    ...htmlOutsideStyleBlocks.matchAll(/#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{4}\b|#[0-9a-fA-F]{3}\b/g),
   ]) {
     const v = normalizeHex(m[0]);
     if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
