@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
-  resolveInitialCaption, resolveValidSlides, type Postable,
+  findWrongAnchorGenerationIds, resolveInitialCaption, resolveValidSlides, type Postable,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
@@ -170,6 +170,63 @@ describe("findSupersededGenerationIds", () => {
       sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
     ];
     expect(findSupersededGenerationIds(selected, siblings)).toEqual(["old-s1", "old-s2"]);
+  });
+});
+
+describe("findWrongAnchorGenerationIds", () => {
+  const sib = (
+    id: string, ideaId: string, slideIndex: number, status: string, created: string,
+    anchorGenerationId: string | null = null,
+  ) => ({
+    id, idea_id: ideaId, slide_index: slideIndex,
+    anchor_generation_id: anchorGenerationId, status, created_at: created,
+  });
+
+  it("allows a deliberately-chosen older retry of a slide under the current anchor", () => {
+    // Finding 1: the composer's swap menu offers a slide's older succeeded
+    // generations, and posting a hand-picked older retry (not just the
+    // newest) must succeed as long as it belongs to the current anchor.
+    const selected = [{ id: "s1-old", idea_id: "i1", slide_index: 1 }];
+    const siblings = [
+      sib("anchor", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("s1-old", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchor"),
+      sib("s1-new", "i1", 1, "succeeded", "2026-01-02T00:00:00Z", "anchor"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual([]);
+  });
+
+  it("rejects a leftover sibling of a superseded anchor", () => {
+    const selected = [{ id: "old-s1", idea_id: "i1", slide_index: 1 }];
+    const siblings = [
+      sib("anchorA", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("old-s1", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchorA"),
+      sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual(["old-s1"]);
+  });
+
+  it("rejects a stale anchor itself once a newer anchor has succeeded", () => {
+    const selected = [{ id: "anchorA", idea_id: "i1", slide_index: 0 }];
+    const siblings = [
+      sib("anchorA", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual(["anchorA"]);
+  });
+
+  it("allows the current anchor plus its current siblings regardless of retry age", () => {
+    const selected = [
+      { id: "anchor", idea_id: "i1", slide_index: 0 },
+      { id: "s1-old", idea_id: "i1", slide_index: 1 },
+      { id: "s2", idea_id: "i1", slide_index: 2 },
+    ];
+    const siblings = [
+      sib("anchor", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("s1-old", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchor"),
+      sib("s1-new", "i1", 1, "succeeded", "2026-01-03T00:00:00Z", "anchor"),
+      sib("s2", "i1", 2, "succeeded", "2026-01-01T00:02:00Z", "anchor"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual([]);
   });
 });
 

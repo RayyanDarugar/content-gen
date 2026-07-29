@@ -19,12 +19,25 @@ interface Slot {
   slideIndex: number | null; // null for freeform pool additions
   generationId: string | null;
   publicUrl: string;
+  // Finding 3: already went out in a prior (non-failed) post for this idea.
+  // Rendered visually distinct, not swappable/removable, and excluded from
+  // the submit payload — re-submitting it would double-publish.
+  alreadyPosted: boolean;
 }
 
 let slotSeq = 0;
 function newSlotKey() {
   slotSeq += 1;
   return `slot-${slotSeq}`;
+}
+
+// Local-time value in the shape <input type="datetime-local"> expects
+// (YYYY-MM-DDTHH:mm), used as the `min` bound so the picker can't be set to
+// a moment already in the past (Finding 5).
+function nowLocalInputValue(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function Composer({
@@ -35,6 +48,7 @@ export function Composer({
   channelsError,
   resolved,
   pool,
+  postedSlideIndexes,
   brandName,
   schedulingEnabled,
 }: {
@@ -45,10 +59,12 @@ export function Composer({
   channelsError: string;
   resolved: SlideResolution[];
   pool: Postable[];
+  postedSlideIndexes: number[];
   brandName: string;
   schedulingEnabled: boolean;
 }) {
   const router = useRouter();
+  const postedSlideIndexSet = useMemo(() => new Set(postedSlideIndexes), [postedSlideIndexes]);
 
   const [slots, setSlots] = useState<Slot[]>(() =>
     resolved.map((r) => ({
@@ -56,6 +72,7 @@ export function Composer({
       slideIndex: r.slideIndex,
       generationId: r.generationId,
       publicUrl: r.publicUrl,
+      alreadyPosted: postedSlideIndexSet.has(r.slideIndex),
     })),
   );
   const [caption, setCaption] = useState(
@@ -76,9 +93,14 @@ export function Composer({
   const platformKey = normalizeService(category.buffer_channel_service);
   const charLimit = platformCharLimit(platformKey);
 
-  const filled = slots.filter((s): s is Slot & { generationId: string } => !!s.generationId);
-  const usedIds = new Set(filled.map((s) => s.generationId));
-  const previewUrls = slots.map((s) => s.publicUrl);
+  // "filled" is what this submission would actually post: alreadyPosted
+  // slots are excluded so reopening the composer never re-submits a slide
+  // that already went out in an earlier post (Finding 3). usedIds still
+  // covers every occupied slot (posted or not) so an already-posted image
+  // can't also be offered as a swap/add candidate elsewhere in the strip.
+  const filled = slots.filter((s): s is Slot & { generationId: string } => !!s.generationId && !s.alreadyPosted);
+  const usedIds = new Set(slots.filter((s) => s.generationId).map((s) => s.generationId));
+  const previewUrls = slots.filter((s) => !s.alreadyPosted).map((s) => s.publicUrl);
 
   // Every succeeded generation for the idea, grouped by slide, so "Swap"
   // can offer that slide's other attempts (a retried anchor, a manual
@@ -114,7 +136,10 @@ export function Composer({
   }
 
   function addSlot(candidate: { id: string; url: string }) {
-    setSlots((prev) => [...prev, { key: newSlotKey(), slideIndex: null, generationId: candidate.id, publicUrl: candidate.url }]);
+    setSlots((prev) => [
+      ...prev,
+      { key: newSlotKey(), slideIndex: null, generationId: candidate.id, publicUrl: candidate.url, alreadyPosted: false },
+    ]);
     setAddOpen(false);
   }
 
@@ -137,12 +162,13 @@ export function Composer({
     setBusy(true);
     setMessage(null);
     try {
+      const scheduling = schedulingEnabled && scheduleMode === "pick" && scheduledAt.trim() !== "";
       const body: Record<string, unknown> = {
         category_key: category.key,
         generation_ids: filled.map((s) => s.generationId),
         caption,
       };
-      if (schedulingEnabled && scheduleMode === "pick" && scheduledAt) {
+      if (scheduling) {
         body.scheduled_at = new Date(scheduledAt).toISOString();
       }
       const res = await fetch("/api/posts/create", {
@@ -152,7 +178,15 @@ export function Composer({
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      setMessage({ ok: true, text: `Queued in Buffer (${json.buffer_update_id})` });
+      // Finding 6: "Queued in Buffer" is only true for the addToQueue path —
+      // a custom-time post never touches Buffer's queue, so say what
+      // actually happened instead.
+      setMessage({
+        ok: true,
+        text: scheduling
+          ? `Scheduled for ${new Date(scheduledAt).toLocaleString()}`
+          : `Queued in Buffer (${json.buffer_update_id})`,
+      });
       setTimeout(() => router.push("/post"), 800);
     } catch (e) {
       setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
@@ -187,7 +221,14 @@ export function Composer({
     }
   }
 
-  const canPost = !channelMissing && filled.length > 0 && !busy;
+  // Finding 4: a "pick a time" post with no time chosen must not be
+  // postable — the button used to say "Schedule" while silently falling
+  // back to add-to-queue behavior.
+  const canPost =
+    !channelMissing &&
+    filled.length > 0 &&
+    !busy &&
+    (scheduleMode !== "pick" || !schedulingEnabled || scheduledAt.trim() !== "");
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -262,25 +303,36 @@ export function Composer({
                     <img
                       src={slot.publicUrl}
                       alt={`Slide ${idx + 1}`}
-                      className="h-28 w-28 rounded-xl border object-cover"
+                      className={`h-28 w-28 rounded-xl border object-cover ${slot.alreadyPosted ? "opacity-50" : ""}`}
                     />
-                    <div className="flex items-center justify-between text-xs">
-                      <button type="button" onClick={() => moveSlot(idx, -1)} disabled={idx === 0} aria-label="Move left">
-                        <ChevronLeft className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="underline"
-                        onClick={() => setSwapKey(swapKey === slot.key ? null : slot.key)}
-                      >
-                        Swap
-                      </button>
-                      <button type="button" onClick={() => moveSlot(idx, 1)} disabled={idx === slots.length - 1} aria-label="Move right">
-                        <ChevronRight className="size-3.5" />
-                      </button>
-                    </div>
-                    {swapKey === slot.key && (
-                      <SwapPanel candidates={candidatesFor(slot)} onPick={(c) => swapSlot(slot.key, c)} />
+                    {slot.alreadyPosted ? (
+                      // Finding 3: already went out — visually distinct,
+                      // not selectable (no swap/move/remove), and left out
+                      // of the submit payload above.
+                      <span className="block rounded-full bg-muted px-1.5 py-0.5 text-center text-[10px] font-medium text-muted-foreground">
+                        Posted
+                      </span>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between text-xs">
+                          <button type="button" onClick={() => moveSlot(idx, -1)} disabled={idx === 0} aria-label="Move left">
+                            <ChevronLeft className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="underline"
+                            onClick={() => setSwapKey(swapKey === slot.key ? null : slot.key)}
+                          >
+                            Swap
+                          </button>
+                          <button type="button" onClick={() => moveSlot(idx, 1)} disabled={idx === slots.length - 1} aria-label="Move right">
+                            <ChevronRight className="size-3.5" />
+                          </button>
+                        </div>
+                        {swapKey === slot.key && (
+                          <SwapPanel candidates={candidatesFor(slot)} onPick={(c) => swapSlot(slot.key, c)} />
+                        )}
+                      </>
                     )}
                   </>
                 ) : (
@@ -288,14 +340,16 @@ export function Composer({
                     waiting on generation
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => removeSlot(slot.key)}
-                  aria-label="Remove slide"
-                  className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-background text-muted-foreground ring-1 ring-foreground/15 hover:text-destructive"
-                >
-                  <X className="size-3" />
-                </button>
+                {!slot.alreadyPosted && (
+                  <button
+                    type="button"
+                    onClick={() => removeSlot(slot.key)}
+                    aria-label="Remove slide"
+                    className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-background text-muted-foreground ring-1 ring-foreground/15 hover:text-destructive"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
               </div>
             ))}
             <div className="relative w-28">
@@ -337,6 +391,7 @@ export function Composer({
                 value={scheduledAt}
                 onChange={(e) => setScheduledAt(e.target.value)}
                 disabled={!schedulingEnabled}
+                min={nowLocalInputValue()}
                 className="w-56"
               />
               {!schedulingEnabled && (

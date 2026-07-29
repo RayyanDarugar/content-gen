@@ -321,6 +321,14 @@ function XMosaic({ imageUrls }: { imageUrls: string[] }) {
 function XPreview({ imageUrls, caption, accountName, avatarUrl, aspectRatio }: PreviewProps) {
   const handle = `@${accountName.trim().toLowerCase().replace(/\s+/g, "")}`;
   const limit = platformCharLimit("x")!;
+  // Finding 7: this boundary is a preview approximation, not X's real rule.
+  // `caption.length` is a UTF-16 code-unit count, but X counts "weighted"
+  // characters — most Unicode counts as 1, some (e.g. CJK) as 2, and any
+  // URL is normalized to a flat 23 regardless of its actual length. Do not
+  // "fix" the posting path (buildCreatePostMutation / posts/create) to
+  // match this simpler count — this component only needs to be roughly
+  // indicative, the posting path needs to be correct, and those are
+  // different bars.
   const overflow = caption.length > limit;
   return (
     <PhoneFrame aspectRatio={aspectRatio}>

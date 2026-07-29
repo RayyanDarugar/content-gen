@@ -50,9 +50,12 @@ export default async function ComposerPage({
     !category.buffer_connection_id ||
     (!channelsError && !channels.some((c) => c.id === category.buffer_channel_id));
 
-  // The same per-category postable pool the old /post page built: newest
-  // succeeded generation per (idea, slide), so a slide that was retried
-  // doesn't shadow its siblings.
+  // The same per-category postable pool the old /post page built, now
+  // anchor-aware: resolveValidSlides is the single source of slide validity
+  // (Global Constraint), so a stale sibling left behind by a re-anchored
+  // carousel is never offered here even though it may still be the newest
+  // succeeded row for its own slide index. Finding 2: the pre-resolveValidSlides
+  // "newest succeeded per (idea, slide)" logic this branch exists to retire.
   const { data: poolIdeaData } = await supabase
     .from("ideas")
     .select("*, generations(*)")
@@ -62,22 +65,22 @@ export default async function ComposerPage({
   const poolIdeas = (poolIdeaData ?? []) as IdeaWithGenerations[];
   const pool: Postable[] = [];
   for (const poolIdea of poolIdeas) {
-    const slideCount = (poolIdea.slides ?? []).length || 1;
-    const newestBySlide = new Map<number, Generation>();
+    const poolSlideCount = (poolIdea.slides ?? []).length || 1;
+    const poolUrlById = new Map<string, string>();
     for (const g of poolIdea.generations) {
-      if (g.status !== "succeeded" || !g.public_url) continue;
-      const existing = newestBySlide.get(g.slide_index);
-      if (!existing || g.created_at > existing.created_at) newestBySlide.set(g.slide_index, g);
+      if (g.status === "succeeded" && g.public_url) poolUrlById.set(g.id, g.public_url);
     }
-    for (const g of newestBySlide.values()) {
+    const poolResolved = resolveValidSlides(poolSlideCount, poolIdea.generations, poolUrlById);
+    for (const slide of poolResolved) {
+      if (!slide.generationId) continue;
       pool.push({
-        generation_id: g.id,
+        generation_id: slide.generationId,
         idea_id: poolIdea.id,
         idea_created_at: poolIdea.created_at,
-        public_url: g.public_url,
+        public_url: slide.publicUrl,
         concept: poolIdea.concept,
-        slide_index: g.slide_index,
-        slide_count: slideCount,
+        slide_index: slide.slideIndex,
+        slide_count: poolSlideCount,
         post_text: poolIdea.post_text ?? "",
       });
     }
@@ -93,6 +96,26 @@ export default async function ComposerPage({
   }
   const resolved = resolveValidSlides(slideCount, idea.generations, urlById);
 
+  // Finding 3: "remember what went out". Every non-failed post already
+  // recorded against this idea has already gone live on Buffer, so its
+  // slides must be excluded from what gets re-submitted on reopen — a
+  // "failed" post never reached Buffer, so its slides stay eligible.
+  const { data: postRows } = await supabase
+    .from("posts").select("id").eq("idea_id", idea.id).neq("status", "failed");
+  const postIds = ((postRows ?? []) as { id: string }[]).map((p) => p.id);
+  const postedSlideIndexes: number[] = [];
+  if (postIds.length > 0) {
+    const { data: imgRows } = await supabase
+      .from("post_images").select("generation_id").in("post_id", postIds);
+    const slideIndexByGenId = new Map(idea.generations.map((g) => [g.id, g.slide_index]));
+    const posted = new Set<number>();
+    for (const row of (imgRows ?? []) as { generation_id: string }[]) {
+      const idx = slideIndexByGenId.get(row.generation_id);
+      if (idx != null) posted.add(idx);
+    }
+    postedSlideIndexes.push(...posted);
+  }
+
   return (
     <Composer
       idea={idea}
@@ -102,6 +125,7 @@ export default async function ComposerPage({
       channelsError={channelsError}
       resolved={resolved}
       pool={pool}
+      postedSlideIndexes={postedSlideIndexes}
       brandName={brand?.business_name?.trim() || "Your brand"}
       schedulingEnabled={SCHEDULING_ENABLED}
     />

@@ -142,6 +142,46 @@ export function findSupersededGenerationIds(
     .map((g) => g.id);
 }
 
+// A deliberately-chosen older retry of a slide is postable; a leftover
+// sibling of a SUPERSEDED ANCHOR is not. The anchor is what carries visual
+// identity across a carousel, so mixing anchors is the real corruption
+// risk — picking last week's retry of slide 3 under the same anchor is a
+// legitimate editorial choice the composer's swap menu exists to offer.
+// findSupersededGenerationIds is intentionally left alone (other callers and
+// tests depend on its stricter "must be the newest" rule); this is the
+// relaxed rule posts/create actually enforces.
+export function findWrongAnchorGenerationIds(
+  selected: { id: string; idea_id: string; slide_index: number }[],
+  siblings: SiblingGeneration[],
+): string[] {
+  const byIdea = new Map<string, SiblingGeneration[]>();
+  for (const s of siblings) {
+    const arr = byIdea.get(s.idea_id) ?? [];
+    arr.push(s);
+    byIdea.set(s.idea_id, arr);
+  }
+
+  const currentAnchorIdByIdea = new Map<string, string>();
+  for (const [ideaId, gens] of byIdea) {
+    const anchors = gens.filter((g) => g.status === "succeeded" && g.slide_index === 0);
+    if (anchors.length === 0) continue;
+    const anchor = anchors.reduce((newest, g) => (g.created_at > newest.created_at ? g : newest));
+    currentAnchorIdByIdea.set(ideaId, anchor.id);
+  }
+
+  const byId = new Map(siblings.map((s) => [s.id, s]));
+
+  return selected
+    .filter((sel) => {
+      const currentAnchorId = currentAnchorIdByIdea.get(sel.idea_id);
+      if (!currentAnchorId) return true; // no succeeded anchor at all: nothing is valid
+      if (sel.slide_index === 0) return sel.id !== currentAnchorId;
+      const gen = byId.get(sel.id);
+      return !gen || gen.anchor_generation_id !== currentAnchorId;
+    })
+    .map((sel) => sel.id);
+}
+
 // Port of n8n Workflow C "Group Into Carousels". channelId and image URLs are
 // app-controlled values; the caption is user text and travels as a variable.
 //

@@ -33,7 +33,42 @@ export default async function PostPage() {
       if (g.status === "succeeded" && g.public_url) urlById.set(g.id, g.public_url);
     }
   }
-  const rows = buildQueueRows(ideas, urlById);
+
+  // Finding 3: cross-post completeness. A non-failed post already went out
+  // on Buffer, so its slides count as "posted" for every idea in the
+  // queue, not just the one currently open in the composer.
+  const ideaIds = ideas.map((i) => i.id);
+  const postedSlideIndexesByIdea = new Map<string, Set<number>>();
+  if (ideaIds.length > 0) {
+    const { data: relevantPostData } = await supabase
+      .from("posts").select("id, idea_id").in("idea_id", ideaIds).neq("status", "failed");
+    const relevantPosts = (relevantPostData ?? []) as { id: string; idea_id: string | null }[];
+    const ideaIdByPostId = new Map(
+      relevantPosts.filter((p) => p.idea_id).map((p) => [p.id, p.idea_id as string]),
+    );
+    const postIds = relevantPosts.map((p) => p.id);
+    if (postIds.length > 0) {
+      const { data: imgData } = await supabase
+        .from("post_images").select("post_id, generation_id").in("post_id", postIds);
+      const slideIndexByGenId = new Map<string, number>();
+      for (const idea of ideas) {
+        for (const g of idea.generations) slideIndexByGenId.set(g.id, g.slide_index);
+      }
+      for (const row of (imgData ?? []) as { post_id: string; generation_id: string }[]) {
+        const ideaId = ideaIdByPostId.get(row.post_id);
+        const slideIndex = slideIndexByGenId.get(row.generation_id);
+        if (ideaId == null || slideIndex == null) continue;
+        const set = postedSlideIndexesByIdea.get(ideaId) ?? new Set<number>();
+        set.add(slideIndex);
+        postedSlideIndexesByIdea.set(ideaId, set);
+      }
+    }
+  }
+  const ideasWithPosted = ideas.map((idea) => ({
+    ...idea,
+    posted_slide_indexes: Array.from(postedSlideIndexesByIdea.get(idea.id) ?? []),
+  }));
+  const rows = buildQueueRows(ideasWithPosted, urlById);
 
   return (
     <div className="space-y-8">
@@ -47,6 +82,7 @@ export default async function PostPage() {
           rows.map((row) => {
             const category = categoryByKey.get(row.categoryKey);
             const ready = row.readyCount === row.slideCount;
+            const partiallyPosted = row.postedCount > 0;
             return (
               <Link
                 key={row.ideaId}
@@ -74,9 +110,18 @@ export default async function PostPage() {
                     <p className="truncate text-xs text-muted-foreground">{row.postText}</p>
                   )}
                 </div>
-                <Badge variant={ready ? "success" : "pending"} className="shrink-0">
-                  {row.readyCount}/{row.slideCount} ready
-                </Badge>
+                {partiallyPosted ? (
+                  // Finding 3: a partially-posted idea never shows a green
+                  // "N/N ready" — that reads as "safe to post everything",
+                  // which would republish what already went out.
+                  <Badge variant="pending" className="shrink-0">
+                    {row.postedCount} posted · {row.readyCount} ready
+                  </Badge>
+                ) : (
+                  <Badge variant={ready ? "success" : "pending"} className="shrink-0">
+                    {row.readyCount}/{row.slideCount} ready
+                  </Badge>
+                )}
               </Link>
             );
           })

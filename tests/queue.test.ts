@@ -33,4 +33,63 @@ describe("buildQueueRows", () => {
     expect(rows[0].slideCount).toBe(1);
     expect(rows[0].readyCount).toBe(1);
   });
+
+  it("defaults postedCount to 0 when no slides have been posted", () => {
+    const rows = buildQueueRows([idea("i1", "2026-01-02", 1, [g("a", 0, null, "2026-01-01")])], urls);
+    expect(rows[0].postedCount).toBe(0);
+    expect(rows[0].readyCount).toBe(1);
+  });
+
+  it("reports postedCount and excludes posted slides from readyCount (Finding 3)", () => {
+    const rows = buildQueueRows(
+      [{
+        ...idea("i1", "2026-01-02", 5, [
+          g("a", 0, null, "2026-01-01"),
+          g("b", 1, "a", "2026-01-01"),
+          g("c", 2, "a", "2026-01-01"),
+          g("d", 3, "a", "2026-01-02"),
+          g("e", 4, "a", "2026-01-02"),
+        ]),
+        posted_slide_indexes: [0, 1, 2],
+      }],
+      urls,
+    );
+    expect(rows[0].postedCount).toBe(3);
+    expect(rows[0].readyCount).toBe(2);
+    expect(rows[0].slideCount).toBe(5);
+  });
+
+  it("still lists an idea whose only valid slides are already posted, as long as it isn't fully complete", () => {
+    // e.g. 3 of 5 slides posted, the other 2 still generating: not a
+    // fully-posted idea (which would have dropped out of the queue query
+    // entirely), so it must stay visible rather than disappear.
+    const rows = buildQueueRows(
+      [{
+        ...idea("i1", "2026-01-02", 5, [
+          g("a", 0, null, "2026-01-01"),
+          g("b", 1, "a", "2026-01-01"),
+          g("c", 2, "a", "2026-01-01"),
+        ]),
+        posted_slide_indexes: [0, 1, 2],
+      }],
+      urls,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].postedCount).toBe(3);
+    expect(rows[0].readyCount).toBe(0);
+  });
+
+  it("prefers an unposted slide's thumbnail over a posted one", () => {
+    const rows = buildQueueRows(
+      [{
+        ...idea("i1", "2026-01-02", 2, [
+          g("a", 0, null, "2026-01-01"),
+          g("b", 1, "a", "2026-01-01"),
+        ]),
+        posted_slide_indexes: [0],
+      }],
+      urls,
+    );
+    expect(rows[0].thumbnailUrl).toBe("https://x/b.png");
+  });
 });
