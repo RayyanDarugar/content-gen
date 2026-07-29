@@ -1,7 +1,8 @@
+import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { PostComposer } from "./post-composer";
+import { buildQueueRows } from "@/lib/athena/queue";
+import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
-import type { Postable } from "@/lib/athena/carousel";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
 
 const statusVariant: Record<string, "outline" | "queued" | "destructive"> = {
@@ -17,60 +18,69 @@ export default async function PostPage() {
     supabase
       .from("ideas")
       .select("*, generations(*)")
-      .in("status", ["generated", "generating"])
+      .in("status", ["generated", "generating", "approved"])
       .order("created_at", { ascending: true }),
     supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50),
   ]);
   const categories = (catData ?? []) as Category[];
+  const categoryByKey = new Map(categories.map((c) => [c.key, c]));
   const ideas = (ideaData ?? []) as IdeaWithGenerations[];
   const posts = (postData ?? []) as Post[];
 
-  // Postable = newest succeeded generation per (idea, slide). An idea can
-  // hold several slides (carousel) and a slide can be retried (e.g. a failed
-  // anchor resubmit, or a manual regenerate), so dedupe within each slide
-  // rather than within the whole idea — otherwise a retried slide would
-  // shadow its siblings instead of just its own earlier attempt. The idea no
-  // longer needs to have fully reached "generated": a carousel stuck mid-
-  // fan-out still offers its succeeded slides here.
-  const postablesByCategory = new Map<string, Postable[]>();
+  const urlById = new Map<string, string>();
   for (const idea of ideas) {
-    const slideCount = (idea.slides ?? []).length || 1;
-    const newestBySlide = new Map<number, Generation>();
     for (const g of idea.generations) {
-      if (g.status !== "succeeded" || !g.public_url) continue;
-      const existing = newestBySlide.get(g.slide_index);
-      if (!existing || g.created_at > existing.created_at) {
-        newestBySlide.set(g.slide_index, g);
-      }
+      if (g.status === "succeeded" && g.public_url) urlById.set(g.id, g.public_url);
     }
-    if (newestBySlide.size === 0) continue;
-    const list = postablesByCategory.get(idea.category_key) ?? [];
-    for (const g of newestBySlide.values()) {
-      list.push({
-        generation_id: g.id,
-        idea_id: idea.id,
-        idea_created_at: idea.created_at,
-        public_url: g.public_url,
-        concept: idea.concept,
-        slide_index: g.slide_index,
-        slide_count: slideCount,
-        post_text: idea.post_text ?? "",
-      });
-    }
-    postablesByCategory.set(idea.category_key, list);
   }
+  const rows = buildQueueRows(ideas, urlById);
 
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-bold">Post</h1>
-      <div className="space-y-6">
-        {categories.map((cat) => (
-          <PostComposer
-            key={cat.key}
-            category={cat}
-            postables={postablesByCategory.get(cat.key) ?? []}
-          />
-        ))}
+      <div className="space-y-3">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing ready to post yet — generate some ideas first.
+          </p>
+        ) : (
+          rows.map((row) => {
+            const category = categoryByKey.get(row.categoryKey);
+            const ready = row.readyCount === row.slideCount;
+            return (
+              <Link
+                key={row.ideaId}
+                href={`/post/${row.ideaId}`}
+                className="flex items-center gap-4 rounded-2xl bg-card p-3 ring-1 ring-foreground/10 transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-primary/30"
+              >
+                {row.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={row.thumbnailUrl}
+                    alt={row.concept.slice(0, 60)}
+                    className="h-16 w-16 shrink-0 rounded-xl border object-cover"
+                  />
+                ) : (
+                  <div className="h-16 w-16 shrink-0 rounded-xl border bg-muted" />
+                )}
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Badge style={{ backgroundColor: categoryColor(row.categoryKey), color: "black" }}>
+                      {category?.name ?? row.categoryKey}
+                    </Badge>
+                  </div>
+                  <p className="truncate text-sm font-medium">{row.concept}</p>
+                  {row.postText && (
+                    <p className="truncate text-xs text-muted-foreground">{row.postText}</p>
+                  )}
+                </div>
+                <Badge variant={ready ? "success" : "pending"} className="shrink-0">
+                  {row.readyCount}/{row.slideCount} ready
+                </Badge>
+              </Link>
+            );
+          })
+        )}
       </div>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">History</h2>
