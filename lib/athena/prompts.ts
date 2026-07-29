@@ -197,3 +197,32 @@ export function buildAdaptCaptionSystemPrompt(
     "Make the same point the original makes — this is the same post going to another audience, not a new idea. Restructure freely for the target platform's conventions: its length, its hook style, its formatting. Never simply copy the original across.",
   ].filter(Boolean).join("\n");
 }
+
+export const BrandExtractOutput = z.object({
+  business_name: z.string().describe("the business's name, empty string if the sources don't say"),
+  business_description: z.string().describe("one or two sentences on what it actually is"),
+  audience: z.string().describe("who it is for"),
+  voice: z.string().describe("how it sounds — tone, register, characteristic moves"),
+  avoid: z.string().describe("words, claims, or framings this brand should never lead with"),
+  proof_points: z.array(z.string()).describe(
+    "concrete claims the brand can point at, each one short and specific; empty array if the sources support none",
+  ),
+  standing: z.array(z.string()).describe("topics the sources show this brand has authority to speak on"),
+});
+export type BrandExtractOutputT = z.infer<typeof BrandExtractOutput>;
+
+export function buildBrandExtractSystemPrompt(): string {
+  return [
+    "You are building a brand profile from the sources the user provides — a website's text, uploaded documents, and/or a conversation.",
+    "",
+    "Your job is to extract MATERIAL, not adjectives. The point of this profile is to give a content generator something specific to work with, so:",
+    "- Prefer specifics: numbers, named results, dates, credentials, customer names, scale.",
+    "- A proof point is something the brand can point at — \"5,000 students raised scores 120+ points\" — not a quality it claims, like \"we care about results\".",
+    "- NEVER invent a claim the sources do not support. Returning an empty proof_points array is the correct answer for a thin source; a fabricated one is not.",
+    "- standing lists only topics the sources actually evidence expertise in. If the sources show a tutoring service, standing is test prep and study habits — not education policy.",
+    "",
+    "voice describes how the brand sounds, in a way another writer could imitate. avoid captures what it should never lead with — jargon, claims it can't back, or framings that would read wrong for its audience.",
+    "",
+    "Leave a field as an empty string when the sources genuinely don't say. Do not pad.",
+  ].join("\n");
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildIdeaSystemPrompt, buildFilterSystemPrompt, buildIdeaUserPrompt,
   platformPresetFor, clampIdeaCount, buildAdaptCaptionSystemPrompt, brandBlock,
+  buildBrandExtractSystemPrompt,
   type BrandContext,
 } from "@/lib/athena/prompts";
 
@@ -272,5 +273,23 @@ describe("brandBlock — material", () => {
     const p = brandBlock({ ...base, standing: ["test prep", "study habits"] });
     expect(p).toContain("test prep");
     expect(p).toContain("study habits");
+  });
+});
+
+describe("buildBrandExtractSystemPrompt", () => {
+  const p = buildBrandExtractSystemPrompt();
+  it("asks for concrete material, not adjectives", () => {
+    expect(p.toLowerCase()).toContain("specific");
+    expect(p.toLowerCase()).toContain("numbers");
+  });
+  it("forbids inventing claims", () => {
+    expect(p.toLowerCase()).toContain("never invent");
+  });
+  it("says an empty proof_points list is a valid answer", () => {
+    expect(p).toContain("empty");
+  });
+  it("scopes standing to what the sources evidence", () => {
+    expect(p.toLowerCase()).toContain("standing");
+    expect(p.toLowerCase()).toContain("evidence");
   });
 });
