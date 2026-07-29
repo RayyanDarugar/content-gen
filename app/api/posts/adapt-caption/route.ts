@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@/lib/anthropic";
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -59,7 +59,10 @@ export async function POST(request: NextRequest) {
       standing: brandRow?.standing ?? [],
     };
 
-    const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(user.id) });
+    const anthropic = createAnthropicClient({
+      apiKey: await requireAnthropicKey(user.id),
+      feature: "post_caption_adapt",
+    });
     const response = await anthropic.messages.parse({
       model: MODEL,
       max_tokens: 2000,

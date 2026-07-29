@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
@@ -94,7 +95,11 @@ export async function POST(request: NextRequest) {
     // (maxDuration = 120 above) — worth riding out a transient capacity
     // blip (529) with the SDK's own backoff rather than failing at the
     // default 2-retry budget (~5s). Do not "normalize" this back down.
-    const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(user.id), maxRetries: 5 });
+    const anthropic = createAnthropicClient({
+      apiKey: await requireAnthropicKey(user.id),
+      feature: "brand_analysis",
+      maxRetries: 5,
+    });
     const response = await anthropic.messages.parse({
       model: MODEL,
       max_tokens: 4000,

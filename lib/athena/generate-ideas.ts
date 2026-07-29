@@ -1,5 +1,5 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -34,7 +34,9 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   // rather than failing at the default 2-retry budget (~5s). This makes two
   // Anthropic calls (ideas, then the self-filter pass below); both benefit.
   // Do not "normalize" this back down.
-  const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId), maxRetries: 5 });
+  const apiKey = await requireAnthropicKey(userId);
+  const anthropicIdeas = createAnthropicClient({ apiKey, feature: "content_idea_generation", maxRetries: 5 });
+  const anthropicFilter = createAnthropicClient({ apiKey, feature: "content_idea_filter", maxRetries: 5 });
 
   let query = supabase.from("categories").select("*").eq("user_id", userId).eq("active", true);
   if (categoryKey !== "ALL") query = query.eq("key", categoryKey);
@@ -68,7 +70,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   // is roughly double the original budget rather than the full worst case.
   const anyCopyMode = cats.some((c) => c.caption_guide.trim());
   const effectiveCount = clampIdeaCount(count, anyCopyMode);
-  const genResponse = await anthropic.messages.parse({
+  const genResponse = await anthropicIdeas.messages.parse({
     model: MODEL,
     max_tokens: IDEA_GENERATION_MAX_TOKENS,
     system: buildIdeaSystemPrompt(brand, cats),
@@ -106,7 +108,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   if (!raw.length) throw new Error("Claude returned zero usable ideas");
 
   // Call 2: self-filter
-  const filterResponse = await anthropic.messages.parse({
+  const filterResponse = await anthropicFilter.messages.parse({
     model: MODEL,
     max_tokens: 2000,
     system: buildFilterSystemPrompt(brand),
