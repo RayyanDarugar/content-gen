@@ -7,15 +7,35 @@ alter table posts add column scheduled_at timestamptz;
 -- Phase 1 punch-list: connection labels drive the channel picker's
 -- optgroups, so duplicates are ambiguous, and any future join on label
 -- would fan out. Dedupe first — the constraint would otherwise fail on
--- existing data.
-with numbered as (
-  select id, row_number() over (partition by user_id, label order by created_at, id) as n
-  from buffer_connections
-)
-update buffer_connections bc
-set label = bc.label || ' (' || numbered.n || ')'
-from numbered
-where numbered.id = bc.id and numbered.n > 1;
+-- existing data. The suffix search skips labels the user already has, so
+-- a pre-existing "Foo (2)" can't collide with a renamed duplicate.
+do $$
+declare
+  r record;
+  candidate text;
+  i int;
+begin
+  for r in (
+    select id, user_id, label
+    from buffer_connections bc
+    where exists (
+      select 1 from buffer_connections o
+      where o.user_id = bc.user_id and o.label = bc.label and o.id < bc.id
+    )
+    order by user_id, label, id
+  ) loop
+    i := 2;
+    loop
+      candidate := r.label || ' (' || i || ')';
+      exit when not exists (
+        select 1 from buffer_connections x
+        where x.user_id = r.user_id and x.label = candidate
+      );
+      i := i + 1;
+    end loop;
+    update buffer_connections set label = candidate where id = r.id;
+  end loop;
+end $$;
 
 alter table buffer_connections
   add constraint buffer_connections_user_label_unique unique (user_id, label);
