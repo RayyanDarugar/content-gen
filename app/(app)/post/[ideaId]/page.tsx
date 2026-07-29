@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getBufferChannelsForConnection } from "@/lib/settings/buffer";
-import { resolveValidSlides, postedSlideIndexesByIdea, type Postable, type PostedSlideJoinRow } from "@/lib/athena/carousel";
+import { listBufferConnections, getBufferChannelsForConnection, type ChannelGroup } from "@/lib/settings/buffer";
+import { resolveValidSlides, postedSlideIndexesByIdeaAndChannel, type Postable, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { Composer } from "./composer";
 import type { BrandProfile, BufferChannel, Category, Generation, Idea } from "@/lib/types";
 
@@ -42,6 +42,21 @@ export default async function ComposerPage({
     }
   }
   const channel = channels.find((c) => c.id === category.buffer_channel_id) ?? null;
+
+  // Every channel of every connection, for the chip row's "+ Add channel"
+  // menu — not just the category's own connection. Same per-connection
+  // try/catch pattern as app/(app)/config/page.tsx, so one revoked
+  // connection's failure doesn't blank out the others.
+  const connections = await listBufferConnections(user.id);
+  const groups: ChannelGroup[] = await Promise.all(
+    connections.map(async (c) => {
+      try {
+        return { connectionId: c.id, label: c.label, channels: await getBufferChannelsForConnection(user.id, c.id), error: "" };
+      } catch (e) {
+        return { connectionId: c.id, label: c.label, channels: [], error: e instanceof Error ? e.message : String(e) };
+      }
+    }),
+  );
   // The legacy blank-select case from the Phase 1 punch list: warn whenever
   // there's no connection at all, or the fetch succeeded but this category's
   // channel isn't in it. A failed fetch is a separate, transient problem —
@@ -114,7 +129,7 @@ export default async function ComposerPage({
         .in("generation_id", generationIds)
     : { data: [] as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[] };
   const slideIndexByGenId = new Map(idea.generations.map((g) => [g.id, g.slide_index]));
-  const postedByIdea = postedSlideIndexesByIdea(
+  const postedByIdeaAndChannel = postedSlideIndexesByIdeaAndChannel(
     ((postImageRows ?? []) as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[])
       .map((row): PostedSlideJoinRow | null => {
         const slideIndex = slideIndexByGenId.get(row.generation_id);
@@ -129,7 +144,13 @@ export default async function ComposerPage({
       })
       .filter((row): row is PostedSlideJoinRow => row !== null),
   );
-  const postedSlideIndexes = Array.from(postedByIdea.get(idea.id) ?? []);
+  // Serialized as a plain object (channelId -> slide indexes) so it can cross
+  // the server/client boundary — the composer turns each array back into a
+  // Set as needed.
+  const postedByChannel: Record<string, number[]> = {};
+  for (const [channelId, slideIndexes] of postedByIdeaAndChannel.get(idea.id) ?? new Map()) {
+    postedByChannel[channelId] = Array.from(slideIndexes);
+  }
 
   return (
     <Composer
@@ -140,7 +161,8 @@ export default async function ComposerPage({
       channelsError={channelsError}
       resolved={resolved}
       pool={pool}
-      postedSlideIndexes={postedSlideIndexes}
+      postedByChannel={postedByChannel}
+      groups={groups}
       brandName={brand?.business_name?.trim() || "Your brand"}
       schedulingEnabled={SCHEDULING_ENABLED}
     />
