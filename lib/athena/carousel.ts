@@ -189,6 +189,7 @@ export interface PostedSlideJoinRow {
   post_status: string;
   idea_id: string;
   slide_index: number;
+  buffer_channel_id: string;
 }
 
 // "Already posted" state must be resolved through post_images ->
@@ -207,6 +208,26 @@ export function postedSlideIndexesByIdea(rows: PostedSlideJoinRow[]): Map<string
     const set = byIdea.get(row.idea_id) ?? new Set<number>();
     set.add(row.slide_index);
     byIdea.set(row.idea_id, set);
+  }
+  return byIdea;
+}
+
+// The composer's variant: a slide is "already posted" only for the channel
+// it actually went to, so a carousel sent to LinkedIn today is still fresh
+// for X next week. The any-channel variant above stays the queue's and the
+// completeness rule's view — those answer "is there work left", not "where
+// has this been".
+export function postedSlideIndexesByIdeaAndChannel(
+  rows: PostedSlideJoinRow[],
+): Map<string, Map<string, Set<number>>> {
+  const byIdea = new Map<string, Map<string, Set<number>>>();
+  for (const row of rows) {
+    if (row.post_status === "failed") continue;
+    const byChannel = byIdea.get(row.idea_id) ?? new Map<string, Set<number>>();
+    const slides = byChannel.get(row.buffer_channel_id) ?? new Set<number>();
+    slides.add(row.slide_index);
+    byChannel.set(row.buffer_channel_id, slides);
+    byIdea.set(row.idea_id, byChannel);
   }
   return byIdea;
 }

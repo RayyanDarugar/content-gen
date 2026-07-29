@@ -108,15 +108,23 @@ export default async function ComposerPage({
   // then show it as fresh and double-publish it.
   const generationIds = idea.generations.map((g) => g.id);
   const { data: postImageRows } = generationIds.length
-    ? await supabase.from("post_images").select("generation_id, post:posts(status)").in("generation_id", generationIds)
-    : { data: [] as { generation_id: string; post: { status: string } | null }[] };
+    ? await supabase
+        .from("post_images")
+        .select("generation_id, post:posts(status, buffer_channel_id)")
+        .in("generation_id", generationIds)
+    : { data: [] as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[] };
   const slideIndexByGenId = new Map(idea.generations.map((g) => [g.id, g.slide_index]));
   const postedByIdea = postedSlideIndexesByIdea(
-    ((postImageRows ?? []) as { generation_id: string; post: { status: string } | null }[])
+    ((postImageRows ?? []) as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[])
       .map((row): PostedSlideJoinRow | null => {
         const slideIndex = slideIndexByGenId.get(row.generation_id);
         return slideIndex != null && row.post
-          ? { post_status: row.post.status, idea_id: idea.id, slide_index: slideIndex }
+          ? {
+              post_status: row.post.status,
+              idea_id: idea.id,
+              slide_index: slideIndex,
+              buffer_channel_id: row.post.buffer_channel_id,
+            }
           : null;
       })
       .filter((row): row is PostedSlideJoinRow => row !== null),

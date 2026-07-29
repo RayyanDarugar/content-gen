@@ -45,18 +45,26 @@ export default async function PostPage() {
   // idea's posted count even though they did go out on Buffer.
   const allGenerationIds = ideas.flatMap((idea) => idea.generations.map((g) => g.id));
   const { data: postImageRows } = allGenerationIds.length
-    ? await supabase.from("post_images").select("generation_id, post:posts(status)").in("generation_id", allGenerationIds)
-    : { data: [] as { generation_id: string; post: { status: string } | null }[] };
+    ? await supabase
+        .from("post_images")
+        .select("generation_id, post:posts(status, buffer_channel_id)")
+        .in("generation_id", allGenerationIds)
+    : { data: [] as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[] };
   const slideByGenId = new Map<string, { idea_id: string; slide_index: number }>();
   for (const idea of ideas) {
     for (const g of idea.generations) slideByGenId.set(g.id, { idea_id: idea.id, slide_index: g.slide_index });
   }
   const postedByIdea = postedSlideIndexesByIdea(
-    ((postImageRows ?? []) as { generation_id: string; post: { status: string } | null }[])
+    ((postImageRows ?? []) as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[])
       .map((row): PostedSlideJoinRow | null => {
         const slide = slideByGenId.get(row.generation_id);
         return slide && row.post
-          ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index }
+          ? {
+              post_status: row.post.status,
+              idea_id: slide.idea_id,
+              slide_index: slide.slide_index,
+              buffer_channel_id: row.post.buffer_channel_id,
+            }
           : null;
       })
       .filter((row): row is PostedSlideJoinRow => row !== null),

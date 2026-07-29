@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
   // — single-idea or freeform — that carried any of their slides.
   const { data: priorImagesData, error: priorImagesErr } = await supabase
     .from("post_images")
-    .select("generation_id, post:posts(status)")
+    .select("generation_id, post:posts(status, buffer_channel_id)")
     .in("generation_id", siblings.map((s) => s.id))
     .eq("user_id", user.id)
     .neq("post_id", postRow.id);
@@ -234,11 +234,18 @@ export async function POST(request: NextRequest) {
   }
   const slideBySiblingId = new Map(siblings.map((s) => [s.id, { idea_id: s.idea_id, slide_index: s.slide_index }]));
   const priorPostedSlidesByIdea = postedSlideIndexesByIdea(
-    ((priorImagesData ?? []) as unknown as { generation_id: string; post: { status: string } | null }[])
+    ((priorImagesData ?? []) as unknown as {
+      generation_id: string; post: { status: string; buffer_channel_id: string } | null;
+    }[])
       .map((row): PostedSlideJoinRow | null => {
         const slide = slideBySiblingId.get(row.generation_id);
         return slide && row.post
-          ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index }
+          ? {
+              post_status: row.post.status,
+              idea_id: slide.idea_id,
+              slide_index: slide.slide_index,
+              buffer_channel_id: row.post.buffer_channel_id,
+            }
           : null;
       })
       .filter((row): row is PostedSlideJoinRow => row !== null),
