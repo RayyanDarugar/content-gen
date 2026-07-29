@@ -3,6 +3,7 @@ import "server-only";
 const MAX_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
 const DEFAULT_MAX_CHARS = 20_000;
+const FETCH_TIMEOUT_MS = 10_000; // per-hop budget for a page fetch — generous for reading a body
 
 // Check if a single IPv4 address (by first two octets) is in a blocked range.
 // Shared by direct dotted notation and IPv6-mapped extraction.
@@ -128,7 +129,21 @@ export async function fetchPageText(rawUrl: string): Promise<string> {
   let url = assertFetchableUrl(rawUrl);
   let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    res = await fetch(url, { redirect: "manual", headers: { accept: "text/html,text/plain" } });
+    try {
+      // A fresh AbortSignal.timeout per hop, not one shared across the
+      // whole redirect chain — a slow host shouldn't get to eat the full
+      // budget on hop 1 and then stall forever on hop 2.
+      res = await fetch(url, {
+        redirect: "manual",
+        headers: { accept: "text/html,text/plain" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "TimeoutError") {
+        throw new Error("That page took too long to respond");
+      }
+      throw e;
+    }
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (!location) throw new Error(`Redirect with no location (HTTP ${res.status})`);

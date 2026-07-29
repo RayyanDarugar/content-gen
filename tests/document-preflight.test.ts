@@ -105,4 +105,61 @@ describe("preflightDocument", () => {
     }) as unknown as typeof fetch;
     await expect(preflightDocument("https://cdn.example.com/deck.pdf")).rejects.toThrow();
   });
+
+  it("times out a document that never responds while a sibling still classifies normally", async () => {
+    // Simulates real fetch's abort behavior: the mock never resolves on
+    // its own, it only rejects once the signal fires — same as the
+    // AbortSignal.timeout contract the real fetch honors.
+    global.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+      const href = url instanceof URL ? url.href : String(url);
+      if (href.includes("hangs")) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      }
+      return Promise.resolve(
+        new Response(null, { status: 200, headers: { "content-type": "application/pdf" } }),
+      );
+    }) as unknown as typeof fetch;
+
+    const [hung, sibling] = await Promise.allSettled([
+      preflightDocument("https://example.com/hangs.pdf", 20),
+      preflightDocument("https://example.com/fine.pdf", 20),
+    ]);
+
+    expect(hung.status).toBe("rejected");
+    if (hung.status === "rejected") {
+      expect((hung.reason as Error).message.toLowerCase()).toContain("timed out");
+    }
+    expect(sibling.status).toBe("fulfilled");
+    if (sibling.status === "fulfilled") {
+      expect(sibling.value.kind).toBe("document");
+    }
+  });
+
+  it("resumes the ranged-GET fallback from the URL the HEAD probe reached, not the original", async () => {
+    const requests: string[] = [];
+    global.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+      const href = url instanceof URL ? url.href : String(url);
+      requests.push(`${init?.method ?? "GET"} ${href}`);
+      if (init?.method === "HEAD") {
+        if (href === "https://cdn.example.com/deck.pdf") {
+          return Promise.resolve(
+            new Response(null, { status: 302, headers: { location: "https://cdn2.example.com/deck.pdf" } }),
+          );
+        }
+        // The redirected HEAD lands with no content-type, triggering the fallback GET.
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(new Response(null, { status: 200, headers: { "content-type": "application/pdf" } }));
+    }) as unknown as typeof fetch;
+
+    const result = await preflightDocument("https://cdn.example.com/deck.pdf", 1000);
+    expect(result.kind).toBe("document");
+    expect(requests).toEqual([
+      "HEAD https://cdn.example.com/deck.pdf",
+      "HEAD https://cdn2.example.com/deck.pdf",
+      "GET https://cdn2.example.com/deck.pdf",
+    ]);
+  });
 });
