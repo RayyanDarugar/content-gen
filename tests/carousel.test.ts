@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
-  resolveInitialCaption, type Postable,
+  findWrongAnchorGenerationIds, resolveInitialCaption, resolveValidSlides,
+  postedSlideIndexesByIdea, type Postable, type PostedSlideJoinRow,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
@@ -173,6 +174,120 @@ describe("findSupersededGenerationIds", () => {
   });
 });
 
+describe("findWrongAnchorGenerationIds", () => {
+  const sib = (
+    id: string, ideaId: string, slideIndex: number, status: string, created: string,
+    anchorGenerationId: string | null = null,
+  ) => ({
+    id, idea_id: ideaId, slide_index: slideIndex,
+    anchor_generation_id: anchorGenerationId, status, created_at: created,
+  });
+
+  it("allows a deliberately-chosen older retry of a slide under the current anchor", () => {
+    // Finding 1: the composer's swap menu offers a slide's older succeeded
+    // generations, and posting a hand-picked older retry (not just the
+    // newest) must succeed as long as it belongs to the current anchor.
+    const selected = [{ id: "s1-old", idea_id: "i1", slide_index: 1 }];
+    const siblings = [
+      sib("anchor", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("s1-old", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchor"),
+      sib("s1-new", "i1", 1, "succeeded", "2026-01-02T00:00:00Z", "anchor"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual([]);
+  });
+
+  it("rejects a leftover sibling of a superseded anchor", () => {
+    const selected = [{ id: "old-s1", idea_id: "i1", slide_index: 1 }];
+    const siblings = [
+      sib("anchorA", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("old-s1", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchorA"),
+      sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual(["old-s1"]);
+  });
+
+  it("rejects a stale anchor itself once a newer anchor has succeeded", () => {
+    const selected = [{ id: "anchorA", idea_id: "i1", slide_index: 0 }];
+    const siblings = [
+      sib("anchorA", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("anchorB", "i1", 0, "succeeded", "2026-01-02T00:00:00Z"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual(["anchorA"]);
+  });
+
+  it("allows the current anchor plus its current siblings regardless of retry age", () => {
+    const selected = [
+      { id: "anchor", idea_id: "i1", slide_index: 0 },
+      { id: "s1-old", idea_id: "i1", slide_index: 1 },
+      { id: "s2", idea_id: "i1", slide_index: 2 },
+    ];
+    const siblings = [
+      sib("anchor", "i1", 0, "succeeded", "2026-01-01T00:00:00Z"),
+      sib("s1-old", "i1", 1, "succeeded", "2026-01-01T00:01:00Z", "anchor"),
+      sib("s1-new", "i1", 1, "succeeded", "2026-01-03T00:00:00Z", "anchor"),
+      sib("s2", "i1", 2, "succeeded", "2026-01-01T00:02:00Z", "anchor"),
+    ];
+    expect(findWrongAnchorGenerationIds(selected, siblings)).toEqual([]);
+  });
+});
+
+const gen = (
+  id: string, slide_index: number, anchor: string | null,
+  created_at: string, status = "succeeded",
+) => ({ id, idea_id: "i1", slide_index, anchor_generation_id: anchor, status, created_at });
+
+describe("resolveValidSlides", () => {
+  it("resolves a complete carousel in slide order", () => {
+    const out = resolveValidSlides(3, [
+      gen("a", 0, null, "2026-01-01"),
+      gen("b", 1, "a", "2026-01-02"),
+      gen("c", 2, "a", "2026-01-03"),
+    ]);
+    expect(out.map((s) => s.slideIndex)).toEqual([0, 1, 2]);
+    expect(out.map((s) => s.generationId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns null for a slide with no succeeded generation", () => {
+    const out = resolveValidSlides(3, [gen("a", 0, null, "2026-01-01"), gen("b", 1, "a", "2026-01-02")]);
+    expect(out[2].generationId).toBeNull();
+  });
+
+  it("prefers the newest generation for a retried slide", () => {
+    const out = resolveValidSlides(2, [
+      gen("a", 0, null, "2026-01-01"),
+      gen("b", 1, "a", "2026-01-02"),
+      gen("b2", 1, "a", "2026-01-05"),
+    ]);
+    expect(out[1].generationId).toBe("b2");
+  });
+
+  it("ignores siblings of a superseded anchor after a re-anchor", () => {
+    const out = resolveValidSlides(2, [
+      gen("a1", 0, null, "2026-01-01"),
+      gen("b1", 1, "a1", "2026-01-02"),
+      gen("a2", 0, null, "2026-01-10"), // re-anchored
+    ]);
+    expect(out[0].generationId).toBe("a2");
+    expect(out[1].generationId).toBeNull(); // b1 belonged to the old anchor
+  });
+
+  it("ignores failed generations", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01", "failed")]);
+    expect(out[0].generationId).toBeNull();
+  });
+
+  it("fills publicUrl from the provided map", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01")], new Map([["a", "https://x/a.png"]]));
+    expect(out[0].publicUrl).toBe("https://x/a.png");
+  });
+
+  it("handles a single-slide idea", () => {
+    const out = resolveValidSlides(1, [gen("a", 0, null, "2026-01-01")]);
+    expect(out).toHaveLength(1);
+    expect(out[0].generationId).toBe("a");
+  });
+});
+
 describe("resolveInitialCaption", () => {
   const p = (idea_id: string, post_text: string): Postable => ({
     generation_id: `g-${Math.random()}`, idea_id, idea_created_at: "2026-07-28",
@@ -195,5 +310,85 @@ describe("resolveInitialCaption", () => {
   it("falls back to rotation for an empty selection", () => {
     const out = resolveInitialCaption([], category);
     expect(["one", "two"]).toContain(out);
+  });
+});
+
+describe("buildCreatePostMutation", () => {
+  it("uses the queue mode when no time is given", () => {
+    const { query } = buildCreatePostMutation("chan-1", ["https://x/a.png"], "hello");
+    expect(query).toContain("schedulingType: automatic");
+    expect(query).toContain("mode: addToQueue");
+  });
+  it("passes the caption as a variable, never inlined", () => {
+    const { query, variables } = buildCreatePostMutation("chan-1", ["https://x/a.png"], 'has "quotes"');
+    expect(variables.text).toBe('has "quotes"');
+    expect(query).not.toContain('has "quotes"');
+  });
+  it("includes every image url as an asset", () => {
+    const { query } = buildCreatePostMutation("chan-1", ["https://x/a.png", "https://x/b.png"], "c");
+    expect(query).toContain("https://x/a.png");
+    expect(query).toContain("https://x/b.png");
+  });
+  // Buffer's GraphQL docs confirm mode: customScheduled + a `dueAt` ISO 8601
+  // (UTC) field for a custom-time post — see
+  // https://developers.buffer.com/guides/posts-and-scheduling.html and
+  // https://developers.buffer.com/reference.html (CreatePostInput.dueAt,
+  // ShareMode.customScheduled).
+  it("uses customScheduled mode with dueAt when a time is given, and drops the queue mode", () => {
+    const { query } = buildCreatePostMutation(
+      "chan-1", ["https://x/a.png"], "c", "2026-03-10T15:00:00.000Z",
+    );
+    expect(query).toContain("mode: customScheduled");
+    expect(query).toContain('dueAt: "2026-03-10T15:00:00.000Z"');
+    expect(query).not.toContain("mode: addToQueue");
+  });
+});
+
+function joinRow(overrides: Partial<PostedSlideJoinRow>): PostedSlideJoinRow {
+  return { post_status: "queued", idea_id: "idea-a", slide_index: 0, ...overrides };
+}
+
+describe("postedSlideIndexesByIdea", () => {
+  it("counts a slide posted via a single-idea post", () => {
+    const byIdea = postedSlideIndexesByIdea([joinRow({ idea_id: "idea-a", slide_index: 0 })]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+  });
+
+  it("counts a slide posted via a freeform post spanning several ideas, keyed by the slide's own idea", () => {
+    // A freeform post's own `posts.idea_id` is null because it spans ideas,
+    // but each post_images row still resolves through its generation to
+    // idea B's real idea_id — that's the whole point of not keying on
+    // posts.idea_id (Finding: freeform posts silently forgot idea B's slide).
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ idea_id: "idea-b", slide_index: 2 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+    expect(byIdea.get("idea-b")).toEqual(new Set([2]));
+  });
+
+  it("does not count a slide whose only post row is failed", () => {
+    const byIdea = postedSlideIndexesByIdea([joinRow({ post_status: "failed", idea_id: "idea-a", slide_index: 0 })]);
+    expect(byIdea.get("idea-a")).toBeUndefined();
+  });
+
+  it("counts a slide as posted if ANY of its post rows is non-failed, even if another attempt failed", () => {
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ post_status: "failed", idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ post_status: "queued", idea_id: "idea-a", slide_index: 0 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+  });
+
+  it("groups multiple slide indexes under the same idea", () => {
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ idea_id: "idea-a", slide_index: 1 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0, 1]));
+  });
+
+  it("returns an empty map for no rows", () => {
+    expect(postedSlideIndexesByIdea([]).size).toBe(0);
   });
 });
