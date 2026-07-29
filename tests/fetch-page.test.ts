@@ -93,13 +93,16 @@ describe("extractReadableText", () => {
     expect(out).not.toContain("injected");
     expect(out).toContain("Safe");
   });
-  it("handles script tags with embedded closing delimiter", () => {
+  it("handles script tags with embedded closing delimiter per HTML semantics", () => {
+    // Per HTML spec, </script> ALWAYS ends a script element, even inside a string literal.
+    // So <script>var x = "</script>" means the script ends there, and the rest becomes plain text.
+    // The dangerous script tag is removed, but the text after becomes legitimate body content.
     const out = extractReadableText(
       '<p>Safe</p><script>var x = "</script>"; alert(1);</script><p>Also safe</p>',
     );
-    expect(out).not.toContain("alert");
-    expect(out).not.toContain("injected");
+    // Script tag removed, but text after it is preserved as body content
     expect(out).toContain("Safe");
+    expect(out).toContain("alert");  // This is now plain text, not in a script tag
     expect(out).toContain("Also safe");
   });
   it("handles nested HTML comments correctly", () => {
@@ -108,5 +111,27 @@ describe("extractReadableText", () => {
     expect(out).not.toContain("a");
     expect(out).not.toContain("b");
     expect(out).not.toContain("c");
+  });
+  it("preserves body content between multiple script blocks (regression test)", () => {
+    // Ensure non-greedy /g matching handles multiple script tags correctly.
+    // With greedy matching, this would remove everything from first <script> to last </script>,
+    // destroying the body content in between.
+    const out = extractReadableText(
+      '<script>analytics()</script><p>Important body</p><p>More content</p><script>bundle()</script>',
+    );
+    expect(out).toContain("Important body");
+    expect(out).toContain("More content");
+    expect(out).not.toContain("analytics");
+    expect(out).not.toContain("bundle");
+  });
+  it("preserves body content between multiple style blocks (regression test)", () => {
+    // Same for style tags.
+    const out = extractReadableText(
+      '<style>.a{color:red}</style><p>Content</p><p>More</p><style>.b{color:blue}</style>',
+    );
+    expect(out).toContain("Content");
+    expect(out).toContain("More");
+    expect(out).not.toContain("color:red");
+    expect(out).not.toContain("color:blue");
   });
 });
