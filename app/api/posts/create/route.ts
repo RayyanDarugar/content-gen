@@ -32,9 +32,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const scheduledAt: string | null = typeof body?.scheduled_at === "string" ? body.scheduled_at : null;
-  if (scheduledAt !== null && Number.isNaN(new Date(scheduledAt).getTime())) {
-    return NextResponse.json({ error: "scheduled_at must be a valid ISO date string" }, { status: 400 });
+  // Normalize (not just validate) before it ever reaches buildCreatePostMutation:
+  // scheduled_at is embedded straight into the GraphQL query string like
+  // channelId/imageUrls, so it must be canonical ISO 8601 (no stray quotes
+  // or injected characters), not the raw client string.
+  let scheduledAt: string | null = null;
+  if (typeof body?.scheduled_at === "string") {
+    const parsed = new Date(body.scheduled_at);
+    if (Number.isNaN(parsed.getTime())) {
+      return NextResponse.json({ error: "scheduled_at must be a valid ISO date string" }, { status: 400 });
+    }
+    scheduledAt = parsed.toISOString();
   }
 
   const supabase = createAdminSupabase();
