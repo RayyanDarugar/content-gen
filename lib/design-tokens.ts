@@ -33,10 +33,17 @@ const BRANDY = /(brand|primary|secondary|accent|highlight|theme)/i;
 
 export function normalizeHex(raw: string): string | null {
   const s = raw.trim().toLowerCase();
-  const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+  // 3, 4, 6 and 8 digits. The 4- and 8-digit forms (#RGBA / #RRGGBBAA) carry
+  // an alpha channel; alpha is dropped rather than the value rejected, the
+  // same way rgba() is handled just below — #0f172aff is still #0f172a, and
+  // rejecting it silently threw away real brand tokens.
+  const hex = s.match(/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/);
   if (hex) {
     const v = hex[1];
-    return v.length === 3 ? `#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}` : `#${v}`;
+    // Expand-then-strip for the short forms: #abcd → #aabbcc (the d is alpha).
+    return v.length <= 4
+      ? `#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}`
+      : `#${v.slice(0, 6)}`;
   }
   const rgb = s.match(/^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/);
   if (rgb) {
@@ -113,9 +120,18 @@ export function parseDesignCandidates(html: string, stylesheets: string[] = []):
     if (!existing || weight > existing.weight) fonts.set(family.toLowerCase(), { family, weight, source });
   };
 
-  // Google Fonts hrefs carry exact family names — the strongest signal.
-  for (const m of html.matchAll(/fonts\.googleapis\.com\/css2?\?([^"'\s>]+)/gi)) {
-    for (const fam of m[1].matchAll(/family=([^&:]+)/g)) considerFont(fam[1], 100, "google-fonts");
+  // Google Fonts URLs carry exact family names — the strongest signal. Scanned
+  // in the CSS as well as the markup: the same reference just as often arrives
+  // as `@import url(https://fonts.googleapis.com/css2?family=Inter)` inside an
+  // inline <style> or a fetched stylesheet as it does in a <link href>, and
+  // fetching those stylesheets is the whole point of reading them. `)` is
+  // excluded from the URL run so the `url(...)` form's closing paren isn't
+  // swallowed into the family name; `;` cannot be excluded, since real hrefs
+  // contain it (`family=Inter:wght@400;700`).
+  for (const text of [html, css]) {
+    for (const m of text.matchAll(/fonts\.googleapis\.com\/css2?\?([^"'\s>)]+)/gi)) {
+      for (const fam of m[1].matchAll(/family=([^&:]+)/g)) considerFont(fam[1], 100, "google-fonts");
+    }
   }
   for (const m of css.matchAll(/@font-face\s*{[^}]*?font-family\s*:\s*([^;}]+)/gi)) {
     considerFont(m[1], 80, "font-face");
@@ -125,8 +141,23 @@ export function parseDesignCandidates(html: string, stylesheets: string[] = []):
   }
 
   const byWeight = <T extends { weight: number }>(a: T, b: T) => b.weight - a.weight;
+
+  // Occurrence count is a SECOND sort key, not part of `weight`. `consider()`
+  // keeps the max weight, and the `declaration` tier is 40 while frequency
+  // tops out at min(count, 30) — so any hex named once in a color:/background:
+  // /border-color:/fill: declaration is pinned at 40 no matter how often it
+  // appears, and in a compiled bundle that is every hex. Weight alone therefore
+  // leaves every candidate tied and falling back to document order, which is
+  // exactly the Tailwind-bundle case the frequency signal exists for: 30
+  // incidental one-off hexes ahead of the 40×-declared brand color pushed the
+  // brand color past MAX_COLORS entirely. Ordering ties by real occurrence
+  // count restores that. Kept internal — the tiers are the public contract,
+  // and count is not on ColorCandidate.
+  const occurrences = (c: ColorCandidate) => counts.get(c.value) ?? 0;
   return {
-    colors: [...colors.values()].sort(byWeight).slice(0, MAX_COLORS),
+    colors: [...colors.values()]
+      .sort((a, b) => byWeight(a, b) || occurrences(b) - occurrences(a))
+      .slice(0, MAX_COLORS),
     fonts: [...fonts.values()].sort(byWeight).slice(0, MAX_FONTS),
   };
 }

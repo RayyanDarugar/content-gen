@@ -17,6 +17,14 @@ describe("normalizeHex", () => {
     expect(normalizeHex("#12")).toBeNull();
     expect(normalizeHex("rgb(300, 0, 0)")).toBeNull();
   });
+  it("drops the alpha channel from 8- and 4-digit hex", () => {
+    // The candidate regexes match #[0-9a-fA-F]{3,8} deliberately, so
+    // #RRGGBBAA / #RGBA reach here; returning null for them silently dropped
+    // real tokens (`:root{--brand-primary:#0f172aff}` yielded no colors).
+    expect(normalizeHex("#0F172AFF")).toBe("#0f172a");
+    expect(normalizeHex("#0f172a80")).toBe("#0f172a");
+    expect(normalizeHex("#ABCD")).toBe("#aabbcc");
+  });
 });
 
 describe("normalizeFontFamily", () => {
@@ -67,9 +75,58 @@ describe("parseDesignCandidates", () => {
   });
 
   it("falls back to frequency ranking for a compiled bundle", () => {
-    const css = `.t{color:#aa0000}.u{background:#aa0000}.v{border-color:#aa0000}.w{color:#00bb00}`;
+    // The ONE-OFF color is declared first, so document order works against the
+    // expectation. Both colors land in the `declaration` tier at weight 40 (a
+    // hex named even once in a color:/background:/border-color: declaration is
+    // pinned there, and frequency tops out below it at min(count, 30)), so
+    // nothing but a real frequency signal can put #aa0000 on top. The previous
+    // fixture declared #aa0000 first and passed on Map insertion order alone.
+    const css = `.w{color:#00bb00}.t{color:#aa0000}.u{background:#aa0000}.v{border-color:#aa0000}`;
     const { colors } = parseDesignCandidates("<html></html>", [css]);
     expect(colors[0].value).toBe("#aa0000");
+    expect(colors[0].weight).toBe(40);
+    expect(colors.find((c) => c.value === "#00bb00")!.weight).toBe(40);
+  });
+
+  it("keeps a heavily-declared brand color when one-off colors would fill the cap", () => {
+    // The Tailwind-compiled case frequency ranking exists for. 30 incidental
+    // hexes declared once each, then the brand color declared 40 times: all 31
+    // sit at weight 40, so with weight as the only ordering key the brand color
+    // lands 31st and MAX_COLORS = 24 cuts it out of the result entirely.
+    const incidental = Array.from(
+      { length: 30 },
+      (_, i) => `.i${i}{color:#${(0x110000 + i).toString(16)}}`,
+    ).join("");
+    const brand = ".b{color:#0f172a}".repeat(40);
+    const { colors } = parseDesignCandidates("<html></html>", [incidental + brand]);
+    expect(colors[0].value).toBe("#0f172a");
+    expect(colors[0].weight).toBe(40);
+  });
+
+  it("reads a google fonts @import from a fetched stylesheet, not just the markup", () => {
+    // Fetching linked stylesheets is the point of the fetch side; a site that
+    // pulls its face in via @import rather than a <link> must not come back
+    // with fonts: [].
+    const css = `@import url(https://fonts.googleapis.com/css2?family=Inter:wght@400;700);`;
+    const { fonts } = parseDesignCandidates("<html></html>", [css]);
+    expect(fonts[0]).toMatchObject({ family: "Inter", weight: 100, source: "google-fonts" });
+  });
+
+  it("does not let a <style> block swallow the markup between it and the next one", () => {
+    // Guards the non-greedy `([\s\S]*?)` in the <style> extraction. Made
+    // greedy, the "CSS" would run from the first <style> to the LAST </style>,
+    // pulling the markup in between into `css` — where #abcdef is then counted
+    // once via `css` and again via the raw-html scan, doubling its weight to 2.
+    // The existing double-count test cannot catch this: both its hexes live
+    // inside <style> blocks, so it mutates symmetrically.
+    const html = `
+      <style>.a{color:#111111}</style>
+      <div data-swatch="#abcdef">between</div>
+      <style>.b{color:#222222}</style>`;
+    const { colors } = parseDesignCandidates(html);
+    const between = colors.find((c) => c.value === "#abcdef")!;
+    expect(between.source).toBe("frequency");
+    expect(between.weight).toBe(1);
   });
 
   it("reads @font-face families", () => {
