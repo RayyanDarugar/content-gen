@@ -12,6 +12,8 @@ const brand: BrandContext = {
   audience: "Parents of high-schoolers",
   voice: "Warm, encouraging, plain-spoken",
   avoid: "AI-powered, dashboards, analytics",
+  proof_points: [],
+  standing: [],
 };
 
 const rawDraft = {

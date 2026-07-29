@@ -7,6 +7,8 @@ export interface BrandContext {
   audience: string;
   voice: string;
   avoid: string;
+  proof_points: string[];
+  standing: string[];
 }
 
 export function brandBlock(brand: BrandContext): string {
@@ -16,6 +18,23 @@ export function brandBlock(brand: BrandContext): string {
   if (brand.audience) lines.push(`Primary audience: ${brand.audience}`);
   if (brand.voice) lines.push(`Voice / tone: ${brand.voice}`);
   if (brand.avoid) lines.push(`Never lead with / avoid: ${brand.avoid}`);
+  // The material. Ground ideas in these specifics rather than generic
+  // claims — a brand with proof points and no instruction to use them
+  // still produces the generic output this exists to fix.
+  if (brand.proof_points.length) {
+    lines.push(
+      "",
+      "MATERIAL — concrete things this brand can point at. Ground ideas in these specifics rather than generic benefits:",
+      ...brand.proof_points.map((p) => `- ${p}`),
+    );
+  }
+  if (brand.standing.length) {
+    lines.push(
+      "",
+      `STANDING — this brand has authority to speak on: ${brand.standing.join(", ")}.`,
+      "Decline angles outside that; do not claim expertise it has not earned.",
+    );
+  }
   return lines.length ? lines.join("\n") : "(No brand profile set yet — keep it generic and on-topic.)";
 }
 

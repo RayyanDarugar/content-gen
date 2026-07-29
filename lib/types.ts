@@ -110,6 +110,8 @@ export interface BrandProfile {
   audience: string;
   voice: string;
   avoid: string;
+  proof_points: string[];
+  standing: string[];
   created_at: string;
   updated_at: string;
 }

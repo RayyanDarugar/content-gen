@@ -56,6 +56,8 @@ export async function POST(request: NextRequest) {
       audience: brandRow?.audience ?? "",
       voice: brandRow?.voice ?? "",
       avoid: brandRow?.avoid ?? "",
+      proof_points: brandRow?.proof_points ?? [],
+      standing: brandRow?.standing ?? [],
     };
 
     const system = [

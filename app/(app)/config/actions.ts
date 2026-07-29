@@ -7,6 +7,7 @@ import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
 import type { RoleRefUrls } from "@/lib/types";
+import { parseBrandList } from "@/lib/brand";
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
@@ -128,18 +129,24 @@ export async function saveBrandProfile(
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
   const supabase = await createServerSupabase();
-  const { error } = await supabase.from("brand_profiles").upsert(
-    {
-      user_id: user.id,
-      business_name: String(formData.get("business_name") ?? "").trim(),
-      business_description: String(formData.get("business_description") ?? "").trim(),
-      audience: String(formData.get("audience") ?? "").trim(),
-      voice: String(formData.get("voice") ?? "").trim(),
-      avoid: String(formData.get("avoid") ?? "").trim(),
-    },
-    { onConflict: "user_id" },
-  );
-  if (error) return { error: error.message };
+  try {
+    const { error } = await supabase.from("brand_profiles").upsert(
+      {
+        user_id: user.id,
+        business_name: String(formData.get("business_name") ?? "").trim(),
+        business_description: String(formData.get("business_description") ?? "").trim(),
+        audience: String(formData.get("audience") ?? "").trim(),
+        voice: String(formData.get("voice") ?? "").trim(),
+        avoid: String(formData.get("avoid") ?? "").trim(),
+        proof_points: parseBrandList(formData.get("proof_points")),
+        standing: parseBrandList(formData.get("standing")),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) return { error: error.message };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
   revalidatePath("/config");
   return { ok: true };
 }
