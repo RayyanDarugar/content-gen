@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { getBufferChannelsForConnection } from "@/lib/settings/buffer";
-import { resolveValidSlides, type Postable } from "@/lib/athena/carousel";
+import { resolveValidSlides, postedSlideIndexesByIdea, type Postable, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { Composer } from "./composer";
 import type { BrandProfile, BufferChannel, Category, Generation, Idea } from "@/lib/types";
 
@@ -96,25 +96,32 @@ export default async function ComposerPage({
   }
   const resolved = resolveValidSlides(slideCount, idea.generations, urlById);
 
-  // Finding 3: "remember what went out". Every non-failed post already
-  // recorded against this idea has already gone live on Buffer, so its
-  // slides must be excluded from what gets re-submitted on reopen — a
+  // Finding 3: "remember what went out". Every non-failed post that
+  // carried one of this idea's slides has already gone live on Buffer, so
+  // that slide must be excluded from what gets re-submitted on reopen — a
   // "failed" post never reached Buffer, so its slides stay eligible.
-  const { data: postRows } = await supabase
-    .from("posts").select("id").eq("idea_id", idea.id).neq("status", "failed");
-  const postIds = ((postRows ?? []) as { id: string }[]).map((p) => p.id);
-  const postedSlideIndexes: number[] = [];
-  if (postIds.length > 0) {
-    const { data: imgRows } = await supabase
-      .from("post_images").select("generation_id").in("post_id", postIds);
-    const slideIndexByGenId = new Map(idea.generations.map((g) => [g.id, g.slide_index]));
-    const posted = new Set<number>();
-    for (const row of (imgRows ?? []) as { generation_id: string }[]) {
-      const idx = slideIndexByGenId.get(row.generation_id);
-      if (idx != null) posted.add(idx);
-    }
-    postedSlideIndexes.push(...posted);
-  }
+  //
+  // Resolved through post_images -> generations, not posts.idea_id: a
+  // freeform post spanning several ideas leaves idea_id: null on its own
+  // post row, so keying off it would miss a slide of THIS idea that went
+  // out bundled with another idea's slides — reopening this composer would
+  // then show it as fresh and double-publish it.
+  const generationIds = idea.generations.map((g) => g.id);
+  const { data: postImageRows } = generationIds.length
+    ? await supabase.from("post_images").select("generation_id, post:posts(status)").in("generation_id", generationIds)
+    : { data: [] as { generation_id: string; post: { status: string } | null }[] };
+  const slideIndexByGenId = new Map(idea.generations.map((g) => [g.id, g.slide_index]));
+  const postedByIdea = postedSlideIndexesByIdea(
+    ((postImageRows ?? []) as { generation_id: string; post: { status: string } | null }[])
+      .map((row): PostedSlideJoinRow | null => {
+        const slideIndex = slideIndexByGenId.get(row.generation_id);
+        return slideIndex != null && row.post
+          ? { post_status: row.post.status, idea_id: idea.id, slide_index: slideIndex }
+          : null;
+      })
+      .filter((row): row is PostedSlideJoinRow => row !== null),
+  );
+  const postedSlideIndexes = Array.from(postedByIdea.get(idea.id) ?? []);
 
   return (
     <Composer

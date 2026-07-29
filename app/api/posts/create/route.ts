@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { postToBuffer } from "@/lib/athena/buffer";
-import { findWrongAnchorGenerationIds } from "@/lib/athena/carousel";
+import { findWrongAnchorGenerationIds, postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { getBufferTokenForConnection } from "@/lib/settings/buffer";
 import type { Category, Generation, Idea } from "@/lib/types";
 
@@ -212,42 +212,37 @@ export async function POST(request: NextRequest) {
   // "failed" post never reached Buffer, so it doesn't count toward "already
   // posted". The earlier duplicate-slide check guarantees this submission's
   // own slide indexes are counted at most once.
-  const { data: priorPostsData, error: priorPostsErr } = await supabase
-    .from("posts")
-    .select("id")
-    .in("idea_id", uniqueIdeaIds)
-    .neq("status", "failed")
-    .neq("id", postRow.id);
-  if (priorPostsErr) {
+  //
+  // Resolved through post_images -> generations, not posts.idea_id: a
+  // freeform post spanning several ideas has idea_id: null on its own post
+  // row, so keying off posts.idea_id would silently forget that a slide of
+  // idea B went out when it was posted bundled with idea A's slides. Every
+  // generation in `siblings` belongs to one of the ideas being completed
+  // here, so scoping post_images to those generation ids covers every post
+  // — single-idea or freeform — that carried any of their slides.
+  const { data: priorImagesData, error: priorImagesErr } = await supabase
+    .from("post_images")
+    .select("generation_id, post:posts(status)")
+    .in("generation_id", siblings.map((s) => s.id))
+    .eq("user_id", user.id)
+    .neq("post_id", postRow.id);
+  if (priorImagesErr) {
     return NextResponse.json(
-      { error: `posted (${result.postId}) but failed to check prior posts: ${priorPostsErr.message}` },
+      { error: `posted (${result.postId}) but failed to check prior posted slides: ${priorImagesErr.message}` },
       { status: 500 },
     );
   }
-  const priorPostIds = ((priorPostsData ?? []) as { id: string }[]).map((p) => p.id);
-  const priorPostedSlidesByIdea = new Map<string, Set<number>>();
-  if (priorPostIds.length > 0) {
-    const { data: priorImagesData, error: priorImagesErr } = await supabase
-      .from("post_images")
-      .select("generation_id")
-      .in("post_id", priorPostIds);
-    if (priorImagesErr) {
-      return NextResponse.json(
-        { error: `posted (${result.postId}) but failed to check prior posted slides: ${priorImagesErr.message}` },
-        { status: 500 },
-      );
-    }
-    const ideaIdBySiblingId = new Map(siblings.map((s) => [s.id, s.idea_id]));
-    const slideIndexBySiblingId = new Map(siblings.map((s) => [s.id, s.slide_index]));
-    for (const row of (priorImagesData ?? []) as { generation_id: string }[]) {
-      const priorIdeaId = ideaIdBySiblingId.get(row.generation_id);
-      const priorSlideIndex = slideIndexBySiblingId.get(row.generation_id);
-      if (priorIdeaId == null || priorSlideIndex == null) continue;
-      const set = priorPostedSlidesByIdea.get(priorIdeaId) ?? new Set<number>();
-      set.add(priorSlideIndex);
-      priorPostedSlidesByIdea.set(priorIdeaId, set);
-    }
-  }
+  const slideBySiblingId = new Map(siblings.map((s) => [s.id, { idea_id: s.idea_id, slide_index: s.slide_index }]));
+  const priorPostedSlidesByIdea = postedSlideIndexesByIdea(
+    ((priorImagesData ?? []) as unknown as { generation_id: string; post: { status: string } | null }[])
+      .map((row): PostedSlideJoinRow | null => {
+        const slide = slideBySiblingId.get(row.generation_id);
+        return slide && row.post
+          ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index }
+          : null;
+      })
+      .filter((row): row is PostedSlideJoinRow => row !== null),
+  );
 
   const submittedSlidesByIdea = new Map<string, Set<number>>();
   for (const g of gens) {

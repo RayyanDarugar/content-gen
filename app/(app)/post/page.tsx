@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { buildQueueRows } from "@/lib/athena/queue";
+import { postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
@@ -34,39 +35,35 @@ export default async function PostPage() {
     }
   }
 
-  // Finding 3: cross-post completeness. A non-failed post already went out
-  // on Buffer, so its slides count as "posted" for every idea in the
+  // Finding 3: cross-post completeness. A non-failed post that carried one
+  // of an idea's slides counts that slide as "posted" for every idea in the
   // queue, not just the one currently open in the composer.
-  const ideaIds = ideas.map((i) => i.id);
-  const postedSlideIndexesByIdea = new Map<string, Set<number>>();
-  if (ideaIds.length > 0) {
-    const { data: relevantPostData } = await supabase
-      .from("posts").select("id, idea_id").in("idea_id", ideaIds).neq("status", "failed");
-    const relevantPosts = (relevantPostData ?? []) as { id: string; idea_id: string | null }[];
-    const ideaIdByPostId = new Map(
-      relevantPosts.filter((p) => p.idea_id).map((p) => [p.id, p.idea_id as string]),
-    );
-    const postIds = relevantPosts.map((p) => p.id);
-    if (postIds.length > 0) {
-      const { data: imgData } = await supabase
-        .from("post_images").select("post_id, generation_id").in("post_id", postIds);
-      const slideIndexByGenId = new Map<string, number>();
-      for (const idea of ideas) {
-        for (const g of idea.generations) slideIndexByGenId.set(g.id, g.slide_index);
-      }
-      for (const row of (imgData ?? []) as { post_id: string; generation_id: string }[]) {
-        const ideaId = ideaIdByPostId.get(row.post_id);
-        const slideIndex = slideIndexByGenId.get(row.generation_id);
-        if (ideaId == null || slideIndex == null) continue;
-        const set = postedSlideIndexesByIdea.get(ideaId) ?? new Set<number>();
-        set.add(slideIndex);
-        postedSlideIndexesByIdea.set(ideaId, set);
-      }
-    }
+  //
+  // Resolved through post_images -> generations, not posts.idea_id: a
+  // freeform post spanning several ideas leaves idea_id: null on its own
+  // post row, so keying off it would drop that post's slides from every
+  // idea's posted count even though they did go out on Buffer.
+  const allGenerationIds = ideas.flatMap((idea) => idea.generations.map((g) => g.id));
+  const { data: postImageRows } = allGenerationIds.length
+    ? await supabase.from("post_images").select("generation_id, post:posts(status)").in("generation_id", allGenerationIds)
+    : { data: [] as { generation_id: string; post: { status: string } | null }[] };
+  const slideByGenId = new Map<string, { idea_id: string; slide_index: number }>();
+  for (const idea of ideas) {
+    for (const g of idea.generations) slideByGenId.set(g.id, { idea_id: idea.id, slide_index: g.slide_index });
   }
+  const postedByIdea = postedSlideIndexesByIdea(
+    ((postImageRows ?? []) as { generation_id: string; post: { status: string } | null }[])
+      .map((row): PostedSlideJoinRow | null => {
+        const slide = slideByGenId.get(row.generation_id);
+        return slide && row.post
+          ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index }
+          : null;
+      })
+      .filter((row): row is PostedSlideJoinRow => row !== null),
+  );
   const ideasWithPosted = ideas.map((idea) => ({
     ...idea,
-    posted_slide_indexes: Array.from(postedSlideIndexesByIdea.get(idea.id) ?? []),
+    posted_slide_indexes: Array.from(postedByIdea.get(idea.id) ?? []),
   }));
   const rows = buildQueueRows(ideasWithPosted, urlById);
 

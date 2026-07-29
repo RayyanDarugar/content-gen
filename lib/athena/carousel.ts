@@ -182,6 +182,35 @@ export function findWrongAnchorGenerationIds(
     .map((sel) => sel.id);
 }
 
+// A flattened post_images row joined out to its post's status and its
+// generation's (idea_id, slide_index) — the three-way join every "which
+// slides already went out" lookup needs.
+export interface PostedSlideJoinRow {
+  post_status: string;
+  idea_id: string;
+  slide_index: number;
+}
+
+// "Already posted" state must be resolved through post_images ->
+// generations, not posts.idea_id. A freeform post (the escape hatch spec
+// §5.6/§9 exists to offer) can carry slides from several ideas in ONE post
+// row, so that post row's own idea_id is null — keying off it would
+// silently forget that idea B's slide went out when it was posted bundled
+// with idea A's, and reopening idea B would let it be posted again onto a
+// live channel. A generation's idea_id/slide_index is per-SLIDE truth
+// regardless of which post carried it, single-idea or freeform. A "failed"
+// post never reached Buffer, so its slides never count as posted.
+export function postedSlideIndexesByIdea(rows: PostedSlideJoinRow[]): Map<string, Set<number>> {
+  const byIdea = new Map<string, Set<number>>();
+  for (const row of rows) {
+    if (row.post_status === "failed") continue;
+    const set = byIdea.get(row.idea_id) ?? new Set<number>();
+    set.add(row.slide_index);
+    byIdea.set(row.idea_id, set);
+  }
+  return byIdea;
+}
+
 // Port of n8n Workflow C "Group Into Carousels". channelId and image URLs are
 // app-controlled values; the caption is user text and travels as a variable.
 //

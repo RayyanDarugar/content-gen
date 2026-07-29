@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
-  findWrongAnchorGenerationIds, resolveInitialCaption, resolveValidSlides, type Postable,
+  findWrongAnchorGenerationIds, resolveInitialCaption, resolveValidSlides,
+  postedSlideIndexesByIdea, type Postable, type PostedSlideJoinRow,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
@@ -340,5 +341,54 @@ describe("buildCreatePostMutation", () => {
     expect(query).toContain("mode: customScheduled");
     expect(query).toContain('dueAt: "2026-03-10T15:00:00.000Z"');
     expect(query).not.toContain("mode: addToQueue");
+  });
+});
+
+function joinRow(overrides: Partial<PostedSlideJoinRow>): PostedSlideJoinRow {
+  return { post_status: "queued", idea_id: "idea-a", slide_index: 0, ...overrides };
+}
+
+describe("postedSlideIndexesByIdea", () => {
+  it("counts a slide posted via a single-idea post", () => {
+    const byIdea = postedSlideIndexesByIdea([joinRow({ idea_id: "idea-a", slide_index: 0 })]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+  });
+
+  it("counts a slide posted via a freeform post spanning several ideas, keyed by the slide's own idea", () => {
+    // A freeform post's own `posts.idea_id` is null because it spans ideas,
+    // but each post_images row still resolves through its generation to
+    // idea B's real idea_id — that's the whole point of not keying on
+    // posts.idea_id (Finding: freeform posts silently forgot idea B's slide).
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ idea_id: "idea-b", slide_index: 2 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+    expect(byIdea.get("idea-b")).toEqual(new Set([2]));
+  });
+
+  it("does not count a slide whose only post row is failed", () => {
+    const byIdea = postedSlideIndexesByIdea([joinRow({ post_status: "failed", idea_id: "idea-a", slide_index: 0 })]);
+    expect(byIdea.get("idea-a")).toBeUndefined();
+  });
+
+  it("counts a slide as posted if ANY of its post rows is non-failed, even if another attempt failed", () => {
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ post_status: "failed", idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ post_status: "queued", idea_id: "idea-a", slide_index: 0 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0]));
+  });
+
+  it("groups multiple slide indexes under the same idea", () => {
+    const byIdea = postedSlideIndexesByIdea([
+      joinRow({ idea_id: "idea-a", slide_index: 0 }),
+      joinRow({ idea_id: "idea-a", slide_index: 1 }),
+    ]);
+    expect(byIdea.get("idea-a")).toEqual(new Set([0, 1]));
+  });
+
+  it("returns an empty map for no rows", () => {
+    expect(postedSlideIndexesByIdea([]).size).toBe(0);
   });
 });
