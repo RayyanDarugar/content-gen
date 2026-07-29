@@ -78,4 +78,31 @@ describe("preflightDocument", () => {
     global.fetch = vi.fn(async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
     await expect(preflightDocument("https://example.com/missing.pdf")).rejects.toThrow(/404/);
   });
+
+  it("rejects a private/loopback document URL without making any network call", async () => {
+    global.fetch = vi.fn() as unknown as typeof fetch;
+    await expect(preflightDocument("https://[::ffff:127.0.0.1]/x.pdf")).rejects.toThrow();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("still classifies an ordinary https URL normally", async () => {
+    global.fetch = vi.fn(async () =>
+      new Response(null, { status: 200, headers: { "content-type": "application/pdf" } }),
+    ) as unknown as typeof fetch;
+    const result = await preflightDocument("https://example.com/one-pager.pdf");
+    expect(result.kind).toBe("document");
+  });
+
+  it("re-validates a redirect hop and rejects one that lands on a blocked host", async () => {
+    global.fetch = vi.fn(async (_url, init?: RequestInit) => {
+      if (init?.method === "HEAD") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://127.0.0.1/internal.pdf" },
+        });
+      }
+      throw new Error("should not reach a second request past the rejected redirect");
+    }) as unknown as typeof fetch;
+    await expect(preflightDocument("https://cdn.example.com/deck.pdf")).rejects.toThrow();
+  });
 });

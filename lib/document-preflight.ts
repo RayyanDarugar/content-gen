@@ -1,4 +1,7 @@
 import "server-only";
+import { assertFetchableUrl } from "@/lib/fetch-page";
+
+const MAX_REDIRECTS = 3;
 
 export type DocumentBlockKind = "document" | "image";
 
@@ -23,17 +26,41 @@ export interface DocumentPreflightResult {
   contentType: string;
 }
 
+// Same SSRF guard fetchPageText uses, applied per hop: the starting URL
+// being https and public is not enough, since a redirect (a Cloudinary
+// link reshuffling to a signed asset host, say) can otherwise land
+// somewhere private. Re-validates before every network call this makes,
+// including the ranged-GET fallback.
+async function fetchValidated(rawUrl: string, init: RequestInit): Promise<Response> {
+  let url = assertFetchableUrl(rawUrl);
+  let res: Response | null = null;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    res = await fetch(url, { ...init, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) throw new Error(`Redirect with no location (HTTP ${res.status})`);
+      url = assertFetchableUrl(new URL(location, url).toString());
+      continue;
+    }
+    break;
+  }
+  if (!res) throw new Error("No response");
+  if (res.status >= 300 && res.status < 400) throw new Error("Too many redirects");
+  return res;
+}
+
 // HEAD-check a document URL to learn its content-type before committing it
 // to the model call. Falls back to a ranged GET when HEAD isn't honored —
 // some hosts 405 on HEAD or omit content-type from it — since we need the
 // declared type to route the block kind correctly (see
-// classifyDocumentContentType). Throws on network failure or a non-2xx
-// response; callers are expected to catch per-document so one bad link
-// can't take out the others.
+// classifyDocumentContentType). Throws on an unfetchable URL (blocked host,
+// non-https, unparseable), a network failure, or a non-2xx response;
+// callers are expected to catch per-document so one bad link can't take
+// out the others.
 export async function preflightDocument(url: string): Promise<DocumentPreflightResult> {
-  let res = await fetch(url, { method: "HEAD" });
+  let res = await fetchValidated(url, { method: "HEAD" });
   if (!res.ok || !res.headers.get("content-type")) {
-    res = await fetch(url, { method: "GET", headers: { range: "bytes=0-0" } });
+    res = await fetchValidated(url, { method: "GET", headers: { range: "bytes=0-0" } });
   }
   if (!res.ok) throw new Error(`Could not read that document (HTTP ${res.status})`);
   const contentType = res.headers.get("content-type") ?? "";
