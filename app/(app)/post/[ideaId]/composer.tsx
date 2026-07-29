@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react";
@@ -100,6 +100,30 @@ export function Composer({
   );
   const [focusedChannelId, setFocusedChannelId] = useState<string | null>(null);
   const [postGroupId, setPostGroupId] = useState<string | null>(null);
+  // Fix (review, Critical): `postedByChannel` is a server snapshot taken at
+  // page render and never refreshed. Without this, a channel that just
+  // queued in THIS session still reads as fresh from that stale prop, so
+  // re-clicking the primary button would re-submit it and double-post to a
+  // live channel. This records, client-side, exactly which slide indexes
+  // were actually sent to which channel this session, merged with the
+  // server snapshot below (`effectivePostedByChannel`) so every downstream
+  // consumer — the media strip, the exclusion set, the channel filter —
+  // sees a channel's own success without needing a page reload.
+  const [sessionPostedByChannel, setSessionPostedByChannel] = useState<Record<string, number[]>>({});
+  // Per-channel adapt/re-adapt request tokens (review, Minor): removing a
+  // channel and re-adding it reuses the same channelId, so a stale
+  // in-flight request from the ORIGINAL add could otherwise land after the
+  // re-add and clobber the new instance's state. Each call to `beginAdapt`
+  // mints a fresh token for that channelId; `runAdapt` only applies its
+  // result if it's still the newest token on file for that channelId.
+  const adaptTokensRef = useRef<Map<string, number>>(new Map());
+  const tokenSeqRef = useRef(0);
+  function beginAdapt(channelId: string): number {
+    const token = tokenSeqRef.current + 1;
+    tokenSeqRef.current = token;
+    adaptTokensRef.current.set(channelId, token);
+    return token;
+  }
 
   const [swapKey, setSwapKey] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -122,6 +146,24 @@ export function Composer({
     return m;
   }, [groups]);
 
+  // The server snapshot merged with this session's own successes (see the
+  // `sessionPostedByChannel` note above) — the single source of truth every
+  // posted-slide computation below reads from.
+  const effectivePostedByChannel = useMemo(() => {
+    const merged: Record<string, number[]> = {};
+    const keys = new Set([...Object.keys(postedByChannel), ...Object.keys(sessionPostedByChannel)]);
+    for (const key of keys) {
+      const set = new Set<number>([...(postedByChannel[key] ?? []), ...(sessionPostedByChannel[key] ?? [])]);
+      merged[key] = Array.from(set);
+    }
+    return merged;
+  }, [postedByChannel, sessionPostedByChannel]);
+
+  // A selected channel that already queued — this session or in a prior
+  // session — must never appear in a subsequent submission's `channels[]`
+  // (review, Critical) until the user explicitly removes and re-adds it.
+  const pendingChannels = useMemo(() => selected.filter((s) => s.status !== "queued"), [selected]);
+
   // Which slide indexes render as "already posted" in the media strip.
   // Per-channel when a channel tab is focused; the union of every channel
   // this idea has ever gone out to when the Base tab is focused (Global
@@ -130,39 +172,52 @@ export function Composer({
   const focusedPostedIndexSet = useMemo(() => {
     if (focusedChannelId === null) {
       const set = new Set<number>();
-      for (const idxs of Object.values(postedByChannel)) for (const i of idxs) set.add(i);
+      for (const idxs of Object.values(effectivePostedByChannel)) for (const i of idxs) set.add(i);
       return set;
     }
-    return new Set(postedByChannel[focusedChannelId] ?? []);
-  }, [focusedChannelId, postedByChannel]);
+    return new Set(effectivePostedByChannel[focusedChannelId] ?? []);
+  }, [focusedChannelId, effectivePostedByChannel]);
 
   // What actually gets EXCLUDED from the outgoing submission. One request
-  // sends the same media list to every currently selected channel (spec
-  // §6/§11: one strip, no per-channel media selection) — so unlike the
-  // display set above (which follows whichever tab you're looking at), this
-  // must stay independent of focus: a slide already posted to ANY currently
-  // selected channel must be dropped from the shared list, or that channel
-  // would be posted to twice. This is deliberately a superset of "posted
-  // under the focused tab only" — see composer's design note in the task
-  // report for the tradeoff this implies.
+  // sends the same media list to every channel it targets (spec §6/§11: one
+  // strip, no per-channel media selection) — so unlike the display set
+  // above (which follows whichever tab you're looking at), this must stay
+  // independent of focus: a slide already posted to any channel this
+  // submission WOULD target must be dropped from the shared list, or that
+  // channel would be posted to twice. Scoped to `pendingChannels` rather
+  // than every selected channel: a channel that already queued is never
+  // part of `channels[]` again (see `pendingChannels`), so its posted
+  // history no longer needs to hold back slides that a still-pending
+  // channel legitimately hasn't received yet.
   const submissionExcludedIndexSet = useMemo(() => {
     const set = new Set<number>();
-    for (const s of selected) for (const i of postedByChannel[s.channelId] ?? []) set.add(i);
+    for (const s of pendingChannels) for (const i of effectivePostedByChannel[s.channelId] ?? []) set.add(i);
     return set;
-  }, [selected, postedByChannel]);
+  }, [pendingChannels, effectivePostedByChannel]);
 
   // "filled" is what this submission would actually post: slides already
-  // posted to a currently-selected channel are excluded so reopening the
-  // composer (or leaving another channel selected) never re-submits a slide
-  // that channel already received. usedIds still covers every occupied slot
-  // so an already-posted image can't also be offered as a swap/add candidate
-  // elsewhere in the strip.
+  // posted to a channel this submission would target are excluded so
+  // reopening the composer (or leaving another channel selected) never
+  // re-submits a slide that channel already received. usedIds still covers
+  // every occupied slot so an already-posted image can't also be offered as
+  // a swap/add candidate elsewhere in the strip.
   const filled = slots.filter(
     (s): s is Slot & { generationId: string } =>
       !!s.generationId && !(s.slideIndex != null && submissionExcludedIndexSet.has(s.slideIndex)),
   );
   const usedIds = new Set(slots.filter((s) => s.generationId).map((s) => s.generationId));
   const previewUrls = filled.map((s) => s.publicUrl);
+
+  // Review, Important: `submissionExcludedIndexSet` silently drops slides
+  // from the payload/preview even when the focused tab's own posted view
+  // doesn't show them as posted (they were posted to a DIFFERENT selected
+  // channel). Surfaced in the media strip as a distinct "already sent to…"
+  // label so that exclusion isn't invisible — see render below.
+  function channelsAlreadyHolding(slideIndex: number): string[] {
+    return selected
+      .filter((s) => (effectivePostedByChannel[s.channelId] ?? []).includes(slideIndex))
+      .map((s) => s.label);
+  }
 
   // Every succeeded generation for the idea, grouped by slide, so "Swap"
   // can offer that slide's other attempts (a retried anchor, a manual
@@ -225,8 +280,12 @@ export function Composer({
   // channel BEFORE calling this, so the only thing this function must get
   // right is checking dirtiness again once the response lands — the user may
   // have started typing while the request was in flight, and that hand edit
-  // must win (Global Constraint).
-  async function runAdapt(channelId: string, service: string) {
+  // must win (Global Constraint). `token` guards a second, subtler race
+  // (review, Minor): if the channel is removed and re-added while this
+  // request is in flight, the re-add reuses the same channelId, and a stale
+  // response landing after that must not touch the NEW instance — checked
+  // against `adaptTokensRef`, which `beginAdapt` bumps on every add/re-adapt.
+  async function runAdapt(channelId: string, service: string, token: number) {
     try {
       const res = await fetch("/api/posts/adapt-caption", {
         method: "POST",
@@ -235,6 +294,7 @@ export function Composer({
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      if (adaptTokensRef.current.get(channelId) !== token) return; // superseded — stale response, ignore
       setSelected((prev) => prev.map((s) => {
         if (s.channelId !== channelId) return s;
         // Checked NOW, at apply time, not when the request was sent — a
@@ -244,6 +304,7 @@ export function Composer({
         return { ...s, caption: json.text, adapting: false, error: undefined };
       }));
     } catch (e) {
+      if (adaptTokensRef.current.get(channelId) !== token) return; // superseded — stale response, ignore
       const msg = e instanceof Error ? e.message : String(e);
       setSelected((prev) => prev.map((s) => (s.channelId === channelId ? { ...s, adapting: false, error: msg } : s)));
     }
@@ -251,7 +312,8 @@ export function Composer({
 
   function onAdd(ch: { connectionId: string; channelId: string; service: string; label: string }) {
     setSelected((prev) => [...prev, { ...ch, caption: baseCaption, dirty: false, adapting: true }]);
-    void runAdapt(ch.channelId, ch.service);
+    const token = beginAdapt(ch.channelId);
+    void runAdapt(ch.channelId, ch.service, token);
   }
 
   function onRemoveChannel(channelId: string) {
@@ -263,7 +325,8 @@ export function Composer({
     const target = selected.find((s) => s.channelId === channelId);
     if (!target) return;
     setSelected((prev) => prev.map((s) => (s.channelId === channelId ? { ...s, dirty: false, adapting: true, error: undefined } : s)));
-    void runAdapt(channelId, target.service);
+    const token = beginAdapt(channelId);
+    void runAdapt(channelId, target.service, token);
   }
 
   function onChannelCaptionChange(channelId: string, text: string) {
@@ -280,27 +343,52 @@ export function Composer({
     return `${ch.label} carries ${trimmed.length} image${trimmed.length === 1 ? "" : "s"} — the last ${dropped} won't be sent.`;
   }
 
-  function applyResults(results: ChannelResult[]) {
+  // `submittedSlideIndexes` records exactly which slide indexes this request
+  // carried so a channel that queues has its success folded into
+  // `sessionPostedByChannel` immediately — see the state's own comment for
+  // why that matters (review, Critical).
+  function applyResults(results: ChannelResult[], submittedSlideIndexes: number[]) {
     setSelected((prev) => prev.map((s) => {
       const r = results.find((x) => x.channelId === s.channelId);
       if (!r) return s;
       return { ...s, status: r.status, error: r.error, warning: r.warning };
     }));
+    const queuedChannelIds = results.filter((r) => r.status === "queued").map((r) => r.channelId);
+    if (queuedChannelIds.length > 0 && submittedSlideIndexes.length > 0) {
+      setSessionPostedByChannel((prev) => {
+        const next = { ...prev };
+        for (const channelId of queuedChannelIds) {
+          const set = new Set(next[channelId] ?? []);
+          for (const i of submittedSlideIndexes) set.add(i);
+          next[channelId] = Array.from(set);
+        }
+        return next;
+      });
+    }
   }
 
-  async function post() {
+  // Shared by the primary button and "Retry failed channels" — the only
+  // difference between them is which channels they pass in. Both funnel
+  // through here so the "never resubmit a channel that already queued"
+  // invariant and the navigate-away decision live in exactly one place.
+  async function submitChannels(channelsToSubmit: SelectedChannel[]) {
+    if (channelsToSubmit.length === 0) return;
     setBusy(true);
     setMessage(null);
     try {
       const scheduling = schedulingEnabled && scheduleMode === "pick" && scheduledAt.trim() !== "";
+      const submittedSlideIndexes = filled
+        .map((s) => s.slideIndex)
+        .filter((i): i is number => i != null);
       const body: Record<string, unknown> = {
         category_key: category.key,
         generation_ids: filled.map((s) => s.generationId),
         caption: baseCaption,
-        channels: selected.map((s) => ({
+        channels: channelsToSubmit.map((s) => ({
           connectionId: s.connectionId, channelId: s.channelId, service: s.service, caption: s.caption,
         })),
       };
+      if (postGroupId) body.post_group_id = postGroupId;
       if (scheduling) body.scheduled_at = new Date(scheduledAt).toISOString();
       const res = await fetch("/api/posts/create", {
         method: "POST",
@@ -310,8 +398,8 @@ export function Composer({
       const json = await res.json();
       const results: ChannelResult[] = Array.isArray(json.results) ? json.results : [];
       if (!res.ok && results.length === 0) throw new Error(json.error ?? `HTTP ${res.status}`);
-      setPostGroupId(typeof json.postGroupId === "string" ? json.postGroupId : null);
-      applyResults(results);
+      if (typeof json.postGroupId === "string") setPostGroupId(json.postGroupId);
+      applyResults(results, submittedSlideIndexes);
       const summary = summarizeFanOut(results);
       // Finding 6: "Queued in Buffer" is only true for the addToQueue path —
       // a custom-time post never touches Buffer's queue, so say what
@@ -322,7 +410,16 @@ export function Composer({
           ? `Scheduled for ${new Date(scheduledAt).toLocaleString()} — ${summary.label}`
           : summary.label || "Nothing was queued",
       });
-      if (summary.failed === 0) {
+      // Navigate away only once every currently selected channel — not just
+      // the ones in THIS request — is queued: a channel left untouched
+      // (never submitted, or submitted in an earlier round and still
+      // failed) means the post isn't fully done yet.
+      const stillOutstanding = selected.some((s) => {
+        const r = results.find((x) => x.channelId === s.channelId);
+        const status = r ? r.status : s.status;
+        return status !== "queued";
+      });
+      if (!stillOutstanding) {
         setTimeout(() => router.push("/post"), 800);
       }
     } catch (e) {
@@ -332,42 +429,16 @@ export function Composer({
     }
   }
 
+  // The primary button only ever submits channels that haven't already
+  // queued (review, Critical) — `pendingChannels` naturally includes both
+  // previously-failed channels and ones added after an earlier partial
+  // submission, so re-clicking it is always safe.
+  async function post() {
+    await submitChannels(pendingChannels);
+  }
+
   async function retryFailed() {
-    const failedChannels = selected.filter((s) => s.status === "failed");
-    if (failedChannels.length === 0 || !postGroupId) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const scheduling = schedulingEnabled && scheduleMode === "pick" && scheduledAt.trim() !== "";
-      const body: Record<string, unknown> = {
-        category_key: category.key,
-        generation_ids: filled.map((s) => s.generationId),
-        caption: baseCaption,
-        channels: failedChannels.map((s) => ({
-          connectionId: s.connectionId, channelId: s.channelId, service: s.service, caption: s.caption,
-        })),
-        post_group_id: postGroupId,
-      };
-      if (scheduling) body.scheduled_at = new Date(scheduledAt).toISOString();
-      const res = await fetch("/api/posts/create", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      const results: ChannelResult[] = Array.isArray(json.results) ? json.results : [];
-      if (!res.ok && results.length === 0) throw new Error(json.error ?? `HTTP ${res.status}`);
-      applyResults(results);
-      const summary = summarizeFanOut(results);
-      setMessage({ ok: !summary.allFailed, text: summary.label || "Nothing was queued" });
-      if (summary.failed === 0) {
-        setTimeout(() => router.push("/post"), 800);
-      }
-    } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
+    await submitChannels(selected.filter((s) => s.status === "failed"));
   }
 
   async function rewrite() {
@@ -411,15 +482,30 @@ export function Composer({
   const previewImageUrls = mediaForPlatform(previewUrls, normalizeService(previewService));
 
   const hasFailed = selected.some((s) => s.status === "failed");
+  // Whether there's anything left for the primary button to do — once every
+  // selected channel has queued, it has nothing left to submit (review,
+  // Critical: clicking it again must never resubmit an already-queued
+  // channel, so once none are left, the button goes inert rather than
+  // silently no-op-ing or re-sending).
+  const allQueuedAlready = selected.length > 0 && pendingChannels.length === 0;
+  const partialProgress = postGroupId != null && pendingChannels.length > 0 && pendingChannels.length < selected.length;
 
   // Finding 4: a "pick a time" post with no time chosen must not be
   // postable — the button used to say "Schedule" while silently falling
   // back to add-to-queue behavior.
   const canPost =
-    selected.length > 0 &&
+    pendingChannels.length > 0 &&
     filled.length > 0 &&
     !busy &&
     (scheduleMode !== "pick" || !schedulingEnabled || scheduledAt.trim() !== "");
+
+  const primaryLabel = busy
+    ? "Posting…"
+    : allQueuedAlready
+    ? "All channels queued"
+    : partialProgress
+    ? (scheduleMode === "pick" && schedulingEnabled ? "Schedule remaining" : "Add remaining to queue")
+    : (scheduleMode === "pick" && schedulingEnabled ? "Schedule" : "Add to queue");
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -497,7 +583,17 @@ export function Composer({
           <p className="text-sm font-medium">Media</p>
           <div className="flex flex-wrap gap-3">
             {slots.map((slot, idx) => {
-              const alreadyPosted = slot.slideIndex != null && focusedPostedIndexSet.has(slot.slideIndex);
+              const posted = slot.slideIndex != null && focusedPostedIndexSet.has(slot.slideIndex);
+              // Review, Important: a slot can be silently dropped from the
+              // outgoing payload (submissionExcludedIndexSet, scoped to
+              // every channel this submission would target) without the
+              // focused tab's OWN posted history showing it as posted — e.g.
+              // it already went to a different selected channel. Marked
+              // distinctly so that exclusion is visible where the user is
+              // looking, not just invisible in the request body.
+              const crossExcluded = !posted && slot.slideIndex != null && submissionExcludedIndexSet.has(slot.slideIndex);
+              const locked = posted || crossExcluded;
+              const holders = crossExcluded ? channelsAlreadyHolding(slot.slideIndex!) : [];
               return (
                 <div key={slot.key} className="relative w-28 space-y-1">
                   {slot.generationId ? (
@@ -506,13 +602,18 @@ export function Composer({
                       <img
                         src={slot.publicUrl}
                         alt={`Slide ${idx + 1}`}
-                        className={`h-28 w-28 rounded-xl border object-cover ${alreadyPosted ? "opacity-50" : ""}`}
+                        className={`h-28 w-28 rounded-xl border object-cover ${locked ? "opacity-50" : ""}`}
                       />
-                      {alreadyPosted ? (
-                        // Finding 3: already went out (to this view's channel(s))
-                        // — visually distinct and not selectable.
+                      {locked ? (
+                        // Finding 3: already went out (to this view's
+                        // channel(s), or to another selected channel) —
+                        // visually distinct and not selectable either way.
                         <span className="block rounded-full bg-muted px-1.5 py-0.5 text-center text-[10px] font-medium text-muted-foreground">
-                          Posted
+                          {posted
+                            ? "Posted"
+                            : holders.length === 1
+                            ? `Sent to ${holders[0]}`
+                            : "Excluded — sent elsewhere"}
                         </span>
                       ) : (
                         <>
@@ -542,7 +643,7 @@ export function Composer({
                       waiting on generation
                     </div>
                   )}
-                  {!alreadyPosted && (
+                  {!locked && (
                     <button
                       type="button"
                       onClick={() => removeSlot(slot.key)}
@@ -606,10 +707,13 @@ export function Composer({
           )}
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <Button onClick={post} disabled={!canPost} className="rounded-full">
-              {busy ? "Posting…" : scheduleMode === "pick" && schedulingEnabled ? "Schedule" : "Add to queue"}
+              {primaryLabel}
             </Button>
             {selected.length === 0 && (
               <span className="text-sm text-muted-foreground">Add at least one channel to post.</span>
+            )}
+            {allQueuedAlready && (
+              <span className="text-sm text-muted-foreground">All selected channels are already queued.</span>
             )}
             {hasFailed && (
               <Button variant="outline" size="sm" disabled={busy} onClick={retryFailed}>
