@@ -42,7 +42,7 @@ export function createAnthropicClient(opts: {
     defaultHeaders: {
       "X-Majordomo-Key": majordomoKey,
       "X-Majordomo-Feature": opts.feature,
-      "X-Majordomo-Environment": process.env.VERCEL_ENV ?? "development",
+      "X-Majordomo-Environment": process.env.VERCEL_ENV || "development", // "||" not "??" — VERCEL_ENV is "" (empty string, not undefined) in local dev, and "??" would leave it as "" instead of falling back
     },
   });
 }
