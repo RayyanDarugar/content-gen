@@ -528,7 +528,7 @@ export function Composer({
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       if (focusedChannelId === null) {
-        setBaseCaption(json.text);
+        onBaseCaptionChange(json.text);
       } else {
         const channelId = focusedChannelId;
         setSelected((prev) => prev.map((s) => (s.channelId === channelId ? { ...s, caption: json.text, dirty: true } : s)));
