@@ -5,6 +5,7 @@ import {
   extractReadableText,
   stylesheetHrefs,
   fetchPageHtml,
+  fetchPageText,
   fetchStylesheets,
 } from "@/lib/fetch-page";
 
@@ -313,5 +314,72 @@ describe("fetchPageHtml / fetchStylesheets (mocked fetch)", () => {
     expect(sheets).toHaveLength(3);
     expect(maxConcurrent).toBeGreaterThan(1);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("fetchPageText (mocked fetch)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // fetchPageText is the function the whole extraction pipeline reads through,
+  // and it had NO coverage: replacing its body with `return html` left the
+  // suite fully green. Nothing then stopped raw markup — scripts, minified
+  // bundles, base64 blobs — from going straight into the extraction prompt.
+  // This pins the end-to-end contract: fetch, then readable text.
+  it("returns readable text end to end, not the raw html", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      fakeTextResponse(
+        200,
+        "text/html",
+        "<html><head><style>.a{color:red}</style></head><body>" +
+          "<script>alert('injected')</script><h1>Title</h1><p>Body &amp; more</p>" +
+          "</body></html>",
+      ),
+    );
+
+    const text = await fetchPageText("https://example.com/about");
+
+    expect(text).toBe("Title Body & more");
+    expect(text).not.toContain("<");
+    expect(text).not.toContain("color:red");
+    expect(text).not.toContain("injected");
+  });
+
+  it("follows redirects and still extracts text from the final response", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => fakeRedirectResponse(301, "https://example.com/final"))
+      .mockImplementationOnce(async () => fakeTextResponse(200, "text/html", "<p>Landed</p>"));
+
+    expect(await fetchPageText("https://example.com/start")).toBe("Landed");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends the page Accept header on the page path", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(fakeTextResponse(200, "text/html", "<p>hi</p>"));
+
+    await fetchPageText("https://example.com/");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][1]?.headers).toEqual({ accept: "text/html,text/plain" });
+  });
+
+  it("sends the widened css Accept header on the stylesheet path", async () => {
+    // CSS is served as text/css; the page path's html Accept can 406 against a
+    // server doing strict content negotiation, silently emptying the
+    // design-token input. The two headers must stay distinct.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(fakeTextResponse(200, "text/css", "body{color:#fff}"));
+
+    await fetchStylesheets(`<link rel="stylesheet" href="/a.css">`, "https://example.com/");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][1]?.headers).toEqual({
+      accept: "text/css,text/plain;q=0.5,*/*;q=0.1",
+    });
   });
 });
