@@ -163,10 +163,20 @@ export function Composer({
     setMessage(null);
     try {
       const scheduling = schedulingEnabled && scheduleMode === "pick" && scheduledAt.trim() !== "";
+      // TODO(Task 5): the composer will offer real multi-channel selection;
+      // for now it still submits the category's single configured channel.
       const body: Record<string, unknown> = {
         category_key: category.key,
         generation_ids: filled.map((s) => s.generationId),
         caption,
+        channels: [
+          {
+            connectionId: category.buffer_connection_id,
+            channelId: category.buffer_channel_id,
+            service: category.buffer_channel_service,
+            caption,
+          },
+        ],
       };
       if (scheduling) {
         body.scheduled_at = new Date(scheduledAt).toISOString();
@@ -177,7 +187,8 @@ export function Composer({
         body: JSON.stringify(body),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      const firstResult = json.results?.[0];
+      if (!res.ok) throw new Error(json.error ?? firstResult?.error ?? `HTTP ${res.status}`);
       // Finding 6: "Queued in Buffer" is only true for the addToQueue path —
       // a custom-time post never touches Buffer's queue, so say what
       // actually happened instead.
@@ -185,7 +196,7 @@ export function Composer({
         ok: true,
         text: scheduling
           ? `Scheduled for ${new Date(scheduledAt).toLocaleString()}`
-          : `Queued in Buffer (${json.buffer_update_id})`,
+          : `Queued in Buffer (${firstResult?.bufferUpdateId})`,
       });
       setTimeout(() => router.push("/post"), 800);
     } catch (e) {
