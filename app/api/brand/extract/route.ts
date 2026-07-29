@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { BrandExtractOutput, buildBrandExtractSystemPrompt } from "@/lib/athena/prompts";
 import { fetchPageText } from "@/lib/fetch-page";
+import { preflightDocument } from "@/lib/document-preflight";
 
 export const maxDuration = 120;
 
@@ -49,14 +50,33 @@ export async function POST(request: NextRequest) {
 
     // Documents ride as native attachments — Claude reads PDFs directly,
     // which matters because decks and one-pagers carry the proof points.
-    // Anything else in documentUrls (e.g. a plain image) rides as an image
-    // block; only .pdf gets the document block, since that's the only
-    // format we've verified the model reads structurally.
-    const documentBlocks: Anthropic.ContentBlockParam[] = documentUrls.map((u) =>
-      u.toLowerCase().endsWith(".pdf")
-        ? { type: "document" as const, source: { type: "url" as const, url: u } }
-        : { type: "image" as const, source: { type: "url" as const, url: u } },
+    // Each one is preflighted individually (HEAD/ranged-GET, classified by
+    // its DECLARED content-type, never by file extension) so a dead link
+    // or an unsupported type (a .docx, say) becomes a named warning
+    // instead of taking the whole call down — documents are both the
+    // richest proof-point source and the flakiest input, so isolation here
+    // matters as much as it does for the URL fetch above.
+    const documentBlocks: Anthropic.ContentBlockParam[] = [];
+    const preflights = await Promise.all(
+      documentUrls.map(async (u) => {
+        try {
+          return { url: u, ...(await preflightDocument(u)), error: null as string | null };
+        } catch (e) {
+          return { url: u, kind: null, contentType: "", error: e instanceof Error ? e.message : String(e) };
+        }
+      }),
     );
+    for (const p of preflights) {
+      if (p.error) {
+        warnings.push(`Couldn't read ${p.url}: ${p.error}`);
+      } else if (p.kind === "document") {
+        documentBlocks.push({ type: "document", source: { type: "url", url: p.url } });
+      } else if (p.kind === "image") {
+        documentBlocks.push({ type: "image", source: { type: "url", url: p.url } });
+      } else {
+        warnings.push(`Couldn't read ${p.url}: unsupported type (${p.contentType || "unknown"})`);
+      }
+    }
 
     const content: Anthropic.ContentBlockParam[] = [
       ...documentBlocks,
