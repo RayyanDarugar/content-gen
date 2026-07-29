@@ -37,4 +37,22 @@ describe("groupPosts", () => {
   it("returns nothing for no rows", () => {
     expect(groupPosts([])).toEqual([]);
   });
+
+  // Minor (review): a legacy/other status (e.g. a pre-fan-out "created" row
+  // that never progressed) must not be mislabeled as a failure — only an
+  // actual "failed" row counts as failed.
+  it("labels a legacy 'created' row neutrally rather than as failed", () => {
+    const groups = groupPosts([
+      row("a", "g1", "queued", "2026-01-01"),
+      row("b", "g1", "created", "2026-01-01"),
+    ]);
+    expect(groups[0]).toMatchObject({ queued: 1, failed: 0, other: 1 });
+    expect(groups[0].label).toBe("1 queued · 1 pending");
+  });
+
+  it("counts a lone 'created' row as pending, not failed", () => {
+    const groups = groupPosts([row("a", "g1", "created", "2026-01-01")]);
+    expect(groups[0]).toMatchObject({ queued: 0, failed: 0, other: 1 });
+    expect(groups[0].label).toBe("1 pending");
+  });
 });

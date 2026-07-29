@@ -6,7 +6,7 @@ import { postToBuffer } from "@/lib/athena/buffer";
 import { findWrongAnchorGenerationIds, postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { getBufferTokenForConnection } from "@/lib/settings/buffer";
 import { mediaForPlatform, normalizeService } from "@/lib/platform";
-import { summarizeFanOut, type ChannelResult } from "@/lib/athena/fan-out";
+import { summarizeFanOut, sentSlidesByIdea, type ChannelResult } from "@/lib/athena/fan-out";
 import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -85,8 +85,9 @@ export async function POST(request: NextRequest) {
 
   // A retry supplies post_group_id to reuse the original group; a fresh
   // submission mints a new one so all channels of this submission share it.
-  const postGroupId =
-    typeof body?.post_group_id === "string" && body.post_group_id ? body.post_group_id : randomUUID();
+  const suppliedPostGroupId =
+    typeof body?.post_group_id === "string" && body.post_group_id ? body.post_group_id : null;
+  const postGroupId = suppliedPostGroupId ?? randomUUID();
 
   const supabase = createAdminSupabase();
 
@@ -187,8 +188,32 @@ export async function POST(request: NextRequest) {
   // here each channel stands alone (best-effort): a Buffer post cannot be
   // un-posted, so one channel's failure must never stop the others.
   const results: ChannelResult[] = [];
+  // Fed to sentSlidesByIdea below (Critical, review) — each channel's own
+  // service, so completeness is computed from what each channel actually
+  // received (post-truncation), not from the full submitted list.
+  const channelOutcomes: { service: string; queued: boolean }[] = [];
   for (const ch of channels) {
     const urls = mediaForPlatform(imageUrls, normalizeService(ch.service));
+
+    // Important (review): a retry re-submits the same post_group_id for
+    // just the channels that failed last time. Without this, the failed
+    // row from the earlier attempt is never removed, so the group
+    // permanently reads "1 queued · 1 failed" and lists the channel twice
+    // even after the retry succeeds. Only ever deletes rows already marked
+    // "failed" — a channel's earlier successful post is never touched.
+    if (suppliedPostGroupId) {
+      const { error: cleanupErr } = await supabase
+        .from("posts")
+        .delete()
+        .eq("post_group_id", suppliedPostGroupId)
+        .eq("buffer_channel_id", ch.channelId)
+        .eq("user_id", user.id)
+        .eq("status", "failed");
+      if (cleanupErr) {
+        console.error("posts/create: failed to clean up prior failed row before retry:", cleanupErr.message);
+      }
+    }
+
     let r: { success: boolean; postId: string; error: string; rawBody: string };
     try {
       const token = await getBufferTokenForConnection(user.id, ch.connectionId);
@@ -196,6 +221,7 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       r = { success: false, postId: "", error: e instanceof Error ? e.message : String(e), rawBody: "" };
     }
+    channelOutcomes.push({ service: ch.service, queued: r.success });
 
     // One posts row per channel, all sharing postGroupId.
     const { data: postRow, error: postErr } = await supabase
@@ -228,13 +254,18 @@ export async function POST(request: NextRequest) {
     if (r.success) {
       // post_images rows are inserted ONLY for channels that actually
       // posted — per-channel posted memory reads them, so a failed channel
-      // must not look like it published. The Buffer post already went out
-      // and can't be un-posted, so a failure here can't fail the channel —
-      // but silently swallowing it would let the composer's alreadyPosted
+      // must not look like it published. Critical (review): also only for
+      // the PREFIX this channel's own truncation (`urls`, e.g. X's 4-image
+      // mosaic cap) actually sent — recording the full `ordered` list here
+      // would mark a slide truncated off this channel's payload as
+      // "already sent to X" forever, permanently blocking it there even
+      // though X never received it. The Buffer post already went out and
+      // can't be un-posted, so a failure here can't fail the channel — but
+      // silently swallowing it would let the composer's alreadyPosted
       // filter miss these slides and resubmit them to the same channel
       // (see composer.tsx), so retry once, then log loudly and surface a
       // warning rather than mis-tracking it as if nothing happened.
-      const images = ordered.map((g, idx) => ({
+      const images = ordered.slice(0, urls.length).map((g, idx) => ({
         user_id: user.id, post_id: postRow.id, generation_id: g.id, sort_order: idx,
       }));
       let imagesErr = (await supabase.from("post_images").insert(images)).error;
@@ -244,7 +275,7 @@ export async function POST(request: NextRequest) {
       if (imagesErr) {
         console.error(
           "posts/create: post_images insert failed after retry — channel posted but its slides may be offered again:",
-          { postId: postRow.id, channelId: ch.channelId, generationIds: ordered.map((g) => g.id), error: imagesErr.message },
+          { postId: postRow.id, channelId: ch.channelId, generationIds: images.map((i) => i.generation_id), error: imagesErr.message },
         );
         imagesWarning = "posted but image records failed — this channel's slides may be offered again";
       }
@@ -314,12 +345,17 @@ export async function POST(request: NextRequest) {
           .filter((row): row is PostedSlideJoinRow => row !== null),
       );
 
-      const submittedSlidesByIdea = new Map<string, Set<number>>();
-      for (const g of gens) {
-        const set = submittedSlidesByIdea.get(g.idea_id) ?? new Set<number>();
-        set.add(g.slide_index);
-        submittedSlidesByIdea.set(g.idea_id, set);
-      }
+      // Critical (review): built from each QUEUED channel's own truncated
+      // prefix (channelOutcomes + mediaForPlatform inside sentSlidesByIdea),
+      // never from the full submitted `gens` list — a slide X's mosaic cap
+      // dropped from the payload must not count as "sent" just because it
+      // was part of the request, and a slide submitted only to a channel
+      // that failed must not count as sent at all.
+      const submittedSlidesByIdea = sentSlidesByIdea(
+        ordered.map((g) => ({ idea_id: g.idea_id, slide_index: g.slide_index })),
+        imageUrls,
+        channelOutcomes,
+      );
       const ideaById = new Map<string, Idea>();
       for (const g of gens) {
         if (!ideaById.has(g.idea_id)) ideaById.set(g.idea_id, g.idea);

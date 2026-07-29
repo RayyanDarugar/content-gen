@@ -21,6 +21,12 @@ export interface SelectedChannel {
   label: string; // display name
   caption: string;
   dirty: boolean; // hand-edited: never auto-re-adapt
+  // Critical (review): "never adapted" tracked explicitly, separate from
+  // `dirty`. A channel that is clean (`!dirty`) AND never adapted must keep
+  // following the Base tab — that's the default preselected channel and any
+  // added channel whose adapt call hasn't (yet, or ever) landed. Set true
+  // only when an adaptation result is actually applied to `caption`.
+  adapted: boolean;
   adapting: boolean;
   status?: "queued" | "failed";
   error?: string;

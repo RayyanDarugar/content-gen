@@ -13,6 +13,10 @@ export interface PostGroupRow {
   }[];
   queued: number;
   failed: number;
+  // Legacy/other statuses (e.g. a pre-fan-out "created" row) that are
+  // neither queued nor failed — kept separate so they're never mislabeled
+  // as failures (Minor, review).
+  other: number;
   label: string;
 }
 
@@ -50,14 +54,20 @@ export function groupPosts(
     // Take category_key and scheduled_at from the first post
     const first = groupPosts[0];
 
-    // Count statuses
+    // Count statuses — only an actual "failed" row counts as failed (Minor,
+    // review). A legacy/other status (e.g. "created", a row that never
+    // progressed) is neither a success nor a failure, so it must not read
+    // as one.
     let queued = 0;
     let failed = 0;
+    let other = 0;
     for (const post of groupPosts) {
       if (post.status === "queued") {
         queued++;
-      } else {
+      } else if (post.status === "failed") {
         failed++;
+      } else {
+        other++;
       }
     }
 
@@ -65,6 +75,7 @@ export function groupPosts(
     const parts: string[] = [];
     if (queued > 0) parts.push(`${queued} queued`);
     if (failed > 0) parts.push(`${failed} failed`);
+    if (other > 0) parts.push(`${other} pending`);
     const label = parts.join(" · ");
 
     // Find the newest created_at in the group
@@ -90,6 +101,7 @@ export function groupPosts(
       })),
       queued,
       failed,
+      other,
       label,
     };
   });

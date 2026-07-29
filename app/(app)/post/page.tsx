@@ -154,6 +154,14 @@ export default async function PostPage() {
               <tbody>
                 {postGroups.map((group) => {
                   const category = categoryByKey.get(group.categoryKey);
+                  // Minor (review): the group's own status badge must never
+                  // derive from an arbitrary channel[0] — a group summarized
+                  // "2 queued · 1 failed" rendered success-green whenever
+                  // the FIRST channel happened to be queued. Any failed
+                  // channel makes the whole group's badge read as a
+                  // failure; otherwise "queued" if anything queued.
+                  const groupVariant: "destructive" | "queued" | "outline" =
+                    group.failed > 0 ? "destructive" : group.queued > 0 ? "queued" : "outline";
                   return (
                     <tr key={group.postGroupId} className="border-b align-top">
                       <td className="py-2 pr-4 whitespace-nowrap">
@@ -172,7 +180,7 @@ export default async function PostPage() {
                         </Badge>
                       </td>
                       <td className="py-2 pr-4">
-                        <Badge variant={statusVariant[group.channels[0]?.status] ?? "outline"}>
+                        <Badge variant={groupVariant}>
                           {group.label}
                         </Badge>
                       </td>
@@ -200,7 +208,7 @@ export default async function PostPage() {
                                       Error: {channel.error}
                                     </div>
                                   )}
-                                  <div className="text-muted-foreground truncate" title={channel.caption}>
+                                  <div className="max-w-xs truncate text-muted-foreground" title={channel.caption}>
                                     {channel.caption}
                                   </div>
                                 </div>

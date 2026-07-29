@@ -93,6 +93,10 @@ export function Composer({
             // with Base from the very first render.
             caption: baseCaption,
             dirty: false,
+            // Never adapted — this default chip follows Base verbatim
+            // (Critical, review) until/unless the user re-adapts it
+            // explicitly.
+            adapted: false,
             adapting: false,
           },
         ]
@@ -110,6 +114,15 @@ export function Composer({
   // consumer — the media strip, the exclusion set, the channel filter —
   // sees a channel's own success without needing a page reload.
   const [sessionPostedByChannel, setSessionPostedByChannel] = useState<Record<string, number[]>>({});
+  // MUST-FIX (review, triage): slide-indexed media stays protected by
+  // `sessionPostedByChannel` above, but a freeform "+ add" pool slot carries
+  // `slideIndex: null` and is covered by NO memory there. Without a separate
+  // record, removing an already-queued chip and re-adding it produces a
+  // fresh `SelectedChannel` with no `status`, so those freeform images could
+  // be re-sent to a channel that already has them live. Tracked structurally
+  // — every channel id that has ever queued this session — so re-adding one
+  // restores `status: "queued"` instead of coming back submittable.
+  const [everQueuedChannelIds, setEverQueuedChannelIds] = useState<Set<string>>(new Set());
   // Per-channel adapt/re-adapt request tokens (review, Minor): removing a
   // channel and re-adding it reuses the same channelId, so a stale
   // in-flight request from the ORIGINAL add could otherwise land after the
@@ -301,7 +314,10 @@ export function Composer({
         // dirty flip in between (the user typed while this was in flight)
         // must not be clobbered.
         if (s.dirty) return { ...s, adapting: false };
-        return { ...s, caption: json.text, adapting: false, error: undefined };
+        // `adapted: true` (Critical, review) — this channel now has its own
+        // applied adaptation, so it must stop following Base if the user
+        // edits that tab afterward.
+        return { ...s, caption: json.text, adapting: false, adapted: true, error: undefined };
       }));
     } catch (e) {
       if (adaptTokensRef.current.get(channelId) !== token) return; // superseded — stale response, ignore
@@ -311,9 +327,25 @@ export function Composer({
   }
 
   function onAdd(ch: { connectionId: string; channelId: string; service: string; label: string }) {
-    setSelected((prev) => [...prev, { ...ch, caption: baseCaption, dirty: false, adapting: true }]);
-    const token = beginAdapt(ch.channelId);
-    void runAdapt(ch.channelId, ch.service, token);
+    // MUST-FIX (review, triage): re-adding a channel that already queued
+    // this session must come back inert, not submittable — restore
+    // `status: "queued"` instead of adapting from scratch.
+    const alreadyQueued = everQueuedChannelIds.has(ch.channelId);
+    setSelected((prev) => [
+      ...prev,
+      {
+        ...ch,
+        caption: baseCaption,
+        dirty: false,
+        adapted: false,
+        adapting: !alreadyQueued,
+        ...(alreadyQueued ? { status: "queued" as const } : {}),
+      },
+    ]);
+    if (!alreadyQueued) {
+      const token = beginAdapt(ch.channelId);
+      void runAdapt(ch.channelId, ch.service, token);
+    }
   }
 
   function onRemoveChannel(channelId: string) {
@@ -333,6 +365,18 @@ export function Composer({
     setSelected((prev) => prev.map((s) => (s.channelId === channelId ? { ...s, caption: text, dirty: true } : s)));
   }
 
+  // Critical (review): editing the Base tab used to update only
+  // `baseCaption` — the mount-time snapshot copied into the default
+  // preselected chip's `caption` never followed it, so "open composer, edit
+  // Base, click Add to queue" sent the MOUNT-TIME text to Buffer while the
+  // Base preview showed the edit. A channel that is clean (`!dirty`) AND
+  // never adapted (`!adapted`) must track Base exactly — that's what makes
+  // it "the base copy unchanged" for `adapted_from_caption` purposes too.
+  function onBaseCaptionChange(text: string) {
+    setBaseCaption(text);
+    setSelected((prev) => prev.map((s) => (!s.dirty && !s.adapted ? { ...s, caption: text } : s)));
+  }
+
   function truncatedNoteFor(channelId: string): string {
     const ch = selected.find((s) => s.channelId === channelId);
     if (!ch) return "";
@@ -343,25 +387,49 @@ export function Composer({
     return `${ch.label} carries ${trimmed.length} image${trimmed.length === 1 ? "" : "s"} — the last ${dropped} won't be sent.`;
   }
 
-  // `submittedSlideIndexes` records exactly which slide indexes this request
-  // carried so a channel that queues has its success folded into
-  // `sessionPostedByChannel` immediately — see the state's own comment for
-  // why that matters (review, Critical).
-  function applyResults(results: ChannelResult[], submittedSlideIndexes: number[]) {
+  // `submittedSlots` is exactly `filled` at request time, in the same order
+  // the server received as `generation_ids` — so slicing it the same way
+  // the server slices `ordered` (by each channel's own `mediaForPlatform`
+  // truncation) reproduces exactly what that channel actually received.
+  //
+  // Critical (review): folding the FULL, untruncated slide-index list into
+  // every queued channel's session memory — as this used to do — would mark
+  // a slide X's mosaic cap dropped from the payload as "already sent to X"
+  // anyway, permanently blocking it there even though X never got it. Each
+  // queued channel now only folds its own truncated prefix.
+  function applyResults(results: ChannelResult[], submittedSlots: Slot[], submittedChannels: SelectedChannel[]) {
     setSelected((prev) => prev.map((s) => {
       const r = results.find((x) => x.channelId === s.channelId);
       if (!r) return s;
       return { ...s, status: r.status, error: r.error, warning: r.warning };
     }));
-    const queuedChannelIds = results.filter((r) => r.status === "queued").map((r) => r.channelId);
-    if (queuedChannelIds.length > 0 && submittedSlideIndexes.length > 0) {
+    const queuedResults = results.filter((r) => r.status === "queued");
+    if (queuedResults.length > 0) {
+      const submittedUrls = submittedSlots.map((s) => s.publicUrl);
       setSessionPostedByChannel((prev) => {
         const next = { ...prev };
-        for (const channelId of queuedChannelIds) {
-          const set = new Set(next[channelId] ?? []);
-          for (const i of submittedSlideIndexes) set.add(i);
-          next[channelId] = Array.from(set);
+        for (const r of queuedResults) {
+          const service = submittedChannels.find((c) => c.channelId === r.channelId)?.service;
+          if (!service) continue;
+          const sentCount = mediaForPlatform(submittedUrls, normalizeService(service)).length;
+          const sentSlideIndexes = submittedSlots
+            .slice(0, sentCount)
+            .map((s) => s.slideIndex)
+            .filter((i): i is number => i != null);
+          if (sentSlideIndexes.length === 0) continue;
+          const set = new Set(next[r.channelId] ?? []);
+          for (const i of sentSlideIndexes) set.add(i);
+          next[r.channelId] = Array.from(set);
         }
+        return next;
+      });
+      // MUST-FIX (review, triage): remembered independently of slide-index
+      // memory above, since a freeform-only submission (all slideIndex:
+      // null) would otherwise leave a queued channel with no session record
+      // at all.
+      setEverQueuedChannelIds((prev) => {
+        const next = new Set(prev);
+        for (const r of queuedResults) next.add(r.channelId);
         return next;
       });
     }
@@ -377,9 +445,7 @@ export function Composer({
     setMessage(null);
     try {
       const scheduling = schedulingEnabled && scheduleMode === "pick" && scheduledAt.trim() !== "";
-      const submittedSlideIndexes = filled
-        .map((s) => s.slideIndex)
-        .filter((i): i is number => i != null);
+      const submittedSlots = filled;
       const body: Record<string, unknown> = {
         category_key: category.key,
         generation_ids: filled.map((s) => s.generationId),
@@ -399,7 +465,7 @@ export function Composer({
       const results: ChannelResult[] = Array.isArray(json.results) ? json.results : [];
       if (!res.ok && results.length === 0) throw new Error(json.error ?? `HTTP ${res.status}`);
       if (typeof json.postGroupId === "string") setPostGroupId(json.postGroupId);
-      applyResults(results, submittedSlideIndexes);
+      applyResults(results, submittedSlots, channelsToSubmit);
       const summary = summarizeFanOut(results);
       // Finding 6: "Queued in Buffer" is only true for the addToQueue path —
       // a custom-time post never touches Buffer's queue, so say what
@@ -490,6 +556,13 @@ export function Composer({
   const allQueuedAlready = selected.length > 0 && pendingChannels.length === 0;
   const partialProgress = postGroupId != null && pendingChannels.length > 0 && pendingChannels.length < selected.length;
 
+  // Important (review): a channel still `adapting` hasn't received its
+  // platform-specific copy yet — its `caption` is still whatever it was
+  // seeded with (the base copy). Posting before that call lands would send
+  // e.g. LinkedIn long-form verbatim to X, the exact thing adaptation
+  // exists to prevent.
+  const anyPendingAdapting = pendingChannels.some((s) => s.adapting);
+
   // Finding 4: a "pick a time" post with no time chosen must not be
   // postable — the button used to say "Schedule" while silently falling
   // back to add-to-queue behavior.
@@ -497,6 +570,7 @@ export function Composer({
     pendingChannels.length > 0 &&
     filled.length > 0 &&
     !busy &&
+    !anyPendingAdapting &&
     (scheduleMode !== "pick" || !schedulingEnabled || scheduledAt.trim() !== "");
 
   const primaryLabel = busy
@@ -557,7 +631,7 @@ export function Composer({
         <section className="space-y-2">
           <CopyTabs
             baseCaption={baseCaption}
-            onBaseChange={setBaseCaption}
+            onBaseChange={onBaseCaptionChange}
             selected={selected}
             focusedChannelId={focusedChannelId}
             onFocus={setFocusedChannelId}
@@ -715,8 +789,17 @@ export function Composer({
             {allQueuedAlready && (
               <span className="text-sm text-muted-foreground">All selected channels are already queued.</span>
             )}
+            {!allQueuedAlready && anyPendingAdapting && (
+              <span className="text-sm text-muted-foreground">
+                Waiting on platform-adapted copy before this can post…
+              </span>
+            )}
             {hasFailed && (
-              <Button variant="outline" size="sm" disabled={busy} onClick={retryFailed}>
+              // Important (review): same adapting gate as the primary
+              // button — "Retry failed channels" is a second path into
+              // `submitChannels` and must not resubmit a failed channel
+              // while its copy is still mid-adaptation either.
+              <Button variant="outline" size="sm" disabled={busy || anyPendingAdapting} onClick={retryFailed}>
                 Retry failed channels
               </Button>
             )}

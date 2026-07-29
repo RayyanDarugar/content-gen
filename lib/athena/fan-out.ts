@@ -1,3 +1,5 @@
+import { mediaForPlatform, normalizeService } from "@/lib/platform";
+
 export interface ChannelResult {
   channelId: string;
   status: "queued" | "failed";
@@ -28,4 +30,31 @@ export function summarizeFanOut(results: ChannelResult[]): {
     allFailed: results.length > 0 && queued === 0,
     label: parts.join(" · "),
   };
+}
+
+// Critical (review): a channel that truncates the media strip (X's 4-image
+// mosaic cap, via mediaForPlatform) only ever receives the FIRST N of the
+// submitted images — slides beyond that never reach Buffer for that channel.
+// The completeness rule (spec §3/§7: "the union of slides that actually
+// succeeded somewhere") must therefore be computed from each queued
+// channel's own truncated prefix, not from the full submitted list, or a
+// slide dropped by every channel's truncation still gets recorded as if it
+// reached one of them — permanently blocking it there and marking the idea
+// "posted" when a slide never actually went out anywhere.
+export function sentSlidesByIdea(
+  ordered: { idea_id: string; slide_index: number }[],
+  imageUrls: string[],
+  channels: { service: string; queued: boolean }[],
+): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  for (const ch of channels) {
+    if (!ch.queued) continue;
+    const sentCount = mediaForPlatform(imageUrls, normalizeService(ch.service)).length;
+    for (const g of ordered.slice(0, sentCount)) {
+      const set = map.get(g.idea_id) ?? new Set<number>();
+      set.add(g.slide_index);
+      map.set(g.idea_id, set);
+    }
+  }
+  return map;
 }

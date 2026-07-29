@@ -101,7 +101,8 @@ export default async function ComposerPage({
     }
   }
 
-  const { data: brandRow } = await supabase.from("brand_profiles").select("*").maybeSingle();
+  const { data: brandRow } = await supabase
+    .from("brand_profiles").select("*").eq("user_id", user.id).maybeSingle();
   const brand = brandRow as BrandProfile | null;
 
   const slideCount = (idea.slides ?? []).length || 1;
