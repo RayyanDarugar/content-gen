@@ -1,5 +1,5 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
@@ -51,7 +51,10 @@ export async function generateSamplePreviewIdea(
     standing: brandRow?.standing ?? [],
   };
 
-  const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(userId) });
+  const anthropic = createAnthropicClient({
+    apiKey: await requireAnthropicKey(userId),
+    feature: "content_preview",
+  });
   const response = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: PREVIEW_IDEA_MAX_TOKENS,

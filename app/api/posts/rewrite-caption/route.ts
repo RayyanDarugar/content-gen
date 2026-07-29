@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@/lib/anthropic";
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -75,7 +75,10 @@ export async function POST(request: NextRequest) {
       "The attached images are the post's actual visuals — the copy may reference what they show.",
     ].filter(Boolean).join("\n");
 
-    const anthropic = new Anthropic({ apiKey: await requireAnthropicKey(user.id) });
+    const anthropic = createAnthropicClient({
+      apiKey: await requireAnthropicKey(user.id),
+      feature: "post_caption_rewrite",
+    });
     const response = await anthropic.messages.parse({
       model: MODEL,
       max_tokens: 2000,

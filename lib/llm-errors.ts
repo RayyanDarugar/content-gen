@@ -37,6 +37,9 @@ export function friendlyLlmError(e: unknown): string {
 
   const status = e.status;
   const errorType = e.type; // e.g. "overloaded_error", "rate_limit_error", "authentication_error"
+  const gatewayCaveat = process.env.MAJORDOMO_API_KEY
+    ? " (or the spend-tracking gateway is misconfigured)"
+    : "";
 
   if (status === 529 || errorType === "overloaded_error") {
     return "Claude is overloaded right now. Wait a moment and try again.";
@@ -50,13 +53,13 @@ export function friendlyLlmError(e: unknown): string {
     errorType === "authentication_error" ||
     errorType === "permission_error"
   ) {
-    return "Claude rejected your API key. Check your Anthropic key in Config.";
+    return `Claude rejected your API key. Check your Anthropic key in Config${gatewayCaveat}.`;
   }
   if (status === 400 || errorType === "invalid_request_error") {
     return `Claude rejected the request: ${nestedMessage(e, fallback)}`;
   }
   if (typeof status === "number" && status >= 500) {
-    return "Claude had a server error. Try again in a moment.";
+    return `Claude had a server error. Try again in a moment${gatewayCaveat}.`;
   }
   return fallback;
 }
