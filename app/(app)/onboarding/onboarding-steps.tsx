@@ -83,7 +83,7 @@ export function OnboardingSteps({
   return (
     <div className="space-y-4">
       <StepShell index={1} title="Brand" state={states[0]}>
-        <BrandSection brand={brand} />
+        <BrandSection brand={brand} onSaved={() => router.refresh()} />
       </StepShell>
 
       <StepShell index={2} title="First post type" state={states[1]}>

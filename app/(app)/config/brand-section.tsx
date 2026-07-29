@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,21 @@ function ProposalRow({ value, onUse, onKeep }: { value: string; onUse(): void; o
   );
 }
 
-export function BrandSection({ brand }: { brand: BrandProfile | null }) {
+export function BrandSection({
+  brand,
+  onSaved,
+}: {
+  brand: BrandProfile | null;
+  /**
+   * Fired on a successful save, in addition to this component's own
+   * "Saved." message. `saveBrandProfile`'s `revalidatePath("/config")` only
+   * refreshes the /config route's server data — a caller mounting this
+   * section elsewhere (e.g. /onboarding) needs its own way to learn the
+   * brand row changed, since the parent server component won't otherwise
+   * re-render with fresh data until the next navigation.
+   */
+  onSaved?(): void;
+}) {
   const [state, action, pending] = useActionState(saveBrandProfile, undefined);
   const [fields, setFields] = useState<TextFields>({
     business_name: brand?.business_name ?? "",
@@ -61,6 +75,15 @@ export function BrandSection({ brand }: { brand: BrandProfile | null }) {
       setAddedStanding([]);
     }
   }
+
+  // A real effect (not the render-phase adjustment above) because this calls
+  // a caller-supplied function, not one of this component's own setters —
+  // the `react-hooks/set-state-in-effect` rule that forced the pattern above
+  // doesn't apply here, and a genuine side effect (asking the router to
+  // refetch this route's server data) belongs in an effect, not render.
+  useEffect(() => {
+    if (state?.ok) onSaved?.();
+  }, [state, onSaved]);
 
   function set<K extends keyof TextFields>(key: K, value: string) {
     setFields((f) => ({ ...f, [key]: value }));
