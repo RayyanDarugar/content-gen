@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PostType } from "@/lib/types";
+import type { PostType, Category } from "@/lib/types";
 
 export interface BrandContext {
   business_name: string;
@@ -160,3 +160,21 @@ export const FilterOutput = z.object({
   ),
 });
 export type FilterOutputT = z.infer<typeof FilterOutput>;
+
+export function buildAdaptCaptionSystemPrompt(
+  brand: BrandContext,
+  category: Pick<Category, "caption_guide">,
+  service: string,
+): string {
+  return [
+    "You adapt one social post's copy for a different platform. Return only the adapted copy.",
+    "",
+    "BRAND CONTEXT:",
+    brandBlock(brand),
+    "",
+    `TARGET PLATFORM: ${platformPresetFor(service)}`,
+    category.caption_guide.trim() ? `COPY GUIDE (wins over the platform note where they conflict):\n${category.caption_guide}` : "",
+    "",
+    "Make the same point the original makes — this is the same post going to another audience, not a new idea. Restructure freely for the target platform's conventions: its length, its hook style, its formatting. Never simply copy the original across.",
+  ].filter(Boolean).join("\n");
+}

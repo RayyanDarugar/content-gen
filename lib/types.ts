@@ -93,6 +93,8 @@ export interface Post {
   post_group_id: string;
   buffer_channel_id: string;
   scheduled_at: string | null;
+  adapted_from_caption: string;
+  buffer_channel_service: string;
   caption: string;
   status: "created" | "queued" | "failed";
   error: string;

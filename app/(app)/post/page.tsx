@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { buildQueueRows } from "@/lib/athena/queue";
 import { postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
+import { groupPosts } from "@/lib/athena/post-groups";
+import { ServiceIcon } from "@/app/(app)/post/[ideaId]/channel-chips";
 import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
@@ -45,18 +47,26 @@ export default async function PostPage() {
   // idea's posted count even though they did go out on Buffer.
   const allGenerationIds = ideas.flatMap((idea) => idea.generations.map((g) => g.id));
   const { data: postImageRows } = allGenerationIds.length
-    ? await supabase.from("post_images").select("generation_id, post:posts(status)").in("generation_id", allGenerationIds)
-    : { data: [] as { generation_id: string; post: { status: string } | null }[] };
+    ? await supabase
+        .from("post_images")
+        .select("generation_id, post:posts(status, buffer_channel_id)")
+        .in("generation_id", allGenerationIds)
+    : { data: [] as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[] };
   const slideByGenId = new Map<string, { idea_id: string; slide_index: number }>();
   for (const idea of ideas) {
     for (const g of idea.generations) slideByGenId.set(g.id, { idea_id: idea.id, slide_index: g.slide_index });
   }
   const postedByIdea = postedSlideIndexesByIdea(
-    ((postImageRows ?? []) as { generation_id: string; post: { status: string } | null }[])
+    ((postImageRows ?? []) as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[])
       .map((row): PostedSlideJoinRow | null => {
         const slide = slideByGenId.get(row.generation_id);
         return slide && row.post
-          ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index }
+          ? {
+              post_status: row.post.status,
+              idea_id: slide.idea_id,
+              slide_index: slide.slide_index,
+              buffer_channel_id: row.post.buffer_channel_id,
+            }
           : null;
       })
       .filter((row): row is PostedSlideJoinRow => row !== null),
@@ -66,6 +76,7 @@ export default async function PostPage() {
     posted_slide_indexes: Array.from(postedByIdea.get(idea.id) ?? []),
   }));
   const rows = buildQueueRows(ideasWithPosted, urlById);
+  const postGroups = groupPosts(posts);
 
   return (
     <div className="space-y-8">
@@ -126,7 +137,7 @@ export default async function PostPage() {
       </div>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">History</h2>
-        {posts.length === 0 ? (
+        {postGroups.length === 0 ? (
           <p className="text-sm text-muted-foreground">No posts yet.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -136,26 +147,82 @@ export default async function PostPage() {
                   <th className="py-2 pr-4">Date</th>
                   <th className="py-2 pr-4">Category</th>
                   <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Buffer ID</th>
+                  <th className="py-2 pr-4">Channels</th>
                   <th className="py-2">Caption / Error</th>
                 </tr>
               </thead>
               <tbody>
-                {posts.map((p) => (
-                  <tr key={p.id} className="border-b align-top">
-                    <td className="py-2 pr-4 whitespace-nowrap">
-                      {new Date(p.created_at).toLocaleString()}
-                    </td>
-                    <td className="py-2 pr-4">{p.category_key}</td>
-                    <td className="py-2 pr-4">
-                      <Badge variant={statusVariant[p.status] ?? "outline"}>{p.status}</Badge>
-                    </td>
-                    <td className="py-2 pr-4 font-mono text-xs">{p.buffer_update_id || "—"}</td>
-                    <td className="py-2 max-w-md truncate" title={p.error || p.caption}>
-                      {p.status === "failed" ? p.error : p.caption}
-                    </td>
-                  </tr>
-                ))}
+                {postGroups.map((group) => {
+                  const category = categoryByKey.get(group.categoryKey);
+                  // Minor (review): the group's own status badge must never
+                  // derive from an arbitrary channel[0] — a group summarized
+                  // "2 queued · 1 failed" rendered success-green whenever
+                  // the FIRST channel happened to be queued. Any failed
+                  // channel makes the whole group's badge read as a
+                  // failure; otherwise "queued" if anything queued.
+                  const groupVariant: "destructive" | "queued" | "outline" =
+                    group.failed > 0 ? "destructive" : group.queued > 0 ? "queued" : "outline";
+                  return (
+                    <tr key={group.postGroupId} className="border-b align-top">
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        <div className="space-y-1">
+                          <div>{new Date(group.createdAt).toLocaleString()}</div>
+                          {group.scheduledAt && (
+                            <div className="text-xs text-muted-foreground">
+                              scheduled: {new Date(group.scheduledAt).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <Badge style={{ backgroundColor: categoryColor(group.categoryKey), color: "black" }}>
+                          {category?.name ?? group.categoryKey}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <Badge variant={groupVariant}>
+                          {group.label}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-4">
+                        {group.channels.length === 1 ? (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <ServiceIcon service={group.channels[0]!.service} className="size-3.5" />
+                            <span>{group.channels[0]!.channelId}</span>
+                          </div>
+                        ) : (
+                          <details className="cursor-pointer">
+                            <summary className="text-xs font-medium">{group.channels.length} channels</summary>
+                            <div className="mt-2 space-y-2 text-xs">
+                              {group.channels.map((channel, idx) => (
+                                <div key={idx} className="space-y-1 border-l border-muted pl-2">
+                                  <div className="flex items-center gap-1.5 font-medium">
+                                    <ServiceIcon service={channel.service} className="size-3.5" />
+                                    <span>{channel.channelId}</span>
+                                    <Badge variant={statusVariant[channel.status] ?? "outline"} className="text-xs">
+                                      {channel.status}
+                                    </Badge>
+                                  </div>
+                                  {channel.status === "failed" && channel.error && (
+                                    <div className="text-destructive" title={channel.error}>
+                                      Error: {channel.error}
+                                    </div>
+                                  )}
+                                  <div className="max-w-xs truncate text-muted-foreground" title={channel.caption}>
+                                    {channel.caption}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </td>
+                      <td className="py-2 max-w-md truncate" title={group.channels[0]?.error || group.channels[0]?.caption}>
+                        {group.channels[0]?.status === "failed" ? group.channels[0]?.error : group.channels[0]?.caption}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

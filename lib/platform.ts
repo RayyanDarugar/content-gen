@@ -17,3 +17,13 @@ export function normalizeService(service: string): PlatformKey {
 export function platformCharLimit(key: PlatformKey): number | null {
   return key === "x" ? 280 : null;
 }
+
+// X renders multiple images as a mosaic capped at four, not a carousel, so
+// slides 5+ of a carousel would silently never appear. Truncating here —
+// and using this for BOTH the preview and the outgoing payload — keeps the
+// preview honest about what that platform actually receives.
+const X_MAX_IMAGES = 4;
+
+export function mediaForPlatform(imageUrls: string[], key: PlatformKey): string[] {
+  return key === "x" ? imageUrls.slice(0, X_MAX_IMAGES) : [...imageUrls];
+}

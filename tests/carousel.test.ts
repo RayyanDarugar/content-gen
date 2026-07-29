@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   pickCaption, selectAutoFill, buildCreatePostMutation, findSupersededGenerationIds,
   findWrongAnchorGenerationIds, resolveInitialCaption, resolveValidSlides,
-  postedSlideIndexesByIdea, type Postable, type PostedSlideJoinRow,
+  postedSlideIndexesByIdea, postedSlideIndexesByIdeaAndChannel, type Postable, type PostedSlideJoinRow,
 } from "@/lib/athena/carousel";
 
 function postable(overrides: Partial<Postable>): Postable {
@@ -345,7 +345,7 @@ describe("buildCreatePostMutation", () => {
 });
 
 function joinRow(overrides: Partial<PostedSlideJoinRow>): PostedSlideJoinRow {
-  return { post_status: "queued", idea_id: "idea-a", slide_index: 0, ...overrides };
+  return { post_status: "queued", idea_id: "idea-a", slide_index: 0, buffer_channel_id: "chan-a", ...overrides };
 }
 
 describe("postedSlideIndexesByIdea", () => {
@@ -390,5 +390,36 @@ describe("postedSlideIndexesByIdea", () => {
 
   it("returns an empty map for no rows", () => {
     expect(postedSlideIndexesByIdea([]).size).toBe(0);
+  });
+});
+
+const postedRow = (
+  idea_id: string, slide_index: number, buffer_channel_id: string, post_status = "queued",
+) => ({ idea_id, slide_index, buffer_channel_id, post_status });
+
+describe("postedSlideIndexesByIdeaAndChannel", () => {
+  it("keeps each channel's posted slides separate", () => {
+    const out = postedSlideIndexesByIdeaAndChannel([
+      postedRow("i1", 0, "chan-a"),
+      postedRow("i1", 1, "chan-a"),
+      postedRow("i1", 0, "chan-b"),
+    ]);
+    expect([...out.get("i1")!.get("chan-a")!].sort()).toEqual([0, 1]);
+    expect([...out.get("i1")!.get("chan-b")!]).toEqual([0]);
+  });
+  it("excludes failed posts", () => {
+    const out = postedSlideIndexesByIdeaAndChannel([postedRow("i1", 0, "chan-a", "failed")]);
+    expect(out.get("i1")).toBeUndefined();
+  });
+  it("separates ideas", () => {
+    const out = postedSlideIndexesByIdeaAndChannel([
+      postedRow("i1", 0, "chan-a"),
+      postedRow("i2", 0, "chan-a"),
+    ]);
+    expect([...out.get("i1")!.get("chan-a")!]).toEqual([0]);
+    expect([...out.get("i2")!.get("chan-a")!]).toEqual([0]);
+  });
+  it("returns an empty map for no rows", () => {
+    expect(postedSlideIndexesByIdeaAndChannel([]).size).toBe(0);
   });
 });

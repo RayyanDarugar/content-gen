@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeService, platformCharLimit } from "@/lib/platform";
+import { normalizeService, platformCharLimit, mediaForPlatform } from "@/lib/platform";
 
 describe("normalizeService", () => {
   it("maps the four known platforms", () => {
@@ -23,5 +23,27 @@ describe("platformCharLimit", () => {
     expect(platformCharLimit("x")).toBe(280);
     expect(platformCharLimit("linkedin")).toBeNull();
     expect(platformCharLimit("generic")).toBeNull();
+  });
+});
+
+describe("mediaForPlatform", () => {
+  const five = ["a", "b", "c", "d", "e"];
+  it("truncates X to its 4-image mosaic limit", () => {
+    expect(mediaForPlatform(five, "x")).toEqual(["a", "b", "c", "d"]);
+  });
+  it("passes every other platform through unchanged", () => {
+    expect(mediaForPlatform(five, "tiktok")).toEqual(five);
+    expect(mediaForPlatform(five, "instagram")).toEqual(five);
+    expect(mediaForPlatform(five, "linkedin")).toEqual(five);
+    expect(mediaForPlatform(five, "generic")).toEqual(five);
+  });
+  it("leaves short and empty lists alone on X", () => {
+    expect(mediaForPlatform(["a", "b"], "x")).toEqual(["a", "b"]);
+    expect(mediaForPlatform([], "x")).toEqual([]);
+  });
+  it("returns a new array rather than mutating its input", () => {
+    const input = [...five];
+    expect(mediaForPlatform(input, "x")).not.toBe(input);
+    expect(input).toHaveLength(5);
   });
 });
