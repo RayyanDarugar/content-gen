@@ -1,8 +1,50 @@
-import { describe, expect, it, vi } from "vitest";
-import { isBlockedHost, assertFetchableUrl, extractReadableText, stylesheetHrefs } from "@/lib/fetch-page";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  isBlockedHost,
+  assertFetchableUrl,
+  extractReadableText,
+  stylesheetHrefs,
+  fetchPageHtml,
+  fetchStylesheets,
+} from "@/lib/fetch-page";
 
 // Mock server-only for this test file only
 vi.mock("server-only", () => ({}));
+
+// --- helpers for mocking global fetch in the fetchPageHtml/fetchStylesheets tests below ---
+
+function fakeTextResponse(status: number, contentType: string, body: string): Response {
+  const bytes = new TextEncoder().encode(body);
+  let delivered = false;
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: {
+      get: (key: string) => (key.toLowerCase() === "content-type" ? contentType : null),
+    },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (delivered) return { done: true, value: undefined };
+          delivered = true;
+          return { done: false, value: bytes };
+        },
+        cancel: async () => {},
+      }),
+    },
+  } as unknown as Response;
+}
+
+function fakeRedirectResponse(status: number, location: string): Response {
+  return {
+    status,
+    ok: false,
+    headers: {
+      get: (key: string) => (key.toLowerCase() === "location" ? location : null),
+    },
+    body: null,
+  } as unknown as Response;
+}
 
 describe("isBlockedHost", () => {
   it("blocks loopback and localhost", () => {
@@ -181,9 +223,95 @@ describe("stylesheetHrefs", () => {
     expect(stylesheetHrefs(html, base)).toContain("https://example.com/b.css");
   });
   it("caps at 3 and drops unparseable hrefs", () => {
-    const html = ["/1.css", "/2.css", "/3.css", "/4.css"]
-      .map((h) => `<link rel="stylesheet" href="${h}">`).join("") +
-      `<link rel="stylesheet" href="::::">`;
-    expect(stylesheetHrefs(html, base)).toHaveLength(3);
+    // "::::" does NOT throw when resolved against a base — `new URL("::::",
+    // base)` happily resolves to ".../::::" — so it can't stand in for "an
+    // href that throws". Hrefs that genuinely throw against this base are
+    // things like "https://" (no host) or "https://a b" (unescaped space).
+    // One is placed among the first three links so the catch branch is
+    // actually exercised and observed being skipped, not merely uncounted
+    // because the cap already broke the loop before reaching it. A fourth,
+    // otherwise-valid link proves the cap still holds at 3.
+    const html = [
+      `<link rel="stylesheet" href="/1.css">`,
+      `<link rel="stylesheet" href="https://">`, // throws — dropped, not counted
+      `<link rel="stylesheet" href="/2.css">`,
+      `<link rel="stylesheet" href="/3.css">`,
+      `<link rel="stylesheet" href="/4.css">`, // beyond the cap — never reached
+    ].join("");
+    expect(stylesheetHrefs(html, base)).toEqual([
+      "https://example.com/1.css",
+      "https://example.com/2.css",
+      "https://example.com/3.css",
+    ]);
+  });
+});
+
+describe("fetchPageHtml / fetchStylesheets (mocked fetch)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the post-redirect url as finalUrl", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => fakeRedirectResponse(302, "https://example.com/final/"))
+      .mockImplementationOnce(async () => fakeTextResponse(200, "text/html", "<p>hi</p>"));
+
+    const { html, finalUrl } = await fetchPageHtml("https://example.com/start");
+
+    expect(finalUrl).toBe("https://example.com/final/");
+    expect(html).toContain("hi");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips a stylesheet whose href is a blocked host without ever calling fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(fakeTextResponse(200, "text/css", ""));
+    // 169.254.169.254 is the cloud-metadata address — assertFetchableUrl
+    // rejects it before any network call is made.
+    const html = `<link rel="stylesheet" href="https://169.254.169.254/latest/meta-data/">`;
+
+    const sheets = await fetchStylesheets(html, "https://example.com/");
+
+    expect(sheets).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts a stylesheet fetch when a redirect hop lands on a private address, yielding no sheet", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => fakeRedirectResponse(302, "https://169.254.169.254/internal"));
+    const html = `<link rel="stylesheet" href="https://good.example/theme.css">`;
+
+    const sheets = await fetchStylesheets(html, "https://example.com/");
+
+    expect(sheets).toEqual([]);
+    // Only the first hop happens — assertFetchableUrl rejects the redirect
+    // target before a second fetch is ever issued.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches stylesheets concurrently, not one at a time (regression guard)", async () => {
+    // If fetchStylesheets regresses to a sequential for/await loop, this
+    // fails: concurrent would never exceed 1, since one fetch always
+    // finishes and returns before the next hop begins.
+    const html = `
+      <link rel="stylesheet" href="/a.css">
+      <link rel="stylesheet" href="/b.css">
+      <link rel="stylesheet" href="/c.css">`;
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      concurrent -= 1;
+      return fakeTextResponse(200, "text/css", "body{color:#fff}");
+    });
+
+    const sheets = await fetchStylesheets(html, "https://example.com/");
+
+    expect(sheets).toHaveLength(3);
+    expect(maxConcurrent).toBeGreaterThan(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 });

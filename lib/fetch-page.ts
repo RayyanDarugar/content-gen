@@ -18,9 +18,15 @@ function isBlockedIpv4(a: number, b: number): boolean {
 // Hostname-level SSRF guard. This blocks literal private addresses and
 // obvious loopback names; it does NOT resolve DNS, so a public hostname
 // that resolves to a private address still gets through. That residual is
-// accepted here: this endpoint is authenticated, the deployment is Vercel
-// serverless (no metadata endpoint, no private service network), and the
-// only output is text handed to an LLM.
+// accepted here: the deployment is Vercel serverless (no metadata endpoint,
+// no private service network), and the only output is text handed to an
+// LLM. Note the trust model is broader than "an authenticated user chose
+// this URL": stylesheet hrefs (see fetchStylesheets below) are read out of
+// a third-party page's own markup, so an arbitrary remote page can name an
+// arbitrary hostname here too — the residual (a public-looking hostname
+// that resolves to a private address) is unchanged, but it's now reachable
+// via attacker-supplied content, not only via an authenticated caller's
+// input.
 export function isBlockedHost(hostname: string): boolean {
   const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (!host) return true;
@@ -128,13 +134,15 @@ export function extractReadableText(html: string, maxChars = DEFAULT_MAX_CHARS):
 }
 
 // The raw fetch, shared so one page load can serve both readable text and
-// design-token parsing. fetchPageText is a thin wrapper over this — its
-// behaviour is unchanged, and its tests are the proof.
+// design-token parsing, and so a stylesheet fetch can reuse the identical
+// validation/redirect/timeout/size-cap path with only its Accept header
+// varying (CSS is not html). `accept` is the one caller-controlled knob;
+// every guard below applies unconditionally to both callers.
 //
-// Fetches a page with redirects validated per hop — the initial URL being
-// https and public is not enough, since a redirect can otherwise land on
-// http or a private address.
-export async function fetchPageHtml(rawUrl: string): Promise<{ html: string; finalUrl: string }> {
+// Fetches with redirects validated per hop — the initial URL being https
+// and public is not enough, since a redirect can otherwise land on http or
+// a private address.
+async function fetchValidated(rawUrl: string, accept: string): Promise<{ html: string; finalUrl: string }> {
   let url = assertFetchableUrl(rawUrl);
   let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -144,7 +152,7 @@ export async function fetchPageHtml(rawUrl: string): Promise<{ html: string; fin
       // budget on hop 1 and then stall forever on hop 2.
       res = await fetch(url, {
         redirect: "manual",
-        headers: { accept: "text/html,text/plain" },
+        headers: { accept },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     } catch (e) {
@@ -199,6 +207,13 @@ export async function fetchPageHtml(rawUrl: string): Promise<{ html: string; fin
   return { html, finalUrl: url.toString() };
 }
 
+// The raw page fetch, shared so one page load can serve both readable text
+// and design-token parsing. fetchPageText is a thin wrapper over this — its
+// behaviour is unchanged, and its tests are the proof.
+export async function fetchPageHtml(rawUrl: string): Promise<{ html: string; finalUrl: string }> {
+  return fetchValidated(rawUrl, "text/html,text/plain");
+}
+
 // Fetches a page's readable text. A thin wrapper over fetchPageHtml — kept
 // as its own export so its signature and behaviour never change.
 export async function fetchPageText(rawUrl: string): Promise<string> {
@@ -230,19 +245,37 @@ export function stylesheetHrefs(html: string, baseUrl: string): string[] {
   return out;
 }
 
+// CSS is served as text/css, not text/html — fetchPageHtml's Accept header
+// would work against a lenient server but is semantically wrong and can 406
+// against one doing strict content negotiation, which would silently empty
+// out the design-token input with no error surfaced anywhere. Widened here,
+// and only here: fetchPageText's Accept header (and its text/* content-type
+// gate) is untouched.
+const STYLESHEET_ACCEPT = "text/css,text/plain;q=0.5,*/*;q=0.1";
+
 // Best-effort: a sheet that fails to load degrades the design-token
 // result, it never fails the extraction run. Each goes through the same
-// assertFetchableUrl/redirect/timeout path as the page itself, via
-// fetchPageHtml — no second fetch helper.
+// assertFetchableUrl/redirect/timeout/size-cap path as the page itself, via
+// the shared fetchValidated — no second fetch helper.
+//
+// Fetched with Promise.all, not a sequential loop: MAX_STYLESHEETS caps the
+// *count* at 3, but each fetch can still take up to (MAX_REDIRECTS + 1) *
+// FETCH_TIMEOUT_MS on a chain of slow/stalling hops, and the whole point of
+// the cap ("a site with a dozen bundles cannot stall extraction") is
+// defeated if 3 worst-case sheets are summed serially on top of the page
+// fetch's own worst case — that blew the route's maxDuration budget. Running
+// them concurrently keeps the sheet phase bounded by one sheet's worst case,
+// not three, while each individual fetch keeps its own per-hop timeouts.
 export async function fetchStylesheets(html: string, baseUrl: string): Promise<string[]> {
-  const sheets: string[] = [];
-  for (const href of stylesheetHrefs(html, baseUrl)) {
-    try {
-      const { html: css } = await fetchPageHtml(href);
-      sheets.push(css);
-    } catch {
-      // skipped
-    }
-  }
-  return sheets;
+  const results = await Promise.all(
+    stylesheetHrefs(html, baseUrl).map(async (href) => {
+      try {
+        const { html: css } = await fetchValidated(href, STYLESHEET_ACCEPT);
+        return css;
+      } catch {
+        return null; // skipped — a failed sheet degrades the result, never fails the run
+      }
+    }),
+  );
+  return results.filter((css): css is string => css !== null);
 }
