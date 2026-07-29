@@ -100,4 +100,26 @@ describe("parseDesignCandidates", () => {
     const { colors } = parseDesignCandidates("<html></html>", [many]);
     expect(colors.length).toBeLessThanOrEqual(24);
   });
+
+  it("does not double-count a <style>-block color relative to an equally-frequent inline one", () => {
+    // #aa0000 appears twice, both inside <style> blocks. #00bb00 appears
+    // twice, both via inline style="" attributes outside any <style> block.
+    // True frequency is identical (2 each); neither uses a recognized
+    // declaration property (outline-color isn't in the declaration
+    // allowlist), so both land purely through the frequency pass. Before the
+    // fix, the <style>-block color was scanned once via the extracted `css`
+    // string and again via the raw `html` string, doubling its weight to 4
+    // against the inline color's correct 2.
+    const html = `
+      <style>.a{outline-color:#aa0000}</style>
+      <style>.b{outline-color:#aa0000}</style>
+      <div style="outline-color:#00bb00">x</div>
+      <span style="outline-color:#00bb00">y</span>`;
+    const { colors } = parseDesignCandidates(html);
+    const styleBlockColor = colors.find((c) => c.value === "#aa0000")!;
+    const inlineColor = colors.find((c) => c.value === "#00bb00")!;
+    expect(styleBlockColor.source).toBe("frequency");
+    expect(inlineColor.source).toBe("frequency");
+    expect(styleBlockColor.weight).toBe(inlineColor.weight);
+  });
 });

@@ -87,8 +87,19 @@ export function parseDesignCandidates(html: string, stylesheets: string[] = []):
   }
 
   // 4. Frequency across everything, for compiled bundles where names are gone.
+  // `css` already carries every <style> block's contents (plus any external
+  // stylesheets), so the raw-html scan below must exclude those same
+  // <style> blocks — otherwise an inline <style> color is counted once via
+  // `css` and again via `html`, doubling its weight relative to an
+  // equally-frequent color that only appears in an inline style="" attribute
+  // or plain text. Non-greedy, matching the same style-block extraction
+  // above — <style> blocks don't nest, so this can't eat past its own tag.
+  const htmlOutsideStyleBlocks = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
   const counts = new Map<string, number>();
-  for (const m of [...css.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g), ...html.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g)]) {
+  for (const m of [
+    ...css.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g),
+    ...htmlOutsideStyleBlocks.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g),
+  ]) {
     const v = normalizeHex(m[0]);
     if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
   }
