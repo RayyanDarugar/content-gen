@@ -35,7 +35,7 @@ const SERVICE_ICON: Record<string, LucideIcon> = {
   generic: Globe,
 };
 
-function ServiceIcon({ service, className }: { service: string; className?: string }) {
+export function ServiceIcon({ service, className }: { service: string; className?: string }) {
   const Icon = SERVICE_ICON[normalizeService(service)];
   return <Icon className={className} />;
 }

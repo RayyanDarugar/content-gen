@@ -3,6 +3,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { buildQueueRows } from "@/lib/athena/queue";
 import { postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { groupPosts } from "@/lib/athena/post-groups";
+import { ServiceIcon } from "@/app/(app)/post/[ideaId]/channel-chips";
 import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
 import type { Category, Generation, Idea, Post } from "@/lib/types";
@@ -151,39 +152,69 @@ export default async function PostPage() {
                 </tr>
               </thead>
               <tbody>
-                {postGroups.map((group) => (
-                  <tr key={group.postGroupId} className="border-b align-top">
-                    <td className="py-2 pr-4 whitespace-nowrap">
-                      {new Date(group.createdAt).toLocaleString()}
-                    </td>
-                    <td className="py-2 pr-4">{group.categoryKey}</td>
-                    <td className="py-2 pr-4">
-                      <Badge variant={statusVariant[group.channels[0]?.status] ?? "outline"}>
-                        {group.label}
-                      </Badge>
-                    </td>
-                    <td className="py-2 pr-4">
-                      {group.channels.length === 1 ? (
-                        <span className="text-xs text-muted-foreground">{group.channels[0]?.service}</span>
-                      ) : (
-                        <details className="cursor-pointer">
-                          <summary className="text-xs font-medium">{group.channels.length} channels</summary>
-                          <div className="mt-2 space-y-1 text-xs">
-                            {group.channels.map((channel, idx) => (
-                              <div key={idx} className="flex items-center gap-2 text-muted-foreground">
-                                <span>{channel.service}</span>
-                                <span>{channel.channelId}</span>
-                              </div>
-                            ))}
+                {postGroups.map((group) => {
+                  const category = categoryByKey.get(group.categoryKey);
+                  return (
+                    <tr key={group.postGroupId} className="border-b align-top">
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        <div className="space-y-1">
+                          <div>{new Date(group.createdAt).toLocaleString()}</div>
+                          {group.scheduledAt && (
+                            <div className="text-xs text-muted-foreground">
+                              scheduled: {new Date(group.scheduledAt).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <Badge style={{ backgroundColor: categoryColor(group.categoryKey), color: "black" }}>
+                          {category?.name ?? group.categoryKey}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <Badge variant={statusVariant[group.channels[0]?.status] ?? "outline"}>
+                          {group.label}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-4">
+                        {group.channels.length === 1 ? (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <ServiceIcon service={group.channels[0]!.service} className="size-3.5" />
+                            <span>{group.channels[0]!.channelId}</span>
                           </div>
-                        </details>
-                      )}
-                    </td>
-                    <td className="py-2 max-w-md truncate" title={group.channels[0]?.error || group.channels[0]?.caption}>
-                      {group.channels[0]?.status === "failed" ? group.channels[0]?.error : group.channels[0]?.caption}
-                    </td>
-                  </tr>
-                ))}
+                        ) : (
+                          <details className="cursor-pointer">
+                            <summary className="text-xs font-medium">{group.channels.length} channels</summary>
+                            <div className="mt-2 space-y-2 text-xs">
+                              {group.channels.map((channel, idx) => (
+                                <div key={idx} className="space-y-1 border-l border-muted pl-2">
+                                  <div className="flex items-center gap-1.5 font-medium">
+                                    <ServiceIcon service={channel.service} className="size-3.5" />
+                                    <span>{channel.channelId}</span>
+                                    <Badge variant={statusVariant[channel.status] ?? "outline"} className="text-xs">
+                                      {channel.status}
+                                    </Badge>
+                                  </div>
+                                  {channel.status === "failed" && channel.error && (
+                                    <div className="text-destructive" title={channel.error}>
+                                      Error: {channel.error}
+                                    </div>
+                                  )}
+                                  <div className="text-muted-foreground truncate" title={channel.caption}>
+                                    {channel.caption}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </td>
+                      <td className="py-2 max-w-md truncate" title={group.channels[0]?.error || group.channels[0]?.caption}>
+                        {group.channels[0]?.status === "failed" ? group.channels[0]?.error : group.channels[0]?.caption}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
