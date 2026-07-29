@@ -15,7 +15,7 @@ import type { Category, Slide } from "@/lib/types";
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
-// anthropic.messages.parse() below is non-streaming. The SDK computes
+// messages.parse() below is non-streaming. The SDK computes
 // expectedTime = (60min * max_tokens) / 128000 and throws before making any
 // request once that exceeds its 10-minute default timeout — i.e. for any
 // max_tokens above 21333 (@anthropic-ai/sdk 0.112.4, client.js

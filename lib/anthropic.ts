@@ -1,9 +1,18 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 
+export type MajordomoFeature =
+  | "brand_analysis"
+  | "category_draft"
+  | "post_caption_adapt"
+  | "post_caption_rewrite"
+  | "content_idea_generation"
+  | "content_idea_filter"
+  | "content_preview";
+
 export function createAnthropicClient(opts: {
   apiKey: string;
-  feature: string;
+  feature: MajordomoFeature;
   maxRetries?: number;
 }): Anthropic {
   const majordomoKey = process.env.MAJORDOMO_API_KEY;

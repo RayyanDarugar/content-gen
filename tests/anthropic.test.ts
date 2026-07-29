@@ -17,6 +17,27 @@ describe("createAnthropicClient", () => {
     expect(client.baseURL).toBe("https://api.anthropic.com");
     const headers = await headersFor(client);
     expect(headers.has("x-majordomo-key")).toBe(false);
+    expect(headers.has("x-majordomo-feature")).toBe(false);
+    expect(headers.has("x-majordomo-environment")).toBe(false);
+  });
+
+  it("calls the Anthropic API directly when MAJORDOMO_API_KEY is genuinely undefined (not just empty)", async () => {
+    const original = process.env.MAJORDOMO_API_KEY;
+    delete process.env.MAJORDOMO_API_KEY;
+    try {
+      const client = createAnthropicClient({ apiKey: "sk-ant-test", feature: "brand_analysis" });
+      expect(client.baseURL).toBe("https://api.anthropic.com");
+      const headers = await headersFor(client);
+      expect(headers.has("x-majordomo-key")).toBe(false);
+      expect(headers.has("x-majordomo-feature")).toBe(false);
+      expect(headers.has("x-majordomo-environment")).toBe(false);
+    } finally {
+      if (original === undefined) {
+        delete process.env.MAJORDOMO_API_KEY;
+      } else {
+        process.env.MAJORDOMO_API_KEY = original;
+      }
+    }
   });
 
   it("routes through the Majordomo gateway tagged with feature and environment when MAJORDOMO_API_KEY is set", async () => {
@@ -38,8 +59,14 @@ describe("createAnthropicClient", () => {
     expect(headers.get("x-majordomo-environment")).toBe("development");
   });
 
-  it("passes maxRetries through in both modes", () => {
+  it("passes maxRetries through in direct mode", () => {
     vi.stubEnv("MAJORDOMO_API_KEY", "");
+    const client = createAnthropicClient({ apiKey: "sk-ant-test", feature: "brand_analysis", maxRetries: 5 });
+    expect(client.maxRetries).toBe(5);
+  });
+
+  it("passes maxRetries through in gateway mode", () => {
+    vi.stubEnv("MAJORDOMO_API_KEY", "mdm_sk_test");
     const client = createAnthropicClient({ apiKey: "sk-ant-test", feature: "brand_analysis", maxRetries: 5 });
     expect(client.maxRetries).toBe(5);
   });
