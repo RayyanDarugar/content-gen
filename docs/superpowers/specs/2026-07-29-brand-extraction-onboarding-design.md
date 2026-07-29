@@ -80,6 +80,7 @@ Added instruction, alongside the existing brand context: ground ideas in this sp
 
 ## 9. Out of scope
 
+- **Brand visual assets — logo, wordmark, icons composited onto generated posts (project 1b, immediately after this one).** Raised by Rayyan while reviewing this spec. There is no logo path in the app today: brand visuals reach a post only via `categories.style_ref_url` and the cemented `role_ref_urls`. The generative path demonstrably does not work for a mark — the 2026-07-27 Kie test with Tony got the concept right (dog, the name "Athena") and the logo wrong, consistent with this repo's finding that a reference image dominates prose but still won't reproduce a mark faithfully. The mechanism that will work is **compositing the real asset onto the returned image** (`sharp` is already a dependency). This does not contradict the structured-carousels decision against compositing, which ruled out compositing *headline text* — a layout problem where generated text proved good enough — not a fixed-position mark. Decided shape: an asset library on the brand plus **one fixed corner, size, and opacity chosen once at brand level**, applied to every generated image. Per-category and per-role placement were considered and rejected as config surface that belongs with the Series object.
 - The Brand/Format/Series object-model split, the seeded format library, screenshot-to-format (project 2).
 - Content pillars, pillar-to-channel mapping, cadence and the scheduler (project 3).
 - Moving `style_ref_url` to brand level.
