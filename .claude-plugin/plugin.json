@@ -1,0 +1,9 @@
+{
+  "name": "content-gen-app",
+  "description": "Content generation and brand management: ideas, post types, brand extraction, caption writing, and social scheduling",
+  "version": "1.0.0",
+  "author": {
+    "name": "Content Gen Team"
+  },
+  "license": "MIT"
+}
