@@ -51,13 +51,17 @@ create policy "read shared or own" on formats for select to authenticated
 -- anyone through the app, including its author, because the with-check would
 -- fail. Editing a shared format is a SQL edit. The shared set is small and
 -- curated, so this is accepted rather than worked around.
+--
+-- The same reasoning extends to delete: once a row is promoted to shared it
+-- should be at least as protected from its author as it is from editing, so
+-- the delete policy's using-clause also requires shared = false.
 create policy "insert own unshared" on formats for insert to authenticated
   with check (auth.uid() = user_id and shared = false);
 create policy "update own unshared" on formats for update to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id and shared = false);
-create policy "delete own" on formats for delete to authenticated
-  using (auth.uid() = user_id);
+create policy "delete own unshared" on formats for delete to authenticated
+  using (auth.uid() = user_id and shared = false);
 
 -- Provenance ONLY. The approved translation lives verbatim in the category's
 -- own columns; re-deriving a category from its format on every run would

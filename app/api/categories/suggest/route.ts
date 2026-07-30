@@ -19,6 +19,11 @@ const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 // A draft object plus a worked sample post — larger than a draft turn, still
 // far short of the 16k idea batches.
 const SUGGEST_MAX_TOKENS = 6000;
+// Caps the format library read (see below): enough headroom that a single
+// active tenant is very unlikely to hit it in normal use, small enough that
+// formatsBlock's per-row rendering stays a bounded, predictable slice of the
+// suggestion prompt even after months of self-filling.
+const FORMAT_LIBRARY_LIMIT = 60;
 
 function stringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -59,10 +64,26 @@ export async function POST(request: NextRequest) {
       visual_notes: brandRow.visual_notes ?? "",
     };
 
-    // RLS already restricts this to shared rows plus the caller's own.
+    // RLS already restricts this to shared rows plus the caller's own. Still
+    // bounded: the library self-fills from ordinary use (every kept
+    // suggestion that draws on nothing existing mints a row), so an
+    // unbounded read here would grow the prompt — and its token cost —
+    // forever. Order by origin descending first: 'observed' > 'invented'
+    // alphabetically, so this puts human-vouched rows before model-derived
+    // ones, ahead of the cap, so a full library drops 'invented' rows before
+    // it ever drops an 'observed' one. Newest-first within a tier as the
+    // tiebreak.
     const { data: formatRows } = await supabase
-      .from("formats").select("*").eq("active", true);
+      .from("formats").select("*").eq("active", true)
+      .order("origin", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(FORMAT_LIBRARY_LIMIT);
     const formats = (formatRows ?? []) as Format[];
+    // buildSuggestSystemPrompt -> formatsBlock does its own excludeFormatIds
+    // filtering when building the prompt; this is the same filter, computed
+    // once, for checks against what the model could actually have seen.
+    const excludeFormatIdSet = new Set(excludeFormatIds);
+    const visibleFormats = formats.filter((f) => !excludeFormatIdSet.has(f.id));
 
     const anthropic = createAnthropicClient({
       apiKey: await requireAnthropicKey(user.id),
@@ -92,9 +113,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Only trust format_id if it names a format we actually showed the model;
-    // a hallucinated id would create a dangling provenance link.
+    // a hallucinated id would create a dangling provenance link. Checked
+    // against visibleFormats (excludeFormatIds already removed), not the full
+    // formats array — the model never saw an excluded id's uuid, so it can't
+    // legitimately claim one.
     const claimedId = parsed.format_id.trim();
-    const formatId = formats.some((f) => f.id === claimedId) ? claimedId : null;
+    const formatId = visibleFormats.some((f) => f.id === claimedId) ? claimedId : null;
 
     const { data: logRow, error: logError } = await supabase
       .from("format_suggestions")

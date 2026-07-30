@@ -194,13 +194,23 @@ async function applyWriteback(
   try {
     // RLS scopes this to the caller, so a forged id from another tenant
     // simply finds nothing.
-    const { data } = await supabase
+    const { data, error: lookupError } = await supabase
       .from("format_suggestions")
-      .select("format_id, invented_format")
+      .select("format_id, invented_format, category_id")
       .eq("id", suggestionId)
       .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
 
-    const plan = writebackPlan((data as Pick<FormatSuggestion, "format_id" | "invented_format">) ?? null);
+    // Server-side idempotency guard: category_id is stamped on first persist
+    // only. If a prior request already got this far — even if its response
+    // never reached the client, e.g. a dropped connection — retrying must be
+    // a no-op, not a second link/create and a second stamp that orphans the
+    // first category. The client-side suggestionId-clearing is defense in
+    // depth, not the guarantee.
+    const row = data as Pick<FormatSuggestion, "format_id" | "invented_format" | "category_id"> | null;
+    if (row?.category_id) return;
+
+    const plan = writebackPlan(row);
 
     let sourceFormatId: string | null = null;
     if (plan.kind === "link") {
@@ -213,11 +223,13 @@ async function applyWriteback(
     }
 
     if (sourceFormatId) {
-      await supabase.from("categories")
+      const { error: categoryUpdateError } = await supabase.from("categories")
         .update({ source_format_id: sourceFormatId }).eq("id", categoryId);
+      if (categoryUpdateError) throw new Error(categoryUpdateError.message);
     }
-    await supabase.from("format_suggestions")
+    const { error: suggestionUpdateError } = await supabase.from("format_suggestions")
       .update({ category_id: categoryId }).eq("id", suggestionId);
+    if (suggestionUpdateError) throw new Error(suggestionUpdateError.message);
   } catch (e) {
     console.error("suggestion writeback failed:", e instanceof Error ? e.message : String(e));
   }

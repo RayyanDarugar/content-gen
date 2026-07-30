@@ -87,6 +87,30 @@ async function main() {
   check("6. B cannot read A's format_suggestions",
     (bLogsAfter ?? []).length === (bLogs ?? []).length);
 
+  // The delete policy (migration 0017) requires shared = false, matching
+  // insert/update — added because DELETE was the one write that destroys a
+  // row outright and was never considered when those two were written.
+  const delOther = await cb.from("formats").delete().eq("id", aShared).select("id");
+  check("7. B cannot delete A's shared format",
+    delOther.error !== null || (delOther.data ?? []).length === 0);
+
+  const delOwnShared = await ca.from("formats").delete().eq("id", aShared).select("id");
+  check("8. A tenant cannot delete their own format once shared = true",
+    delOwnShared.error !== null || (delOwnShared.data ?? []).length === 0);
+
+  const aDeletable = await seedFormat(a.id, "a-deletable", false);
+  const delOwnUnshared = await ca.from("formats").delete().eq("id", aDeletable).select("id");
+  check("9. A tenant CAN delete their own format once shared = false",
+    delOwnUnshared.error === null && (delOwnUnshared.data ?? []).length === 1);
+
+  // format_suggestions' "owner all" policy is for-all, so its with-check
+  // (untested until now) needs its own insert attempt, not just the select
+  // covered by check 6.
+  const crossInsert = await ca.from("format_suggestions")
+    .insert({ user_id: b.id, concept: "sneaky" });
+  check("10. A tenant cannot insert a format_suggestions row for another tenant's user_id",
+    crossInsert.error !== null);
+
   await admin.from("format_suggestions").delete().in("user_id", [a.id, b.id]);
   await admin.from("formats").delete().in("user_id", [a.id, b.id]);
 
