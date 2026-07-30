@@ -2,6 +2,7 @@
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { generateStyleRef } from "@/lib/style-ref-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +24,7 @@ const EMPTY: CategoryFields = {
   post_type: "independent", role_guides: {},
 };
 
-function CategoryEditor({ category, groups }: { category?: Category; groups: ChannelGroup[] }) {
+function CategoryEditor({ category, groups, hasKieKey }: { category?: Category; groups: ChannelGroup[]; hasKieKey: boolean }) {
   const router = useRouter();
   const [form, setForm] = useState<CategoryFields>(
     category
@@ -42,6 +43,8 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [styleRefNotes, setStyleRefNotes] = useState("");
+  const [regeneratingStyleRef, setRegeneratingStyleRef] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const allChannels = groups.flatMap((g) => g.channels);
 
@@ -208,6 +211,28 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
           // eslint-disable-next-line @next/next/no-img-element
           <img src={form.style_ref_url} alt="style ref" className="mt-2 h-40 rounded border object-cover" />
         )}
+        {category && hasKieKey && (
+          <div className="mt-2 space-y-2">
+            <Textarea rows={1} placeholder="Optional notes for regenerating (e.g. more muted colors)"
+              value={styleRefNotes} onChange={(e) => setStyleRefNotes(e.target.value)} className="text-xs" />
+            <Button type="button" size="sm" variant="outline" disabled={regeneratingStyleRef}
+              onClick={async () => {
+                setRegeneratingStyleRef(true);
+                setMsg("");
+                try {
+                  const url = await generateStyleRef(category.id, styleRefNotes.trim() || undefined);
+                  set("style_ref_url", url);
+                  setStyleRefNotes("");
+                } catch (e) {
+                  setMsg(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setRegeneratingStyleRef(false);
+                }
+              }}>
+              {regeneratingStyleRef ? "Regenerating…" : "Regenerate with AI"}
+            </Button>
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div><Label>Images per carousel</Label>
@@ -280,16 +305,18 @@ export function CategoryManager({
   categories,
   groups,
   brandDone,
+  hasKieKey,
 }: {
   categories: Category[];
   groups: ChannelGroup[];
   brandDone: boolean;
+  hasKieKey: boolean;
 }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        {categories.map((c) => <CategoryEditor key={c.id} category={c} groups={groups} />)}
+        {categories.map((c) => <CategoryEditor key={c.id} category={c} groups={groups} hasKieKey={hasKieKey} />)}
         <div>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Add a new category</p>
@@ -304,7 +331,7 @@ export function CategoryManager({
               </Button>
             </div>
           </div>
-          <CategoryEditor groups={groups} />
+          <CategoryEditor groups={groups} hasKieKey={hasKieKey} />
         </div>
       </CardContent>
     </Card>

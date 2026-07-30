@@ -44,6 +44,7 @@ export default async function ConfigPage() {
         categories={(data ?? []) as Category[]}
         groups={groups}
         brandDone={Boolean((brandRow as BrandProfile | null)?.business_name?.trim())}
+        hasKieKey={status.kie}
       />
     </div>
   );
