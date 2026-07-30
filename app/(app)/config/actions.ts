@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
@@ -10,12 +11,11 @@ import type { RoleRefUrls } from "@/lib/types";
 import { parseBrandList } from "@/lib/brand";
 import { createApiTokenForUser, listApiTokensForUser, revokeApiTokenForUser } from "@/lib/auth/api-tokens";
 
-export async function createCategory(fields: CategoryFields) {
-  const user = await requireUser();
+export async function createCategoryForUser(userId: string, fields: CategoryFields): Promise<void> {
   validateCategoryFields(fields);
-  const supabase = await createServerSupabase();
+  const supabase = createAdminSupabase();
   const { error } = await supabase.from("categories").insert({
-    user_id: user.id,
+    user_id: userId,
     key: slugify(fields.name),
     name: fields.name,
     style_guide: fields.style_guide,
@@ -36,13 +36,17 @@ export async function createCategory(fields: CategoryFields) {
     if (error.code === "23505") throw new Error("You already have a category with a similar name");
     throw new Error(error.message);
   }
+}
+
+export async function createCategory(fields: CategoryFields) {
+  const user = await requireUser();
+  await createCategoryForUser(user.id, fields);
   revalidatePath("/config");
 }
 
-export async function updateCategory(id: string, fields: CategoryFields) {
-  await requireUser();
+export async function updateCategoryForUser(userId: string, id: string, fields: CategoryFields): Promise<void> {
   validateCategoryFields(fields);
-  const supabase = await createServerSupabase();
+  const supabase = createAdminSupabase();
   const { error } = await supabase.from("categories").update({
     name: fields.name,
     style_guide: fields.style_guide,
@@ -58,8 +62,13 @@ export async function updateCategory(id: string, fields: CategoryFields) {
     role_guides: fields.role_guides,
     aspect_ratio: fields.aspect_ratio || "4:5",
     active: fields.active,
-  }).eq("id", id);
+  }).eq("id", id).eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+export async function updateCategory(id: string, fields: CategoryFields) {
+  const user = await requireUser();
+  await updateCategoryForUser(user.id, id, fields);
   revalidatePath("/config");
 }
 
@@ -67,24 +76,35 @@ export async function updateCategory(id: string, fields: CategoryFields) {
 // so that role falls back to style_ref_url again (spec §10). Only this
 // action and the promotion endpoint touch role_ref_urls — manual saves
 // never do (CategoryFields deliberately excludes it).
-export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
-  await requireUser();
-  const supabase = await createServerSupabase();
+export async function clearRoleRefUrlForUser(
+  userId: string, categoryId: string, role: "hook" | "beat" | "payoff" | "single",
+): Promise<void> {
+  const supabase = createAdminSupabase();
   const { data: category } = await supabase
-    .from("categories").select("role_ref_urls").eq("id", categoryId).maybeSingle();
+    .from("categories").select("role_ref_urls").eq("id", categoryId).eq("user_id", userId).maybeSingle();
   if (!category) throw new Error("unknown category");
   const next: RoleRefUrls = { ...(category.role_ref_urls ?? {}) };
   delete next[role];
-  const { error } = await supabase.from("categories").update({ role_ref_urls: next }).eq("id", categoryId);
+  const { error } = await supabase.from("categories").update({ role_ref_urls: next })
+    .eq("id", categoryId).eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
+  const user = await requireUser();
+  await clearRoleRefUrlForUser(user.id, categoryId, role);
   revalidatePath("/config");
 }
 
-export async function deleteCategory(id: string) {
-  await requireUser();
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.from("categories").delete().eq("id", id);
+export async function deleteCategoryForUser(userId: string, id: string): Promise<void> {
+  const supabase = createAdminSupabase();
+  const { error } = await supabase.from("categories").delete().eq("id", id).eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+export async function deleteCategory(id: string) {
+  const user = await requireUser();
+  await deleteCategoryForUser(user.id, id);
   revalidatePath("/config");
 }
 
@@ -149,35 +169,39 @@ export async function uploadBrandDocument(
   }
 }
 
+interface BrandProfileFields {
+  business_name: string; business_description: string; audience: string; voice: string; avoid: string;
+  proof_points: string[]; standing: string[]; colors: string[]; fonts: string[]; visual_notes: string;
+}
+
+export async function saveBrandProfileForUser(userId: string, fields: BrandProfileFields): Promise<void> {
+  if (!fields.business_name.trim()) throw new Error("Give the brand a name.");
+  const supabase = createAdminSupabase();
+  const { error } = await supabase.from("brand_profiles").upsert(
+    { user_id: userId, ...fields },
+    { onConflict: "user_id" },
+  );
+  if (error) throw new Error(error.message);
+}
+
 export async function saveBrandProfile(
   _prev: { error?: string; ok?: boolean } | undefined,
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
-  const supabase = await createServerSupabase();
-  const businessName = String(formData.get("business_name") ?? "").trim();
-  // A brand profile with no name is broken on its own terms: it's what the
-  // onboarding wizard's `brandDone` keys on and what `brandBlock` leads with
-  // downstream. Reject rather than upsert an unnamed row.
-  if (!businessName) return { error: "Give the brand a name." };
   try {
-    const { error } = await supabase.from("brand_profiles").upsert(
-      {
-        user_id: user.id,
-        business_name: businessName,
-        business_description: String(formData.get("business_description") ?? "").trim(),
-        audience: String(formData.get("audience") ?? "").trim(),
-        voice: String(formData.get("voice") ?? "").trim(),
-        avoid: String(formData.get("avoid") ?? "").trim(),
-        proof_points: parseBrandList(formData.get("proof_points")),
-        standing: parseBrandList(formData.get("standing")),
-        colors: parseBrandList(formData.get("colors")),
-        fonts: parseBrandList(formData.get("fonts")),
-        visual_notes: String(formData.get("visual_notes") ?? "").trim(),
-      },
-      { onConflict: "user_id" },
-    );
-    if (error) return { error: error.message };
+    await saveBrandProfileForUser(user.id, {
+      business_name: String(formData.get("business_name") ?? "").trim(),
+      business_description: String(formData.get("business_description") ?? "").trim(),
+      audience: String(formData.get("audience") ?? "").trim(),
+      voice: String(formData.get("voice") ?? "").trim(),
+      avoid: String(formData.get("avoid") ?? "").trim(),
+      proof_points: parseBrandList(formData.get("proof_points")),
+      standing: parseBrandList(formData.get("standing")),
+      colors: parseBrandList(formData.get("colors")),
+      fonts: parseBrandList(formData.get("fonts")),
+      visual_notes: String(formData.get("visual_notes") ?? "").trim(),
+    });
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
