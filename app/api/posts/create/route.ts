@@ -11,7 +11,7 @@ import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
 
-interface ChannelInput {
+export interface ChannelInput {
   connectionId: string;
   channelId: string;
   service: string;
@@ -27,6 +27,267 @@ function isChannelInput(v: unknown): v is ChannelInput {
     typeof (v as Record<string, unknown>).service === "string" &&
     typeof (v as Record<string, unknown>).caption === "string"
   );
+}
+
+export async function createPostForUser(
+  userId: string,
+  args: {
+    categoryKey: string;
+    postGroupId: string;
+    channels: ChannelInput[];
+    baseCaption: string;
+    scheduledAt: string | null;
+    suppliedPostGroupId: string | null;
+    ordered: (Generation & { idea: Idea })[];
+    imageUrls: string[];
+    singleIdeaId: string | null;
+    siblings: Pick<Generation, "id" | "idea_id" | "slide_index" | "anchor_generation_id" | "status" | "created_at">[];
+    gens: (Generation & { idea: Idea })[];
+    uniqueIdeaIds: string[];
+  },
+): Promise<{ postGroupId: string; results: ChannelResult[]; allFailed: boolean }> {
+  const {
+    categoryKey, postGroupId, channels, baseCaption, scheduledAt, suppliedPostGroupId,
+    ordered, imageUrls, singleIdeaId, siblings, gens, uniqueIdeaIds,
+  } = args;
+  const supabase = createAdminSupabase();
+
+  // All validation above runs exactly once, before any Buffer call. From
+  // here each channel stands alone (best-effort): a Buffer post cannot be
+  // un-posted, so one channel's failure must never stop the others.
+  const results: ChannelResult[] = [];
+  // Fed to sentSlidesByIdea below (Critical, review) — each channel's own
+  // service, so completeness is computed from what each channel actually
+  // received (post-truncation), not from the full submitted list.
+  const channelOutcomes: { service: string; queued: boolean }[] = [];
+  for (const ch of channels) {
+    const urls = mediaForPlatform(imageUrls, normalizeService(ch.service));
+
+    // Important (review): a retry re-submits the same post_group_id for
+    // just the channels that failed last time. Without this, the failed
+    // row from the earlier attempt is never removed, so the group
+    // permanently reads "1 queued · 1 failed" and lists the channel twice
+    // even after the retry succeeds. Only ever deletes rows already marked
+    // "failed" — a channel's earlier successful post is never touched.
+    if (suppliedPostGroupId) {
+      const { error: cleanupErr } = await supabase
+        .from("posts")
+        .delete()
+        .eq("post_group_id", suppliedPostGroupId)
+        .eq("buffer_channel_id", ch.channelId)
+        .eq("user_id", userId)
+        .eq("status", "failed");
+      if (cleanupErr) console.error("posts/create: failed to clean up prior failed row before retry:", cleanupErr.message);
+    }
+
+    let r: { success: boolean; postId: string; error: string; rawBody: string };
+    try {
+      const token = await getBufferTokenForConnection(userId, ch.connectionId);
+      r = await postToBuffer(token, ch.channelId, urls, ch.caption, scheduledAt ?? undefined);
+    } catch (e) {
+      r = { success: false, postId: "", error: e instanceof Error ? e.message : String(e), rawBody: "" };
+    }
+    channelOutcomes.push({ service: ch.service, queued: r.success });
+
+    // One posts row per channel, all sharing postGroupId.
+    const { data: postRow, error: postErr } = await supabase
+      .from("posts")
+      .insert({
+        user_id: userId,
+        category_key: categoryKey,
+        post_group_id: postGroupId,
+        buffer_update_id: r.success ? r.postId : "",
+        buffer_channel_id: ch.channelId,
+        buffer_channel_service: ch.service,
+        caption: ch.caption,
+        adapted_from_caption: ch.caption === baseCaption ? "" : baseCaption,
+        status: r.success ? "queued" : "failed",
+        error: r.success ? "" : (r.error || r.rawBody.slice(0, 2000)),
+        idea_id: singleIdeaId,
+        scheduled_at: scheduledAt,
+      })
+      .select()
+      .single();
+    if (postErr || !postRow) {
+      results.push({ channelId: ch.channelId, status: "failed", error: `posted but failed to record: ${postErr?.message}` });
+      continue;
+    }
+    let imagesWarning: string | undefined;
+    if (r.success) {
+      // post_images rows are inserted ONLY for channels that actually
+      // posted — per-channel posted memory reads them, so a failed channel
+      // must not look like it published. Critical (review): also only for
+      // the PREFIX this channel's own truncation (`urls`, e.g. X's 4-image
+      // mosaic cap) actually sent — recording the full `ordered` list here
+      // would mark a slide truncated off this channel's payload as
+      // "already sent to X" forever, permanently blocking it there even
+      // though X never received it. The Buffer post already went out and
+      // can't be un-posted, so a failure here can't fail the channel — but
+      // silently swallowing it would let the composer's alreadyPosted
+      // filter miss these slides and resubmit them to the same channel
+      // (see composer.tsx), so retry once, then log loudly and surface a
+      // warning rather than mis-tracking it as if nothing happened.
+      const images = ordered.slice(0, urls.length).map((g, idx) => ({
+        user_id: userId, post_id: postRow.id, generation_id: g.id, sort_order: idx,
+      }));
+      let imagesErr = (await supabase.from("post_images").insert(images)).error;
+      if (imagesErr) imagesErr = (await supabase.from("post_images").insert(images)).error;
+      if (imagesErr) {
+        console.error(
+          "posts/create: post_images insert failed after retry — channel posted but its slides may be offered again:",
+          { postId: postRow.id, channelId: ch.channelId, generationIds: images.map((i) => i.generation_id), error: imagesErr.message },
+        );
+        imagesWarning = "posted but image records failed — this channel's slides may be offered again";
+      }
+    }
+    results.push(
+      r.success
+        ? { channelId: ch.channelId, status: "queued", bufferUpdateId: r.postId, ...(imagesWarning ? { warning: imagesWarning } : {}) }
+        : { channelId: ch.channelId, status: "failed", error: r.error || r.rawBody.slice(0, 500) },
+    );
+  }
+
+  const summary = summarizeFanOut(results);
+
+  // Completeness rule (Finding 3): an idea is marked posted only when the
+  // UNION of slides already posted in prior (non-failed) posts and the
+  // slides submitted here covers every declared slide — not just when this
+  // one submission does. Without this, a carousel posted 3-of-5 today and
+  // finished 2-of-5 tomorrow would never be marked posted: each submission
+  // is individually partial even though together they're complete. A
+  // "failed" post never reached Buffer, so it doesn't count toward "already
+  // posted". The earlier duplicate-slide check guarantees this submission's
+  // own slide indexes are counted at most once. Only run when at least one
+  // channel actually queued — an all-failed submission posted nothing, so
+  // there is nothing new to fold into the completeness union.
+  if (summary.queued > 0) {
+    // Resolved through post_images -> generations, not posts.idea_id: a
+    // freeform post spanning several ideas has idea_id: null on its own post
+    // row, so keying off posts.idea_id would silently forget that a slide of
+    // idea B went out when it was posted bundled with idea A's slides. Every
+    // generation in `siblings` belongs to one of the ideas being completed
+    // here, so scoping post_images to those generation ids covers every post
+    // — single-idea or freeform, single-channel or multi-channel — that
+    // carried any of their slides.
+    const { data: priorImagesData, error: priorImagesErr } = await supabase
+      .from("post_images")
+      .select("generation_id, post:posts(status, buffer_channel_id)")
+      .in("generation_id", siblings.map((s) => s.id))
+      .eq("user_id", userId);
+    if (priorImagesErr) {
+      // Buffer posts already went out and can't be un-posted; a failure to
+      // check prior posted slides only means completeness can't be updated
+      // this round, not that the submission itself failed. Log and leave
+      // idea status untouched rather than mis-shaping the response.
+      console.error("posts/create: failed to check prior posted slides:", priorImagesErr.message);
+    } else {
+      const slideBySiblingId = new Map(siblings.map((s) => [s.id, { idea_id: s.idea_id, slide_index: s.slide_index }]));
+      const priorPostedSlidesByIdea = postedSlideIndexesByIdea(
+        ((priorImagesData ?? []) as unknown as { generation_id: string; post: { status: string; buffer_channel_id: string } | null }[])
+          .map((row): PostedSlideJoinRow | null => {
+            const slide = slideBySiblingId.get(row.generation_id);
+            return slide && row.post
+              ? { post_status: row.post.status, idea_id: slide.idea_id, slide_index: slide.slide_index, buffer_channel_id: row.post.buffer_channel_id }
+              : null;
+          })
+          .filter((row): row is PostedSlideJoinRow => row !== null),
+      );
+
+      // Critical (review): built from each QUEUED channel's own truncated
+      // prefix (channelOutcomes + mediaForPlatform inside sentSlidesByIdea),
+      // never from the full submitted `gens` list — a slide X's mosaic cap
+      // dropped from the payload must not count as "sent" just because it
+      // was part of the request, and a slide submitted only to a channel
+      // that failed must not count as sent at all.
+      const submittedSlidesByIdea = sentSlidesByIdea(
+        ordered.map((g) => ({ idea_id: g.idea_id, slide_index: g.slide_index })),
+        imageUrls,
+        channelOutcomes,
+      );
+      const ideaById = new Map<string, Idea>();
+      for (const g of gens) if (!ideaById.has(g.idea_id)) ideaById.set(g.idea_id, g.idea);
+      const completedIdeaIds = uniqueIdeaIds.filter((id) => {
+        const idea = ideaById.get(id)!;
+        const slideCount = (idea.slides ?? []).length || 1;
+        const submitted = submittedSlidesByIdea.get(id) ?? new Set<number>();
+        const prior = priorPostedSlidesByIdea.get(id) ?? new Set<number>();
+        return new Set<number>([...submitted, ...prior]).size === slideCount;
+      });
+      if (completedIdeaIds.length > 0) {
+        const { error: ideaErr } = await supabase.from("ideas").update({ status: "posted" }).in("id", completedIdeaIds).eq("user_id", userId);
+        if (ideaErr) console.error("posts/create: failed to mark ideas posted:", ideaErr.message);
+      }
+    }
+  }
+
+  // Best-effort: never claim wholesale success or failure for a partial run.
+  // 500 only when every channel failed; 200 whenever anything queued.
+  return { postGroupId, results, allFailed: summary.allFailed };
+}
+
+// Re-runs the exact category/generation/duplicate-slide/anchor validation the
+// POST route below performs before calling createPostForUser — kept here
+// (not duplicated in the MCP route) so the two callers can never silently
+// diverge. Any change to the HTTP route's validation above must be mirrored
+// here, and vice versa.
+export async function scheduleValidatedPost(
+  userId: string,
+  input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string; postGroupId: string | null },
+): Promise<{ postGroupId: string; results: ChannelResult[]; allFailed: boolean }> {
+  const supabase = createAdminSupabase();
+  const { data: category, error: catErr } = await supabase
+    .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
+  if (catErr || !category || !(category as Category).active) throw new Error("unknown or inactive category");
+
+  // Mirrors the POST route's own duplicate-channel-id check below — without
+  // it, the same live channel listed twice in `channels[]` would sail
+  // through createPostForUser's per-channel loop and queue two identical,
+  // un-unpostable posts to one real connected account.
+  if (new Set(input.channels.map((c) => c.channelId)).size !== input.channels.length) {
+    throw new Error("duplicate channel in selection");
+  }
+
+  const { data: gensData, error: genErr } = await supabase
+    .from("generations").select("*, idea:ideas(*)").in("id", input.generationIds).eq("user_id", userId);
+  if (genErr) throw new Error(genErr.message);
+  const gens = (gensData ?? []) as (Generation & { idea: Idea })[];
+  if (gens.length !== input.generationIds.length) throw new Error("one or more generations not found");
+
+  const ideaIds = gens.map((g) => g.idea_id);
+  const slideKeys = gens.map((g) => `${g.idea_id}:${g.slide_index}`);
+  if (new Set(slideKeys).size !== slideKeys.length) throw new Error("duplicate slide in selection");
+  for (const g of gens) {
+    if (g.status !== "succeeded" || !g.public_url) throw new Error(`generation ${g.id} has no successful image`);
+    if (g.idea.status !== "generated" && g.idea.status !== "generating") throw new Error(`idea for generation ${g.id} is not postable (${g.idea.status})`);
+    if (g.idea.category_key !== input.categoryKey) throw new Error(`generation ${g.id} belongs to another category`);
+  }
+
+  const { data: siblingsData, error: sibErr } = await supabase
+    .from("generations").select("id, idea_id, slide_index, anchor_generation_id, status, created_at")
+    .in("idea_id", ideaIds).eq("user_id", userId);
+  if (sibErr) throw new Error(sibErr.message);
+  const siblings = (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "slide_index" | "anchor_generation_id" | "status" | "created_at">[];
+  const wrongAnchor = findWrongAnchorGenerationIds(gens.map((g) => ({ id: g.id, idea_id: g.idea_id, slide_index: g.slide_index })), siblings);
+  if (wrongAnchor.length > 0) throw new Error(`generation ${wrongAnchor[0]} does not belong to its idea's current anchor`);
+
+  const byId = new Map(gens.map((g) => [g.id, g]));
+  const ordered = input.generationIds.map((id) => byId.get(id)!);
+  const imageUrls = ordered.map((g) => g.public_url);
+  const uniqueIdeaIds = Array.from(new Set(ideaIds));
+  const singleIdeaId = uniqueIdeaIds.length === 1 ? uniqueIdeaIds[0] : null;
+  const postGroupId = input.postGroupId ?? randomUUID();
+
+  // allFailed is passed through, never discarded: the HTTP route turns it into
+  // a 500, and its non-HTTP caller (the MCP schedule_post tool) needs the same
+  // signal — otherwise a submission where every channel failed still returns a
+  // success-shaped { postGroupId, results } and only the per-channel
+  // "status":"failed" buried in the array tells the truth.
+  const { postGroupId: pg, results, allFailed } = await createPostForUser(userId, {
+    categoryKey: input.categoryKey, postGroupId, channels: input.channels, baseCaption: input.caption,
+    scheduledAt: input.scheduledAt, suppliedPostGroupId: input.postGroupId, ordered, imageUrls,
+    singleIdeaId, siblings, gens, uniqueIdeaIds,
+  });
+  return { postGroupId: pg, results, allFailed };
 }
 
 export async function POST(request: NextRequest) {
@@ -184,202 +445,9 @@ export async function POST(request: NextRequest) {
   const uniqueIdeaIds = Array.from(new Set(ideaIds));
   const singleIdeaId = uniqueIdeaIds.length === 1 ? uniqueIdeaIds[0] : null;
 
-  // All validation above runs exactly once, before any Buffer call. From
-  // here each channel stands alone (best-effort): a Buffer post cannot be
-  // un-posted, so one channel's failure must never stop the others.
-  const results: ChannelResult[] = [];
-  // Fed to sentSlidesByIdea below (Critical, review) — each channel's own
-  // service, so completeness is computed from what each channel actually
-  // received (post-truncation), not from the full submitted list.
-  const channelOutcomes: { service: string; queued: boolean }[] = [];
-  for (const ch of channels) {
-    const urls = mediaForPlatform(imageUrls, normalizeService(ch.service));
-
-    // Important (review): a retry re-submits the same post_group_id for
-    // just the channels that failed last time. Without this, the failed
-    // row from the earlier attempt is never removed, so the group
-    // permanently reads "1 queued · 1 failed" and lists the channel twice
-    // even after the retry succeeds. Only ever deletes rows already marked
-    // "failed" — a channel's earlier successful post is never touched.
-    if (suppliedPostGroupId) {
-      const { error: cleanupErr } = await supabase
-        .from("posts")
-        .delete()
-        .eq("post_group_id", suppliedPostGroupId)
-        .eq("buffer_channel_id", ch.channelId)
-        .eq("user_id", user.id)
-        .eq("status", "failed");
-      if (cleanupErr) {
-        console.error("posts/create: failed to clean up prior failed row before retry:", cleanupErr.message);
-      }
-    }
-
-    let r: { success: boolean; postId: string; error: string; rawBody: string };
-    try {
-      const token = await getBufferTokenForConnection(user.id, ch.connectionId);
-      r = await postToBuffer(token, ch.channelId, urls, ch.caption, scheduledAt ?? undefined);
-    } catch (e) {
-      r = { success: false, postId: "", error: e instanceof Error ? e.message : String(e), rawBody: "" };
-    }
-    channelOutcomes.push({ service: ch.service, queued: r.success });
-
-    // One posts row per channel, all sharing postGroupId.
-    const { data: postRow, error: postErr } = await supabase
-      .from("posts")
-      .insert({
-        user_id: user.id,
-        category_key: categoryKey,
-        post_group_id: postGroupId,
-        buffer_update_id: r.success ? r.postId : "",
-        buffer_channel_id: ch.channelId,
-        buffer_channel_service: ch.service,
-        caption: ch.caption,
-        adapted_from_caption: ch.caption === baseCaption ? "" : baseCaption,
-        status: r.success ? "queued" : "failed",
-        error: r.success ? "" : (r.error || r.rawBody.slice(0, 2000)),
-        idea_id: singleIdeaId,
-        scheduled_at: scheduledAt,
-      })
-      .select()
-      .single();
-    if (postErr || !postRow) {
-      results.push({
-        channelId: ch.channelId,
-        status: "failed",
-        error: `posted but failed to record: ${postErr?.message}`,
-      });
-      continue;
-    }
-    let imagesWarning: string | undefined;
-    if (r.success) {
-      // post_images rows are inserted ONLY for channels that actually
-      // posted — per-channel posted memory reads them, so a failed channel
-      // must not look like it published. Critical (review): also only for
-      // the PREFIX this channel's own truncation (`urls`, e.g. X's 4-image
-      // mosaic cap) actually sent — recording the full `ordered` list here
-      // would mark a slide truncated off this channel's payload as
-      // "already sent to X" forever, permanently blocking it there even
-      // though X never received it. The Buffer post already went out and
-      // can't be un-posted, so a failure here can't fail the channel — but
-      // silently swallowing it would let the composer's alreadyPosted
-      // filter miss these slides and resubmit them to the same channel
-      // (see composer.tsx), so retry once, then log loudly and surface a
-      // warning rather than mis-tracking it as if nothing happened.
-      const images = ordered.slice(0, urls.length).map((g, idx) => ({
-        user_id: user.id, post_id: postRow.id, generation_id: g.id, sort_order: idx,
-      }));
-      let imagesErr = (await supabase.from("post_images").insert(images)).error;
-      if (imagesErr) {
-        imagesErr = (await supabase.from("post_images").insert(images)).error;
-      }
-      if (imagesErr) {
-        console.error(
-          "posts/create: post_images insert failed after retry — channel posted but its slides may be offered again:",
-          { postId: postRow.id, channelId: ch.channelId, generationIds: images.map((i) => i.generation_id), error: imagesErr.message },
-        );
-        imagesWarning = "posted but image records failed — this channel's slides may be offered again";
-      }
-    }
-    results.push(
-      r.success
-        ? {
-            channelId: ch.channelId,
-            status: "queued",
-            bufferUpdateId: r.postId,
-            ...(imagesWarning ? { warning: imagesWarning } : {}),
-          }
-        : { channelId: ch.channelId, status: "failed", error: r.error || r.rawBody.slice(0, 500) },
-    );
-  }
-
-  const summary = summarizeFanOut(results);
-
-  // Completeness rule (Finding 3): an idea is marked posted only when the
-  // UNION of slides already posted in prior (non-failed) posts and the
-  // slides submitted here covers every declared slide — not just when this
-  // one submission does. Without this, a carousel posted 3-of-5 today and
-  // finished 2-of-5 tomorrow would never be marked posted: each submission
-  // is individually partial even though together they're complete. A
-  // "failed" post never reached Buffer, so it doesn't count toward "already
-  // posted". The earlier duplicate-slide check guarantees this submission's
-  // own slide indexes are counted at most once. Only run when at least one
-  // channel actually queued — an all-failed submission posted nothing, so
-  // there is nothing new to fold into the completeness union.
-  if (summary.queued > 0) {
-    // Resolved through post_images -> generations, not posts.idea_id: a
-    // freeform post spanning several ideas has idea_id: null on its own post
-    // row, so keying off posts.idea_id would silently forget that a slide of
-    // idea B went out when it was posted bundled with idea A's slides. Every
-    // generation in `siblings` belongs to one of the ideas being completed
-    // here, so scoping post_images to those generation ids covers every post
-    // — single-idea or freeform, single-channel or multi-channel — that
-    // carried any of their slides.
-    const { data: priorImagesData, error: priorImagesErr } = await supabase
-      .from("post_images")
-      .select("generation_id, post:posts(status, buffer_channel_id)")
-      .in("generation_id", siblings.map((s) => s.id))
-      .eq("user_id", user.id);
-    if (priorImagesErr) {
-      // Buffer posts already went out and can't be un-posted; a failure to
-      // check prior posted slides only means completeness can't be updated
-      // this round, not that the submission itself failed. Log and leave
-      // idea status untouched rather than mis-shaping the response.
-      console.error("posts/create: failed to check prior posted slides:", priorImagesErr.message);
-    } else {
-      const slideBySiblingId = new Map(siblings.map((s) => [s.id, { idea_id: s.idea_id, slide_index: s.slide_index }]));
-      const priorPostedSlidesByIdea = postedSlideIndexesByIdea(
-        ((priorImagesData ?? []) as unknown as {
-          generation_id: string; post: { status: string; buffer_channel_id: string } | null;
-        }[])
-          .map((row): PostedSlideJoinRow | null => {
-            const slide = slideBySiblingId.get(row.generation_id);
-            return slide && row.post
-              ? {
-                  post_status: row.post.status,
-                  idea_id: slide.idea_id,
-                  slide_index: slide.slide_index,
-                  buffer_channel_id: row.post.buffer_channel_id,
-                }
-              : null;
-          })
-          .filter((row): row is PostedSlideJoinRow => row !== null),
-      );
-
-      // Critical (review): built from each QUEUED channel's own truncated
-      // prefix (channelOutcomes + mediaForPlatform inside sentSlidesByIdea),
-      // never from the full submitted `gens` list — a slide X's mosaic cap
-      // dropped from the payload must not count as "sent" just because it
-      // was part of the request, and a slide submitted only to a channel
-      // that failed must not count as sent at all.
-      const submittedSlidesByIdea = sentSlidesByIdea(
-        ordered.map((g) => ({ idea_id: g.idea_id, slide_index: g.slide_index })),
-        imageUrls,
-        channelOutcomes,
-      );
-      const ideaById = new Map<string, Idea>();
-      for (const g of gens) {
-        if (!ideaById.has(g.idea_id)) ideaById.set(g.idea_id, g.idea);
-      }
-      const completedIdeaIds = uniqueIdeaIds.filter((id) => {
-        const idea = ideaById.get(id)!;
-        const slideCount = (idea.slides ?? []).length || 1;
-        const submitted = submittedSlidesByIdea.get(id) ?? new Set<number>();
-        const prior = priorPostedSlidesByIdea.get(id) ?? new Set<number>();
-        const union = new Set<number>([...submitted, ...prior]);
-        return union.size === slideCount;
-      });
-
-      if (completedIdeaIds.length > 0) {
-        const { error: ideaErr } = await supabase
-          .from("ideas").update({ status: "posted" }).in("id", completedIdeaIds).eq("user_id", user.id);
-        if (ideaErr) {
-          console.error("posts/create: failed to mark ideas posted:", ideaErr.message);
-        }
-      }
-    }
-  }
-
-  // Best-effort: never claim wholesale success or failure for a partial run.
-  // 500 only when every channel failed; 200 whenever anything queued.
-  return NextResponse.json({ postGroupId, results }, { status: summary.allFailed ? 500 : 200 });
+  const { postGroupId: pg, results, allFailed } = await createPostForUser(user.id, {
+    categoryKey, postGroupId, channels, baseCaption, scheduledAt, suppliedPostGroupId,
+    ordered, imageUrls, singleIdeaId, siblings, gens, uniqueIdeaIds,
+  });
+  return NextResponse.json({ postGroupId: pg, results }, { status: allFailed ? 500 : 200 });
 }

@@ -5,60 +5,32 @@ import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
-import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
-import type { RoleRefUrls } from "@/lib/types";
+import { type CategoryFields } from "@/lib/categories";
 import { parseBrandList } from "@/lib/brand";
+import { createApiTokenForUser, listApiTokensForUser, revokeApiTokenForUser } from "@/lib/auth/api-tokens";
+import {
+  createCategoryForUser,
+  updateCategoryForUser,
+  clearRoleRefUrlForUser,
+  deleteCategoryForUser,
+} from "@/lib/category-mutations";
+import { saveBrandProfileForUser } from "@/lib/brand-profile";
+
+// Everything exported from this file is a "use server" action — i.e. a public
+// endpoint reachable by direct POST. Every export below therefore starts with
+// requireUser(); the userId-parameterized cores they delegate to deliberately
+// live in plain lib/ modules (lib/category-mutations.ts, lib/brand-profile.ts)
+// so they are NOT published as actions of their own.
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
-  validateCategoryFields(fields);
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.from("categories").insert({
-    user_id: user.id,
-    key: slugify(fields.name),
-    name: fields.name,
-    style_guide: fields.style_guide,
-    output_format: fields.output_format,
-    style_ref_url: fields.style_ref_url,
-    post_caption: fields.post_caption,
-    buffer_channel_id: fields.buffer_channel_id,
-    buffer_connection_id: fields.buffer_connection_id || null,
-    caption_guide: fields.caption_guide,
-    buffer_channel_service: fields.buffer_channel_service,
-    images_per_carousel: fields.images_per_carousel,
-    post_type: fields.post_type,
-    role_guides: fields.role_guides,
-    aspect_ratio: fields.aspect_ratio || "4:5",
-    active: fields.active,
-  });
-  if (error) {
-    if (error.code === "23505") throw new Error("You already have a category with a similar name");
-    throw new Error(error.message);
-  }
+  await createCategoryForUser(user.id, fields);
   revalidatePath("/config");
 }
 
 export async function updateCategory(id: string, fields: CategoryFields) {
-  await requireUser();
-  validateCategoryFields(fields);
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.from("categories").update({
-    name: fields.name,
-    style_guide: fields.style_guide,
-    output_format: fields.output_format,
-    style_ref_url: fields.style_ref_url,
-    post_caption: fields.post_caption,
-    buffer_channel_id: fields.buffer_channel_id,
-    buffer_connection_id: fields.buffer_connection_id || null,
-    caption_guide: fields.caption_guide,
-    buffer_channel_service: fields.buffer_channel_service,
-    images_per_carousel: fields.images_per_carousel,
-    post_type: fields.post_type,
-    role_guides: fields.role_guides,
-    aspect_ratio: fields.aspect_ratio || "4:5",
-    active: fields.active,
-  }).eq("id", id);
-  if (error) throw new Error(error.message);
+  const user = await requireUser();
+  await updateCategoryForUser(user.id, id, fields);
   revalidatePath("/config");
 }
 
@@ -67,23 +39,14 @@ export async function updateCategory(id: string, fields: CategoryFields) {
 // action and the promotion endpoint touch role_ref_urls — manual saves
 // never do (CategoryFields deliberately excludes it).
 export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
-  await requireUser();
-  const supabase = await createServerSupabase();
-  const { data: category } = await supabase
-    .from("categories").select("role_ref_urls").eq("id", categoryId).maybeSingle();
-  if (!category) throw new Error("unknown category");
-  const next: RoleRefUrls = { ...(category.role_ref_urls ?? {}) };
-  delete next[role];
-  const { error } = await supabase.from("categories").update({ role_ref_urls: next }).eq("id", categoryId);
-  if (error) throw new Error(error.message);
+  const user = await requireUser();
+  await clearRoleRefUrlForUser(user.id, categoryId, role);
   revalidatePath("/config");
 }
 
 export async function deleteCategory(id: string) {
-  await requireUser();
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.from("categories").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  const user = await requireUser();
+  await deleteCategoryForUser(user.id, id);
   revalidatePath("/config");
 }
 
@@ -153,30 +116,19 @@ export async function saveBrandProfile(
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
-  const supabase = await createServerSupabase();
-  const businessName = String(formData.get("business_name") ?? "").trim();
-  // A brand profile with no name is broken on its own terms: it's what the
-  // onboarding wizard's `brandDone` keys on and what `brandBlock` leads with
-  // downstream. Reject rather than upsert an unnamed row.
-  if (!businessName) return { error: "Give the brand a name." };
   try {
-    const { error } = await supabase.from("brand_profiles").upsert(
-      {
-        user_id: user.id,
-        business_name: businessName,
-        business_description: String(formData.get("business_description") ?? "").trim(),
-        audience: String(formData.get("audience") ?? "").trim(),
-        voice: String(formData.get("voice") ?? "").trim(),
-        avoid: String(formData.get("avoid") ?? "").trim(),
-        proof_points: parseBrandList(formData.get("proof_points")),
-        standing: parseBrandList(formData.get("standing")),
-        colors: parseBrandList(formData.get("colors")),
-        fonts: parseBrandList(formData.get("fonts")),
-        visual_notes: String(formData.get("visual_notes") ?? "").trim(),
-      },
-      { onConflict: "user_id" },
-    );
-    if (error) return { error: error.message };
+    await saveBrandProfileForUser(user.id, {
+      business_name: String(formData.get("business_name") ?? "").trim(),
+      business_description: String(formData.get("business_description") ?? "").trim(),
+      audience: String(formData.get("audience") ?? "").trim(),
+      voice: String(formData.get("voice") ?? "").trim(),
+      avoid: String(formData.get("avoid") ?? "").trim(),
+      proof_points: parseBrandList(formData.get("proof_points")),
+      standing: parseBrandList(formData.get("standing")),
+      colors: parseBrandList(formData.get("colors")),
+      fonts: parseBrandList(formData.get("fonts")),
+      visual_notes: String(formData.get("visual_notes") ?? "").trim(),
+    });
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -252,4 +204,26 @@ export async function deleteFormat(id: string): Promise<{ error?: string }> {
   if (error) return { error: error.message };
   revalidatePath("/config/formats");
   return {};
+}
+
+export async function createApiToken(label: string): Promise<{ token?: string; error?: string }> {
+  const user = await requireUser();
+  try {
+    const { token } = await createApiTokenForUser(user.id, label);
+    revalidatePath("/config");
+    return { token };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function listApiTokens() {
+  const user = await requireUser();
+  return listApiTokensForUser(user.id);
+}
+
+export async function revokeApiToken(tokenId: string): Promise<void> {
+  const user = await requireUser();
+  await revokeApiTokenForUser(user.id, tokenId);
+  revalidatePath("/config");
 }

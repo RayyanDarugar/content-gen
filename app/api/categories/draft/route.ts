@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { validateCategoryFields, slugify, type CategoryFields } from "@/lib/categories";
@@ -9,7 +9,7 @@ import {
   DraftTurnOutput, buildDraftSystemPrompt, toAnthropicMessages,
   normalizeDraft, categoryToDraft, type DraftTurn, type NormalizedDraft,
 } from "@/lib/athena/draft-category";
-import type { BrandContext } from "@/lib/athena/prompts";
+import { loadBrandContext } from "@/lib/athena/brand-context";
 import type { Category, FormatSuggestion } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
 import { writebackPlan, inventedFormatRow } from "@/lib/athena/suggestion-writeback";
@@ -47,6 +47,73 @@ function isDraftTurn(t: unknown): t is DraftTurn {
   );
 }
 
+export async function draftCategoryTurnForUser(
+  userId: string,
+  input: { turns: DraftTurn[]; categoryId: string | null; styleRefUrl: string | null; suggestionId: string | null },
+): Promise<{ categoryId: string; assistantMessage: string; draft: NormalizedDraft }> {
+  const supabase = createAdminSupabase();
+
+  let existing: Category | null = null;
+  if (input.categoryId) {
+    const { data } = await supabase
+      .from("categories").select("*").eq("id", input.categoryId).eq("user_id", userId).maybeSingle();
+    if (!data) throw new Error("unknown category");
+    existing = data as Category;
+  }
+
+  const brand = await loadBrandContext(userId);
+
+  const anthropic = createAnthropicClient({
+    apiKey: await requireAnthropicKey(userId),
+    feature: "category_draft",
+  });
+  const response = await anthropic.messages.parse({
+    model: MODEL,
+    max_tokens: DRAFT_MAX_TOKENS,
+    system: buildDraftSystemPrompt(brand, existing ? categoryToDraft(existing) : undefined),
+    messages: toAnthropicMessages(input.turns as DraftTurn[]),
+    output_config: { format: zodOutputFormat(DraftTurnOutput) },
+  });
+  const parsed = response.parsed_output;
+  if (!parsed) {
+    throw new Error(`draft turn returned no parseable output (stop_reason: ${response.stop_reason})`);
+  }
+  const { assistant_message, ...rest } = parsed;
+  const draft = normalizeDraft(rest);
+
+  // Full-fields validation with defaults filled in — same validator the
+  // manual actions use, so the wizard can never write a row the editor
+  // couldn't have.
+  const fields: CategoryFields = {
+    ...draft,
+    style_ref_url: input.styleRefUrl ?? existing?.style_ref_url ?? "",
+    post_caption: existing?.post_caption ?? "",
+    buffer_channel_id: existing?.buffer_channel_id ?? "",
+    buffer_connection_id: existing?.buffer_connection_id ?? "",
+    caption_guide: draft.caption_guide,
+    buffer_channel_service: existing?.buffer_channel_service ?? "",
+    active: existing?.active ?? false,
+  };
+  validateCategoryFields(fields);
+
+  let id: string;
+  if (existing) {
+    const patch = input.styleRefUrl
+      ? { ...draftColumns(draft), style_ref_url: input.styleRefUrl }
+      : draftColumns(draft);
+    const { error } = await supabase.from("categories").update(patch).eq("id", existing.id).eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    id = existing.id;
+  } else {
+    id = await insertDraft(supabase, userId, draft, input.styleRefUrl ?? "");
+    // Insert path only. On an update this would mint a duplicate format on
+    // every subsequent turn of the same conversation.
+    if (input.suggestionId) await applyWriteback(supabase, userId, input.suggestionId, id);
+  }
+
+  return { categoryId: id, assistantMessage: assistant_message, draft };
+}
+
 export async function POST(request: NextRequest) {
   let user;
   try {
@@ -67,80 +134,8 @@ export async function POST(request: NextRequest) {
   const suggestionId = typeof body?.suggestionId === "string" && body.suggestionId ? body.suggestionId : null;
 
   try {
-    const supabase = await createServerSupabase();
-
-    let existing: Category | null = null;
-    if (categoryId) {
-      const { data } = await supabase
-        .from("categories").select("*").eq("id", categoryId).maybeSingle();
-      if (!data) return NextResponse.json({ error: "unknown category" }, { status: 404 });
-      existing = data as Category;
-    }
-
-    const { data: brandRow } = await supabase
-      .from("brand_profiles").select("*").eq("user_id", user.id).maybeSingle();
-    const brand: BrandContext = {
-      business_name: brandRow?.business_name ?? "",
-      business_description: brandRow?.business_description ?? "",
-      audience: brandRow?.audience ?? "",
-      voice: brandRow?.voice ?? "",
-      avoid: brandRow?.avoid ?? "",
-      proof_points: brandRow?.proof_points ?? [],
-      standing: brandRow?.standing ?? [],
-      colors: brandRow?.colors ?? [],
-      fonts: brandRow?.fonts ?? [],
-      visual_notes: brandRow?.visual_notes ?? "",
-    };
-
-    const anthropic = createAnthropicClient({
-      apiKey: await requireAnthropicKey(user.id),
-      feature: "category_draft",
-    });
-    const response = await anthropic.messages.parse({
-      model: MODEL,
-      max_tokens: DRAFT_MAX_TOKENS,
-      system: buildDraftSystemPrompt(brand, existing ? categoryToDraft(existing) : undefined),
-      messages: toAnthropicMessages(turns as DraftTurn[]),
-      output_config: { format: zodOutputFormat(DraftTurnOutput) },
-    });
-    const parsed = response.parsed_output;
-    if (!parsed) {
-      throw new Error(`draft turn returned no parseable output (stop_reason: ${response.stop_reason})`);
-    }
-    const { assistant_message, ...rest } = parsed;
-    const draft = normalizeDraft(rest);
-
-    // Full-fields validation with defaults filled in — same validator the
-    // manual actions use, so the wizard can never write a row the editor
-    // couldn't have.
-    const fields: CategoryFields = {
-      ...draft,
-      style_ref_url: styleRefUrl ?? existing?.style_ref_url ?? "",
-      post_caption: existing?.post_caption ?? "",
-      buffer_channel_id: existing?.buffer_channel_id ?? "",
-      buffer_connection_id: existing?.buffer_connection_id ?? "",
-      caption_guide: draft.caption_guide,
-      buffer_channel_service: existing?.buffer_channel_service ?? "",
-      active: existing?.active ?? false,
-    };
-    validateCategoryFields(fields);
-
-    let id: string;
-    if (existing) {
-      const patch = styleRefUrl
-        ? { ...draftColumns(draft), style_ref_url: styleRefUrl }
-        : draftColumns(draft);
-      const { error } = await supabase.from("categories").update(patch).eq("id", existing.id);
-      if (error) throw new Error(error.message);
-      id = existing.id;
-    } else {
-      id = await insertDraft(supabase, user.id, draft, styleRefUrl ?? "");
-      // Insert path only. On an update this would mint a duplicate format on
-      // every subsequent turn of the same conversation.
-      if (suggestionId) await applyWriteback(supabase, user.id, suggestionId, id);
-    }
-
-    return NextResponse.json({ categoryId: id, assistantMessage: assistant_message, draft });
+    const result = await draftCategoryTurnForUser(user.id, { turns, categoryId, styleRefUrl, suggestionId });
+    return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("draft turn failed:", message);
@@ -152,7 +147,7 @@ export async function POST(request: NextRequest) {
 // retry on key collision (23505) so the model picking an existing name on
 // turn 1 doesn't dead-end the conversation. key is immutable after this.
 async function insertDraft(
-  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  supabase: Awaited<ReturnType<typeof createAdminSupabase>>,
   userId: string,
   draft: NormalizedDraft,
   styleRefUrl: string,
@@ -186,18 +181,19 @@ async function insertDraft(
 // formats row is a lost analytics record. Failing the request here would
 // trade the former for the latter.
 async function applyWriteback(
-  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  supabase: Awaited<ReturnType<typeof createAdminSupabase>>,
   userId: string,
   suggestionId: string,
   categoryId: string,
 ): Promise<void> {
   try {
-    // RLS scopes this to the caller, so a forged id from another tenant
-    // simply finds nothing.
+    // The admin client bypasses RLS, so we must add explicit .eq("user_id", userId)
+    // filters to prevent a forged id from another tenant accessing their data.
     const { data, error: lookupError } = await supabase
       .from("format_suggestions")
       .select("format_id, invented_format, category_id")
       .eq("id", suggestionId)
+      .eq("user_id", userId)
       .maybeSingle();
     if (lookupError) throw new Error(lookupError.message);
 
@@ -224,11 +220,11 @@ async function applyWriteback(
 
     if (sourceFormatId) {
       const { error: categoryUpdateError } = await supabase.from("categories")
-        .update({ source_format_id: sourceFormatId }).eq("id", categoryId);
+        .update({ source_format_id: sourceFormatId }).eq("id", categoryId).eq("user_id", userId);
       if (categoryUpdateError) throw new Error(categoryUpdateError.message);
     }
     const { error: suggestionUpdateError } = await supabase.from("format_suggestions")
-      .update({ category_id: categoryId }).eq("id", suggestionId);
+      .update({ category_id: categoryId }).eq("id", suggestionId).eq("user_id", userId);
     if (suggestionUpdateError) throw new Error(suggestionUpdateError.message);
   } catch (e) {
     console.error("suggestion writeback failed:", e instanceof Error ? e.message : String(e));

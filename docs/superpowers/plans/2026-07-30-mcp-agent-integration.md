@@ -239,7 +239,7 @@ export async function revokeApiToken(tokenId: string): Promise<void> {
 }
 ```
 
-This plan does not include a dedicated UI panel — wire a minimal "API tokens" section into the existing config page only if you want to mint tokens without a REPL. In the meantime a token can be minted by calling `createApiToken` from a one-off script (`npx tsx` against the deployed environment, using `createServerSupabase`'s equivalent admin path) or a temporary debug button. If you want the UI panel built, that's a follow-up task, not blocking anything below.
+This plan does not include a dedicated UI panel — wire a minimal "API tokens" section into the existing config page only if you want to mint tokens from the browser. Until then, `scripts/create-api-token.ts` (run via `npm run create-api-token -- <email> [label]`) mints one by calling `createApiTokenForUser` directly against whichever Supabase project `.env.local` points at; the npm script passes `--conditions=react-server` so the `server-only` import in `lib/auth/api-tokens.ts` resolves to its empty stub under plain Node. Revocation without a UI means deleting the row from `api_tokens`. If you want the UI panel built, that's a follow-up task, not blocking anything below.
 
 - [ ] **Step 2: Commit**
 
@@ -253,8 +253,12 @@ git commit -m "feat: add API token create/list/revoke actions"
 ### Task 3: Extract categories + brand-profile core logic
 
 **Files:**
+- Create: `lib/category-mutations.ts`
+- Create: `lib/brand-profile.ts`
 - Modify: `app/(app)/config/actions.ts`
 - Modify: `app/api/brand/extract/route.ts`
+
+**The `*ForUser` cores must NOT live in `app/(app)/config/actions.ts`.** That file is `"use server"`, and every export of a `"use server"` module is published as a callable server action reachable by direct POST — nothing needs to import it. These functions take `userId` as a parameter and perform no auth of their own (deliberately, so the MCP route can pass its bearer token's userId), so exporting them from an action file would hand anyone an unauthenticated `deleteCategoryForUser(someOtherTenantId, id)` endpoint and undo the tenant isolation this task exists to establish. They go in plain `lib/` modules, exactly like every other `*ForUser` helper in this codebase (`lib/athena/generate-ideas.ts`, `lib/athena/submit-generations.ts`, `lib/athena/resubmit-slide.ts`, `lib/settings/buffer.ts`). `app/(app)/config/actions.ts` keeps only the thin wrappers, each of which calls `requireUser()` first.
 
 **Interfaces:**
 - Produces: `createCategoryForUser(userId: string, fields: CategoryFields): Promise<void>`, `updateCategoryForUser(userId: string, id: string, fields: CategoryFields): Promise<void>`, `deleteCategoryForUser(userId: string, id: string): Promise<void>`, `clearRoleRefUrlForUser(userId: string, categoryId: string, role: "hook" | "beat" | "payoff" | "single"): Promise<void>`, `saveBrandProfileForUser(userId: string, fields: { business_name: string; business_description: string; audience: string; voice: string; avoid: string; proof_points: string[]; standing: string[]; colors: string[]; fonts: string[]; visual_notes: string }): Promise<void>`
@@ -262,10 +266,16 @@ git commit -m "feat: add API token create/list/revoke actions"
 
 Note: `createCategory`/`updateCategory`/`deleteCategory`/`clearRoleRefUrl` currently use `createServerSupabase()` (RLS-scoped, filters implicitly by session). The extracted `*ForUser` versions switch to `createAdminSupabase()` with an explicit `.eq("user_id", userId)` — this is a deliberate, load-bearing change: without the explicit filter, `updateCategoryForUser`/`deleteCategoryForUser` called with the admin client and no `user_id` predicate would touch **any** user's row by id. Every write below adds `.eq("user_id", userId)` even though the current RLS-scoped versions rely on the policy alone.
 
-- [ ] **Step 1: Add the core functions, keep the actions as thin wrappers**
+- [ ] **Step 1: Add the core functions in `lib/`, keep the actions as thin wrappers**
 
 ```typescript
-// app/(app)/config/actions.ts
+// lib/category-mutations.ts — plain module, NO "use server" directive.
+// (Named `category-mutations.ts` rather than `categories/mutations.ts`
+// because `lib/categories.ts` already owns that module specifier.)
+import "server-only";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
+import type { RoleRefUrls } from "@/lib/types";
 
 export async function createCategoryForUser(userId: string, fields: CategoryFields): Promise<void> {
   validateCategoryFields(fields);
@@ -294,12 +304,6 @@ export async function createCategoryForUser(userId: string, fields: CategoryFiel
   }
 }
 
-export async function createCategory(fields: CategoryFields) {
-  const user = await requireUser();
-  await createCategoryForUser(user.id, fields);
-  revalidatePath("/config");
-}
-
 export async function updateCategoryForUser(userId: string, id: string, fields: CategoryFields): Promise<void> {
   validateCategoryFields(fields);
   const supabase = createAdminSupabase();
@@ -322,12 +326,6 @@ export async function updateCategoryForUser(userId: string, id: string, fields: 
   if (error) throw new Error(error.message);
 }
 
-export async function updateCategory(id: string, fields: CategoryFields) {
-  const user = await requireUser();
-  await updateCategoryForUser(user.id, id, fields);
-  revalidatePath("/config");
-}
-
 export async function clearRoleRefUrlForUser(
   userId: string, categoryId: string, role: "hook" | "beat" | "payoff" | "single",
 ): Promise<void> {
@@ -342,25 +340,19 @@ export async function clearRoleRefUrlForUser(
   if (error) throw new Error(error.message);
 }
 
-export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
-  const user = await requireUser();
-  await clearRoleRefUrlForUser(user.id, categoryId, role);
-  revalidatePath("/config");
-}
-
 export async function deleteCategoryForUser(userId: string, id: string): Promise<void> {
   const supabase = createAdminSupabase();
   const { error } = await supabase.from("categories").delete().eq("id", id).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
+```
 
-export async function deleteCategory(id: string) {
-  const user = await requireUser();
-  await deleteCategoryForUser(user.id, id);
-  revalidatePath("/config");
-}
+```typescript
+// lib/brand-profile.ts — plain module, NO "use server" directive.
+import "server-only";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
-interface BrandProfileFields {
+export interface BrandProfileFields {
   business_name: string; business_description: string; audience: string; voice: string; avoid: string;
   proof_points: string[]; standing: string[]; colors: string[]; fonts: string[]; visual_notes: string;
 }
@@ -368,11 +360,47 @@ interface BrandProfileFields {
 export async function saveBrandProfileForUser(userId: string, fields: BrandProfileFields): Promise<void> {
   if (!fields.business_name.trim()) throw new Error("Give the brand a name.");
   const supabase = createAdminSupabase();
+  // business_name is validated trimmed, so it must be STORED trimmed too:
+  // the form path trims before calling, but the MCP `update_brand_profile`
+  // tool passes model-authored text straight through.
   const { error } = await supabase.from("brand_profiles").upsert(
-    { user_id: userId, ...fields },
+    { user_id: userId, ...fields, business_name: fields.business_name.trim() },
     { onConflict: "user_id" },
   );
   if (error) throw new Error(error.message);
+}
+```
+
+```typescript
+// app/(app)/config/actions.ts — "use server". Only these thin wrappers, each
+// authenticating first, then delegating to the lib/ cores above.
+import {
+  createCategoryForUser, updateCategoryForUser, clearRoleRefUrlForUser, deleteCategoryForUser,
+} from "@/lib/category-mutations";
+import { saveBrandProfileForUser } from "@/lib/brand-profile";
+
+export async function createCategory(fields: CategoryFields) {
+  const user = await requireUser();
+  await createCategoryForUser(user.id, fields);
+  revalidatePath("/config");
+}
+
+export async function updateCategory(id: string, fields: CategoryFields) {
+  const user = await requireUser();
+  await updateCategoryForUser(user.id, id, fields);
+  revalidatePath("/config");
+}
+
+export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
+  const user = await requireUser();
+  await clearRoleRefUrlForUser(user.id, categoryId, role);
+  revalidatePath("/config");
+}
+
+export async function deleteCategory(id: string) {
+  const user = await requireUser();
+  await deleteCategoryForUser(user.id, id);
+  revalidatePath("/config");
 }
 
 export async function saveBrandProfile(
@@ -401,7 +429,7 @@ export async function saveBrandProfile(
 }
 ```
 
-Add `createAdminSupabase` to the file's imports (`import { createAdminSupabase } from "@/lib/supabase/admin";`).
+`app/(app)/config/actions.ts` no longer needs `createAdminSupabase`, `validateCategoryFields`, `slugify` or `RoleRefUrls` — those move with the cores into `lib/category-mutations.ts`; drop them from the action file's imports if nothing else there uses them.
 
 - [ ] **Step 2: Run the existing test suite and the app's config page manually**
 
@@ -523,7 +551,7 @@ Expected: PASS. Then trigger a brand extraction from the config page against a r
 - [ ] **Step 5: Commit**
 
 ```bash
-git add "app/(app)/config/actions.ts" app/api/brand/extract/route.ts
+git add lib/category-mutations.ts lib/brand-profile.ts "app/(app)/config/actions.ts" app/api/brand/extract/route.ts
 git commit -m "refactor: extract userId-parameterized core logic for categories and brand profile"
 ```
 
@@ -532,16 +560,23 @@ git commit -m "refactor: extract userId-parameterized core logic for categories 
 ### Task 4: Extract ideas core logic
 
 **Files:**
+- Create: `lib/idea-mutations.ts`
 - Modify: `app/(app)/ideas/actions.ts`
 
 **Interfaces:**
 - Produces: `setIdeaDecisionForUser(userId: string, id: string, decision: "approved" | "rejected"): Promise<void>`, `createManualIdeaForUser(userId: string, input: { categoryKey: string; concept: string; slides: Slide[]; postText?: string }): Promise<void>`
 
-- [ ] **Step 1: Extract and wrap**
+Same rule as Task 3: the `*ForUser` cores go in a plain `lib/` module, never in `app/(app)/ideas/actions.ts` — that file is `"use server"`, so anything exported from it is a publicly callable server action, and these functions take a tenant's `userId` without authenticating.
+
+- [ ] **Step 1: Extract into `lib/idea-mutations.ts`**
 
 ```typescript
-// app/(app)/ideas/actions.ts
+// lib/idea-mutations.ts — plain module, NO "use server" directive.
+import "server-only";
+import { randomUUID } from "crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { validateSlideShape } from "@/lib/athena/slides";
+import type { Slide } from "@/lib/types";
 
 export async function setIdeaDecisionForUser(
   userId: string, id: string, decision: "approved" | "rejected",
@@ -554,12 +589,6 @@ export async function setIdeaDecisionForUser(
     .eq("user_id", userId)
     .in("status", ["pending_review", "approved", "rejected"]);
   if (error) throw new Error(error.message);
-}
-
-export async function setIdeaDecision(id: string, decision: "approved" | "rejected") {
-  const user = await requireUser();
-  await setIdeaDecisionForUser(user.id, id, decision);
-  revalidatePath("/ideas");
 }
 
 export async function createManualIdeaForUser(
@@ -596,6 +625,20 @@ export async function createManualIdeaForUser(
   });
   if (error) throw new Error(error.message);
 }
+```
+
+```typescript
+// app/(app)/ideas/actions.ts — "use server". Thin, authenticated wrappers only.
+import { revalidatePath } from "next/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { setIdeaDecisionForUser, createManualIdeaForUser } from "@/lib/idea-mutations";
+import type { Slide } from "@/lib/types";
+
+export async function setIdeaDecision(id: string, decision: "approved" | "rejected") {
+  const user = await requireUser();
+  await setIdeaDecisionForUser(user.id, id, decision);
+  revalidatePath("/ideas");
+}
 
 export async function createManualIdea(input: {
   categoryKey: string; concept: string; slides: Slide[]; postText?: string;
@@ -614,7 +657,7 @@ Expected: PASS
 - [ ] **Step 3: Commit**
 
 ```bash
-git add "app/(app)/ideas/actions.ts"
+git add lib/idea-mutations.ts "app/(app)/ideas/actions.ts"
 git commit -m "refactor: extract userId-parameterized core logic for idea decisions and manual ideas"
 ```
 
@@ -1044,6 +1087,13 @@ import { createMcpHandler } from "mcp-handler";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
 
+// Matches the longest budget of any route this one fans into (brand/extract,
+// categories/draft, posts/rewrite-caption, posts/adapt-caption, ideas/generate
+// and images/generate all set 120). Without it the route runs at the platform
+// default, and a schedule_post killed mid-loop can leave a live Buffer post
+// queued with no local posts row.
+export const maxDuration = 120;
+
 // Every tool-registration task below (8, 9, 11) adds server.registerTool(...)
 // calls inside this same callback, closing over `userId` from the
 // authenticated request — there is no session state between requests, so a
@@ -1426,6 +1476,16 @@ server.registerTool(
     const result = await scheduleValidatedPost(userId, {
       categoryKey, generationIds, channels, caption, scheduledAt: parsed.toISOString(), postGroupId: postGroupId ?? null,
     });
+    // Total failure is raised, not returned: every other tool here signals
+    // failure by throwing, and returning the normal success shape would bury
+    // "nothing was queued" in a per-channel field. Keep the payload in the
+    // message — a retry needs the postGroupId.
+    if (result.allFailed) {
+      throw new Error(
+        `schedule_post failed on every channel — nothing was queued. Retry with postGroupId ` +
+          `"${result.postGroupId}" to reuse this post group: ${JSON.stringify(result)}`,
+      );
+    }
     return { content: [{ type: "text", text: JSON.stringify(result) }] };
   },
 );
@@ -1440,11 +1500,18 @@ server.registerTool(
 export async function scheduleValidatedPost(
   userId: string,
   input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string; postGroupId: string | null },
-): Promise<{ postGroupId: string; results: ChannelResult[] }> {
+): Promise<{ postGroupId: string; results: ChannelResult[]; allFailed: boolean }> {
   const supabase = createAdminSupabase();
   const { data: category, error: catErr } = await supabase
     .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
   if (catErr || !category || !(category as Category).active) throw new Error("unknown or inactive category");
+
+  // Same check the HTTP route runs before calling createPostForUser — without
+  // it, the same channelId listed twice would queue two identical,
+  // un-unpostable posts to one live account.
+  if (new Set(input.channels.map((c) => c.channelId)).size !== input.channels.length) {
+    throw new Error("duplicate channel in selection");
+  }
 
   const { data: gensData, error: genErr } = await supabase
     .from("generations").select("*, idea:ideas(*)").in("id", input.generationIds).eq("user_id", userId);
@@ -1481,7 +1548,10 @@ export async function scheduleValidatedPost(
     scheduledAt: input.scheduledAt, suppliedPostGroupId: input.postGroupId, ordered, imageUrls,
     singleIdeaId, siblings, gens, uniqueIdeaIds,
   });
-  return { postGroupId: pg, results };
+  // allFailed is passed through, never discarded — the HTTP route turns it
+  // into a 500 and the MCP tool needs the same signal, or an every-channel
+  // failure comes back looking like success.
+  return { postGroupId: pg, results, allFailed };
 }
 ```
 
