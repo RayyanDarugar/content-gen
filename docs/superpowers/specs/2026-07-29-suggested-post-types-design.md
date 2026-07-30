@@ -170,15 +170,18 @@ No live-LLM tests, consistent with the repo.
 - **Sample validation:** the sample's slide array validated against the existing `validateSlideShape` rules for its `post_type` (narrative → hook/beats/payoff; independent → one `single` slide), so a malformed sample is caught rather than rendered.
 - **Seeding logic:** a suggestion response maps to a first assistant turn in the wizard's existing `DraftTurn` shape.
 - **Writeback:** an invented suggestion that persists creates exactly one `origin = 'invented'`, `shared = false` row and stamps `source_format_id`; one drawn from the library creates no format row and stamps the existing id; a second turn on the same category creates nothing further.
-**RLS is verified by hand, not by test.** Every test in this repo is a pure-function unit — there is no Supabase client, no fixture database, and no integration harness, and standing one up is not in this project's scope. The policies in §3.1 are therefore checked manually against the live database when the migration is applied, using the same by-hand workflow already used for every migration here. The plan must carry this as an explicit acceptance step with a written checklist, not leave it implied:
+**RLS is verified by an executable script, not by the unit suite.** Every file in `tests/` is a pure-function unit with no Supabase client, so RLS cannot be asserted there. But this repo already established the right mechanism for exactly this: `scripts/verify-isolation.ts`, written for migration 0005, creates two users with the service role, signs each in with the anon key, and asserts cross-tenant isolation — wired to `npm run verify-isolation`.
+
+`formats` introduces the first table here whose read policy is deliberately **not** pure owner-isolation, so it needs its own script following that pattern: `scripts/verify-formats-rls.ts`, run as `npm run verify-formats-rls` against dev Supabase after the migration is applied. It must assert:
 
 1. Tenant B cannot select tenant A's `shared = false` format.
-2. Tenant B can select tenant A's `shared = true` format.
-3. A tenant cannot insert or update any `formats` row with `shared = true`.
-4. A tenant cannot update a row that is already `shared = true`, including their own.
-5. A tenant cannot select another tenant's `format_suggestions` rows.
+2. Tenant B **can** select tenant A's `shared = true` format.
+3. A tenant cannot insert a `formats` row with `shared = true`.
+4. A tenant cannot update any row to `shared = true`.
+5. A tenant cannot update a row that is already `shared = true`, including their own.
+6. Tenant B cannot select tenant A's `format_suggestions` rows.
 
-Point 4 is the one most likely to be wrong in a first draft, because it depends on the `with check` clause rather than the `using` clause.
+Point 2 is the one that distinguishes this table from every other table in the schema, and points 3–5 depend on the `with check` clause rather than `using` — the most likely thing to be wrong in a first draft.
 
 ## 13. Phasing
 
