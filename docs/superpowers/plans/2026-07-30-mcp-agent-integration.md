@@ -805,13 +805,13 @@ git commit -m "refactor: extract createPostForUser so posting can be called outs
 
 ### Task 6: Shared brand-context loader
 
-> **DEFERRED (2026-07-30):** `app/api/categories/draft/route.ts` is also being modified right now by a concurrent agent executing `docs/superpowers/plans/2026-07-30-suggested-post-types.md` in its own worktree (`worktree-suggested-post-types`, for suggestion-writeback). Do the `loadBrandContext` extraction and the `rewrite-caption`/`adapt-caption` parts of this task now — skip the `categories/draft` part of Step 5 (the `draftCategoryTurnForUser` extraction) until that other plan has merged to main. Once it has, redo Step 5's `categories/draft` half against the merged file, and only then add the `draft_category_turn` tool row from Task 9's table (it depends on `draftCategoryTurnForUser`).
+> **Note (2026-07-30):** `docs/superpowers/plans/2026-07-30-suggested-post-types.md` has since merged to `main` (commit `cd5e960`). `app/api/categories/draft/route.ts` now also takes a `suggestionId` and, on the insert-only path, calls a new `applyWriteback(supabase, userId, suggestionId, categoryId)` helper (already defined in this same file) that links or creates a library format via `writebackPlan`/`inventedFormatRow` from `lib/athena/suggestion-writeback.ts`. Step 5 below is updated to carry `applyWriteback` along with the rest of the route into `draftCategoryTurnForUser` — this is no longer deferred.
 
 **Files:**
 - Create: `lib/athena/brand-context.ts`
 - Modify: `app/api/posts/rewrite-caption/route.ts`
 - Modify: `app/api/posts/adapt-caption/route.ts`
-- Modify: `app/api/categories/draft/route.ts` (deferred — see note above)
+- Modify: `app/api/categories/draft/route.ts`
 - Test: `tests/brand-context.test.ts`
 
 **Interfaces:**
@@ -959,11 +959,13 @@ And to `categories/draft`, producing:
 ```typescript
 export async function draftCategoryTurnForUser(
   userId: string,
-  input: { turns: DraftTurn[]; categoryId: string | null; styleRefUrl: string | null },
+  input: { turns: DraftTurn[]; categoryId: string | null; styleRefUrl: string | null; suggestionId: string | null },
 ): Promise<{ categoryId: string; assistantMessage: string; draft: NormalizedDraft }>
 ```
 
-— move the `existing` category lookup (filtered by `userId`), the `loadBrandContext(userId)` call, the `anthropic.messages.parse` call, and the existing/insert branching (including the `insertDraft` helper, which already takes `userId` as a parameter and needs no change beyond receiving it from `draftCategoryTurnForUser` instead of the route) into this function unchanged; `POST` keeps only the request parsing/400s and the `isDraftTurn` validation.
+Move the `existing` category lookup (filtered by `.eq("user_id", userId)`), the `loadBrandContext(userId)` call, the `anthropic.messages.parse` call, and the existing/insert branching into this function, using `createAdminSupabase()` in place of `createServerSupabase()`. `POST` keeps only the request parsing/400s and the `isDraftTurn` validation (including parsing `suggestionId` from the body, which the current route already does).
+
+`insertDraft` and `applyWriteback` already take `userId` as a parameter each — no signature change there. But both currently rely on the RLS-scoped `createServerSupabase()` client to implicitly restrict rows to the caller (see `applyWriteback`'s own comment: "RLS scopes this to the caller, so a forged id from another tenant simply finds nothing"). Once they run under the RLS-bypassing admin client, that assumption breaks — a `userId` mismatch would silently touch another tenant's row. Add an explicit `.eq("user_id", userId)` to every query inside `applyWriteback` that doesn't already filter by it: the `format_suggestions` select by `suggestionId`, the `categories` update by `categoryId`, and the `format_suggestions` update by `suggestionId`. Update `applyWriteback`'s comment to say the admin client is why the filter is explicit now, not RLS.
 
 - [ ] **Step 6: Run the test suite and exercise all three flows manually once**
 
@@ -1217,7 +1219,7 @@ Each tool below follows the same shape: a zod `inputSchema`, and a handler that 
 | `create_category` | `CategoryFields` shape from `lib/categories.ts` | `createCategoryForUser` |
 | `update_category` | `id: string` + `CategoryFields` | `updateCategoryForUser` |
 | `clear_role_ref_url` | `categoryId: string, role: enum` | `clearRoleRefUrlForUser` |
-| `draft_category_turn` *(deferred — see Task 6 note; add once `draftCategoryTurnForUser` exists)* | `turns, categoryId?, styleRefUrl?` | `draftCategoryTurnForUser` |
+| `draft_category_turn` | `turns, categoryId?, styleRefUrl?, suggestionId?` | `draftCategoryTurnForUser` |
 | `generate_ideas` | `categoryKey: string, count: 1-20` | `generateIdeas(userId, categoryKey, count)` |
 | `set_idea_decision` | `id: string, decision: "approved"\|"rejected"` | `setIdeaDecisionForUser` |
 | `create_manual_idea` | `categoryKey, concept, slides, postText?` | `createManualIdeaForUser` |
