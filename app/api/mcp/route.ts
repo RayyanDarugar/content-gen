@@ -4,12 +4,13 @@ import { requireUser } from "@/lib/auth/require-user";
 import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadBrandContext } from "@/lib/athena/brand-context";
-import { listBufferConnections, getBufferChannelsForConnection } from "@/lib/settings/buffer";
+import { listBufferConnections, getBufferChannelsForConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import {
   saveBrandProfileForUser,
   createCategoryForUser,
   updateCategoryForUser,
   clearRoleRefUrlForUser,
+  deleteCategoryForUser,
 } from "@/app/(app)/config/actions";
 import { setIdeaDecisionForUser, createManualIdeaForUser } from "@/app/(app)/ideas/actions";
 import { extractBrandProfileForUser } from "@/app/api/brand/extract/route";
@@ -17,6 +18,10 @@ import { draftCategoryTurnForUser } from "@/app/api/categories/draft/route";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
 import { rewriteCaptionForUser } from "@/app/api/posts/rewrite-caption/route";
 import { adaptCaptionForUser } from "@/app/api/posts/adapt-caption/route";
+import { assertConfirmed } from "@/lib/mcp/confirm";
+import { submitGenerations } from "@/lib/athena/submit-generations";
+import { resubmitSlide } from "@/lib/athena/resubmit-slide";
+import { scheduleValidatedPost } from "@/app/api/posts/create/route";
 
 // Every tool-registration task below (8, 9, 11) adds server.registerTool(...)
 // calls inside this same callback, closing over `userId` from the
@@ -344,6 +349,103 @@ async function handleMcp(request: NextRequest): Promise<Response> {
           text: JSON.stringify(await adaptCaptionForUser(userId, { categoryKey, baseText, service, ideaId: ideaId ?? null })),
         }],
       }),
+    );
+
+    // --- Tier 2: irreversible / credit-spending / live-external-account
+    // tools. Every one of these MUST call assertConfirmed (or, for
+    // schedule_post, the scheduledAt future-date check) before any Supabase
+    // write or external API call — see task-10 self-review in the plan.
+    server.registerTool(
+      "delete_category",
+      {
+        title: "Delete post type",
+        description: "Permanently delete a post type. Irreversible — always confirm with the user first. Requires confirm: true.",
+        inputSchema: z.object({ id: z.string(), confirm: z.boolean().optional() }),
+      },
+      async ({ id, confirm }) => {
+        assertConfirmed({ confirm }, `permanently delete category ${id}`);
+        await deleteCategoryForUser(userId, id);
+        return { content: [{ type: "text", text: `deleted category ${id}` }] };
+      },
+    );
+
+    server.registerTool(
+      "remove_buffer_connection",
+      {
+        title: "Remove Buffer connection",
+        description: "Disconnect a Buffer connection. Irreversible in-app (the external Buffer/social account itself is unaffected). Requires confirm: true.",
+        inputSchema: z.object({ connectionId: z.string(), confirm: z.boolean().optional() }),
+      },
+      async ({ connectionId, confirm }) => {
+        assertConfirmed({ confirm }, `remove Buffer connection ${connectionId}`);
+        await removeBufferConnection(userId, connectionId);
+        return { content: [{ type: "text", text: `removed connection ${connectionId}` }] };
+      },
+    );
+
+    server.registerTool(
+      "submit_image_generation",
+      {
+        title: "Generate images",
+        description: "Submit ideas for image generation — spends real API credit per image. Requires confirm: true.",
+        inputSchema: z.object({ ideaIds: z.array(z.string()).min(1), refinementNotes: z.string().optional(), confirm: z.boolean().optional() }),
+      },
+      async ({ ideaIds, refinementNotes, confirm }) => {
+        assertConfirmed({ confirm }, `submit ${ideaIds.length} idea(s) for image generation (spends API credit)`);
+        return { content: [{ type: "text", text: JSON.stringify(await submitGenerations(userId, ideaIds, refinementNotes ?? "")) }] };
+      },
+    );
+
+    server.registerTool(
+      "resubmit_slide",
+      {
+        title: "Regenerate one slide",
+        description: "Regenerate a single slide of a carousel — spends real API credit. Requires confirm: true.",
+        inputSchema: z.object({ ideaId: z.string(), slideIndex: z.number().int().min(1), refinementNotes: z.string().optional(), confirm: z.boolean().optional() }),
+      },
+      async ({ ideaId, slideIndex, refinementNotes, confirm }) => {
+        assertConfirmed({ confirm }, `regenerate slide ${slideIndex} of idea ${ideaId} (spends API credit)`);
+        return { content: [{ type: "text", text: JSON.stringify(await resubmitSlide(userId, ideaId, slideIndex, refinementNotes ?? "")) }] };
+      },
+    );
+
+    const ScheduleChannelInput = z.object({ connectionId: z.string(), channelId: z.string(), service: z.string(), caption: z.string() });
+
+    server.registerTool(
+      "schedule_post",
+      {
+        title: "Schedule a post",
+        description:
+          "Schedule generated images to post to one or more connected channels at a future time via Buffer. " +
+          "This reaches a real, live social account and cannot be un-posted. scheduled_at is REQUIRED and must be " +
+          "in the future — there is no 'post now' tool. Requires confirm: true.",
+        inputSchema: z.object({
+          categoryKey: z.string(),
+          generationIds: z.array(z.string()).min(1),
+          channels: z.array(ScheduleChannelInput).min(1),
+          caption: z.string(),
+          scheduledAt: z.string(),
+          postGroupId: z.string().optional(),
+          confirm: z.boolean().optional(),
+        }),
+      },
+      async ({ categoryKey, generationIds, channels, caption, scheduledAt, postGroupId, confirm }) => {
+        assertConfirmed(
+          { confirm },
+          `schedule a post to ${channels.length} channel(s) for ${scheduledAt} — this will go out to a live connected account`,
+        );
+        const parsed = new Date(scheduledAt);
+        if (Number.isNaN(parsed.getTime()) || parsed.getTime() < Date.now()) {
+          throw new Error("scheduledAt must be a valid ISO date string in the future");
+        }
+        // Reuses the same lookup/validation the HTTP route performs before
+        // calling createPostForUser (Task 5) — see app/api/posts/create/route.ts
+        // for the category/generation/sibling queries this must run first.
+        const result = await scheduleValidatedPost(userId, {
+          categoryKey, generationIds, channels, caption, scheduledAt: parsed.toISOString(), postGroupId: postGroupId ?? null,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      },
     );
   });
 

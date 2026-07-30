@@ -11,7 +11,7 @@ import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
 
-interface ChannelInput {
+export interface ChannelInput {
   connectionId: string;
   channelId: string;
   service: string;
@@ -223,6 +223,58 @@ export async function createPostForUser(
   // Best-effort: never claim wholesale success or failure for a partial run.
   // 500 only when every channel failed; 200 whenever anything queued.
   return { postGroupId, results, allFailed: summary.allFailed };
+}
+
+// Re-runs the exact category/generation/duplicate-slide/anchor validation the
+// POST route below performs before calling createPostForUser — kept here
+// (not duplicated in the MCP route) so the two callers can never silently
+// diverge. Any change to the HTTP route's validation above must be mirrored
+// here, and vice versa.
+export async function scheduleValidatedPost(
+  userId: string,
+  input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string; postGroupId: string | null },
+): Promise<{ postGroupId: string; results: ChannelResult[] }> {
+  const supabase = createAdminSupabase();
+  const { data: category, error: catErr } = await supabase
+    .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
+  if (catErr || !category || !(category as Category).active) throw new Error("unknown or inactive category");
+
+  const { data: gensData, error: genErr } = await supabase
+    .from("generations").select("*, idea:ideas(*)").in("id", input.generationIds).eq("user_id", userId);
+  if (genErr) throw new Error(genErr.message);
+  const gens = (gensData ?? []) as (Generation & { idea: Idea })[];
+  if (gens.length !== input.generationIds.length) throw new Error("one or more generations not found");
+
+  const ideaIds = gens.map((g) => g.idea_id);
+  const slideKeys = gens.map((g) => `${g.idea_id}:${g.slide_index}`);
+  if (new Set(slideKeys).size !== slideKeys.length) throw new Error("duplicate slide in selection");
+  for (const g of gens) {
+    if (g.status !== "succeeded" || !g.public_url) throw new Error(`generation ${g.id} has no successful image`);
+    if (g.idea.status !== "generated" && g.idea.status !== "generating") throw new Error(`idea for generation ${g.id} is not postable (${g.idea.status})`);
+    if (g.idea.category_key !== input.categoryKey) throw new Error(`generation ${g.id} belongs to another category`);
+  }
+
+  const { data: siblingsData, error: sibErr } = await supabase
+    .from("generations").select("id, idea_id, slide_index, anchor_generation_id, status, created_at")
+    .in("idea_id", ideaIds).eq("user_id", userId);
+  if (sibErr) throw new Error(sibErr.message);
+  const siblings = (siblingsData ?? []) as Pick<Generation, "id" | "idea_id" | "slide_index" | "anchor_generation_id" | "status" | "created_at">[];
+  const wrongAnchor = findWrongAnchorGenerationIds(gens.map((g) => ({ id: g.id, idea_id: g.idea_id, slide_index: g.slide_index })), siblings);
+  if (wrongAnchor.length > 0) throw new Error(`generation ${wrongAnchor[0]} does not belong to its idea's current anchor`);
+
+  const byId = new Map(gens.map((g) => [g.id, g]));
+  const ordered = input.generationIds.map((id) => byId.get(id)!);
+  const imageUrls = ordered.map((g) => g.public_url);
+  const uniqueIdeaIds = Array.from(new Set(ideaIds));
+  const singleIdeaId = uniqueIdeaIds.length === 1 ? uniqueIdeaIds[0] : null;
+  const postGroupId = input.postGroupId ?? randomUUID();
+
+  const { postGroupId: pg, results } = await createPostForUser(userId, {
+    categoryKey: input.categoryKey, postGroupId, channels: input.channels, baseCaption: input.caption,
+    scheduledAt: input.scheduledAt, suppliedPostGroupId: input.postGroupId, ordered, imageUrls,
+    singleIdeaId, siblings, gens, uniqueIdeaIds,
+  });
+  return { postGroupId: pg, results };
 }
 
 export async function POST(request: NextRequest) {
