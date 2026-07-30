@@ -52,10 +52,23 @@ export async function createPostForUser(
   } = args;
   const supabase = createAdminSupabase();
 
+  // All validation above runs exactly once, before any Buffer call. From
+  // here each channel stands alone (best-effort): a Buffer post cannot be
+  // un-posted, so one channel's failure must never stop the others.
   const results: ChannelResult[] = [];
+  // Fed to sentSlidesByIdea below (Critical, review) — each channel's own
+  // service, so completeness is computed from what each channel actually
+  // received (post-truncation), not from the full submitted list.
   const channelOutcomes: { service: string; queued: boolean }[] = [];
   for (const ch of channels) {
     const urls = mediaForPlatform(imageUrls, normalizeService(ch.service));
+
+    // Important (review): a retry re-submits the same post_group_id for
+    // just the channels that failed last time. Without this, the failed
+    // row from the earlier attempt is never removed, so the group
+    // permanently reads "1 queued · 1 failed" and lists the channel twice
+    // even after the retry succeeds. Only ever deletes rows already marked
+    // "failed" — a channel's earlier successful post is never touched.
     if (suppliedPostGroupId) {
       const { error: cleanupErr } = await supabase
         .from("posts")
@@ -76,6 +89,7 @@ export async function createPostForUser(
     }
     channelOutcomes.push({ service: ch.service, queued: r.success });
 
+    // One posts row per channel, all sharing postGroupId.
     const { data: postRow, error: postErr } = await supabase
       .from("posts")
       .insert({
@@ -100,6 +114,19 @@ export async function createPostForUser(
     }
     let imagesWarning: string | undefined;
     if (r.success) {
+      // post_images rows are inserted ONLY for channels that actually
+      // posted — per-channel posted memory reads them, so a failed channel
+      // must not look like it published. Critical (review): also only for
+      // the PREFIX this channel's own truncation (`urls`, e.g. X's 4-image
+      // mosaic cap) actually sent — recording the full `ordered` list here
+      // would mark a slide truncated off this channel's payload as
+      // "already sent to X" forever, permanently blocking it there even
+      // though X never received it. The Buffer post already went out and
+      // can't be un-posted, so a failure here can't fail the channel — but
+      // silently swallowing it would let the composer's alreadyPosted
+      // filter miss these slides and resubmit them to the same channel
+      // (see composer.tsx), so retry once, then log loudly and surface a
+      // warning rather than mis-tracking it as if nothing happened.
       const images = ordered.slice(0, urls.length).map((g, idx) => ({
         user_id: userId, post_id: postRow.id, generation_id: g.id, sort_order: idx,
       }));
@@ -122,13 +149,36 @@ export async function createPostForUser(
 
   const summary = summarizeFanOut(results);
 
+  // Completeness rule (Finding 3): an idea is marked posted only when the
+  // UNION of slides already posted in prior (non-failed) posts and the
+  // slides submitted here covers every declared slide — not just when this
+  // one submission does. Without this, a carousel posted 3-of-5 today and
+  // finished 2-of-5 tomorrow would never be marked posted: each submission
+  // is individually partial even though together they're complete. A
+  // "failed" post never reached Buffer, so it doesn't count toward "already
+  // posted". The earlier duplicate-slide check guarantees this submission's
+  // own slide indexes are counted at most once. Only run when at least one
+  // channel actually queued — an all-failed submission posted nothing, so
+  // there is nothing new to fold into the completeness union.
   if (summary.queued > 0) {
+    // Resolved through post_images -> generations, not posts.idea_id: a
+    // freeform post spanning several ideas has idea_id: null on its own post
+    // row, so keying off posts.idea_id would silently forget that a slide of
+    // idea B went out when it was posted bundled with idea A's slides. Every
+    // generation in `siblings` belongs to one of the ideas being completed
+    // here, so scoping post_images to those generation ids covers every post
+    // — single-idea or freeform, single-channel or multi-channel — that
+    // carried any of their slides.
     const { data: priorImagesData, error: priorImagesErr } = await supabase
       .from("post_images")
       .select("generation_id, post:posts(status, buffer_channel_id)")
       .in("generation_id", siblings.map((s) => s.id))
       .eq("user_id", userId);
     if (priorImagesErr) {
+      // Buffer posts already went out and can't be un-posted; a failure to
+      // check prior posted slides only means completeness can't be updated
+      // this round, not that the submission itself failed. Log and leave
+      // idea status untouched rather than mis-shaping the response.
       console.error("posts/create: failed to check prior posted slides:", priorImagesErr.message);
     } else {
       const slideBySiblingId = new Map(siblings.map((s) => [s.id, { idea_id: s.idea_id, slide_index: s.slide_index }]));
@@ -142,6 +192,13 @@ export async function createPostForUser(
           })
           .filter((row): row is PostedSlideJoinRow => row !== null),
       );
+
+      // Critical (review): built from each QUEUED channel's own truncated
+      // prefix (channelOutcomes + mediaForPlatform inside sentSlidesByIdea),
+      // never from the full submitted `gens` list — a slide X's mosaic cap
+      // dropped from the payload must not count as "sent" just because it
+      // was part of the request, and a slide submitted only to a channel
+      // that failed must not count as sent at all.
       const submittedSlidesByIdea = sentSlidesByIdea(
         ordered.map((g) => ({ idea_id: g.idea_id, slide_index: g.slide_index })),
         imageUrls,
@@ -163,6 +220,8 @@ export async function createPostForUser(
     }
   }
 
+  // Best-effort: never claim wholesale success or failure for a partial run.
+  // 500 only when every channel failed; 200 whenever anything queued.
   return { postGroupId, results, allFailed: summary.allFailed };
 }
 
