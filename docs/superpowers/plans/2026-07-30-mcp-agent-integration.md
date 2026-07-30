@@ -1446,6 +1446,13 @@ export async function scheduleValidatedPost(
     .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
   if (catErr || !category || !(category as Category).active) throw new Error("unknown or inactive category");
 
+  // Same check the HTTP route runs before calling createPostForUser — without
+  // it, the same channelId listed twice would queue two identical,
+  // un-unpostable posts to one live account.
+  if (new Set(input.channels.map((c) => c.channelId)).size !== input.channels.length) {
+    throw new Error("duplicate channel in selection");
+  }
+
   const { data: gensData, error: genErr } = await supabase
     .from("generations").select("*, idea:ideas(*)").in("id", input.generationIds).eq("user_id", userId);
   if (genErr) throw new Error(genErr.message);
