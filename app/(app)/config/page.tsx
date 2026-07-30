@@ -37,7 +37,11 @@ export default async function ConfigPage() {
       </div>
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
       <ConnectionsSection groups={groups} />
-      <CategoryManager categories={(data ?? []) as Category[]} groups={groups} />
+      <CategoryManager
+        categories={(data ?? []) as Category[]}
+        groups={groups}
+        brandDone={Boolean((brandRow as BrandProfile | null)?.business_name?.trim())}
+      />
     </div>
   );
 }
