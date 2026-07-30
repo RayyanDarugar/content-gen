@@ -22,6 +22,7 @@ import { assertConfirmed } from "@/lib/mcp/confirm";
 import { submitGenerations } from "@/lib/athena/submit-generations";
 import { resubmitSlide } from "@/lib/athena/resubmit-slide";
 import { scheduleValidatedPost } from "@/app/api/posts/create/route";
+import { submitStyleRefJobForUser, getStyleRefJobForUser } from "@/lib/style-ref-jobs";
 
 // Matches the longest budget of any route this one fans into (brand/extract,
 // categories/draft, posts/rewrite-caption, posts/adapt-caption, ideas/generate
@@ -420,6 +421,44 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         assertConfirmed({ confirm }, `regenerate slide ${slideIndex + 1} of idea ${ideaId} (spends API credit)`);
         return { content: [{ type: "text", text: JSON.stringify(await resubmitSlide(userId, ideaId, slideIndex, refinementNotes ?? "")) }] };
       },
+    );
+
+    server.registerTool(
+      "generate_style_ref",
+      {
+        title: "Generate brand reference image",
+        description:
+          "Generate a new AI brand style reference image for a post type, grounded in the brand's colors/fonts/visual notes, optionally steered by notes. Fire-and-forget: spends real API credit and completes asynchronously — poll get_style_ref_job with the returned jobId to see when it's done. Requires confirm: true.",
+        inputSchema: z.object({
+          categoryId: z.string(),
+          notes: z.string().optional(),
+          confirm: z.boolean().optional(),
+        }),
+      },
+      async ({ categoryId, notes, confirm }) => {
+        assertConfirmed(
+          { confirm },
+          `generate a new brand reference image for category ${categoryId} (spends API credit)`,
+        );
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(await submitStyleRefJobForUser(userId, categoryId, notes)),
+          }],
+        };
+      },
+    );
+
+    server.registerTool(
+      "get_style_ref_job",
+      {
+        title: "Get style reference job status",
+        description: "Check the status of a style reference image generation previously submitted with generate_style_ref.",
+        inputSchema: z.object({ jobId: z.string() }),
+      },
+      async ({ jobId }) => ({
+        content: [{ type: "text", text: JSON.stringify(await getStyleRefJobForUser(userId, jobId)) }],
+      }),
     );
 
     const ScheduleChannelInput = z.object({ connectionId: z.string(), channelId: z.string(), service: z.string(), caption: z.string() });

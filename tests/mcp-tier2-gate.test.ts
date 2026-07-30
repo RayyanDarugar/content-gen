@@ -11,6 +11,7 @@ const spies = vi.hoisted(() => ({
   submitGenerations: vi.fn(async () => ({})),
   resubmitSlide: vi.fn(async () => ({})),
   scheduleValidatedPost: vi.fn(async () => ({ postGroupId: "pg-1", results: [], allFailed: false })),
+  submitStyleRefJobForUser: vi.fn(async () => ({ jobId: "job-1" })),
 }));
 
 vi.mock("@/lib/auth/require-user", () => ({
@@ -30,6 +31,10 @@ vi.mock("@/lib/settings/buffer", () => ({
 vi.mock("@/lib/athena/submit-generations", () => ({ submitGenerations: spies.submitGenerations }));
 vi.mock("@/lib/athena/resubmit-slide", () => ({ resubmitSlide: spies.resubmitSlide }));
 vi.mock("@/app/api/posts/create/route", () => ({ scheduleValidatedPost: spies.scheduleValidatedPost }));
+vi.mock("@/lib/style-ref-jobs", () => ({
+  submitStyleRefJobForUser: spies.submitStyleRefJobForUser,
+  getStyleRefJobForUser: vi.fn(),
+}));
 
 import { POST } from "@/app/api/mcp/route";
 
@@ -55,6 +60,7 @@ const TIER_2_CALLS: [string, Record<string, unknown>, string][] = [
     },
     "schedule a post to 1 channel(s)",
   ],
+  ["generate_style_ref", { categoryId: "cat-1" }, "generate a new brand reference image for category cat-1 (spends API credit)"],
 ];
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
