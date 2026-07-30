@@ -4,10 +4,10 @@ This guide explains how to connect Claude Code to the content-gen-app MCP server
 
 ## Overview
 
-The content-gen-app MCP server exposes 25 tools across two tiers:
+The content-gen-app MCP server exposes 24 tools across two tiers:
 
-- **Tier 1** (read-only, safe): Brand profiles, post types (categories), ideas, and Buffer connections
-- **Tier 2** (irreversible or externally consequential): Category creation/deletion, idea approval, image generation, and live social scheduling via Buffer
+- **Tier 1** (read-only or reversible): Brand profiles, post types (categories), ideas, and Buffer connections
+- **Tier 2** (irreversible or externally consequential): Category deletion, image generation, and live social scheduling via Buffer
 
 ## Step 1: Mint an API Token
 
