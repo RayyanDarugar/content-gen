@@ -276,7 +276,15 @@ function CategoryEditor({ category, groups }: { category?: Category; groups: Cha
   );
 }
 
-export function CategoryManager({ categories, groups }: { categories: Category[]; groups: ChannelGroup[] }) {
+export function CategoryManager({
+  categories,
+  groups,
+  brandDone,
+}: {
+  categories: Category[];
+  groups: ChannelGroup[];
+  brandDone: boolean;
+}) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
@@ -285,9 +293,16 @@ export function CategoryManager({ categories, groups }: { categories: Category[]
         <div>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Add a new category</p>
-            <Button render={<Link href="/config/draft" />} variant="outline" size="sm">
-              ✨ Draft with AI
-            </Button>
+            <div className="flex gap-2">
+              {brandDone && (
+                <Button render={<Link href="/config/draft?suggest=1" />} variant="outline" size="sm">
+                  ✨ Suggest one
+                </Button>
+              )}
+              <Button render={<Link href="/config/draft" />} variant="outline" size="sm">
+                ✨ Draft with AI
+              </Button>
+            </div>
           </div>
           <CategoryEditor groups={groups} />
         </div>

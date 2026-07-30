@@ -30,14 +30,21 @@ export default async function ConfigPage() {
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold">Config</h1>
       <KeysSection status={status} />
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-4">
+        <Link href="/config/formats" className="text-sm text-primary underline-offset-4 hover:underline">
+          Format library
+        </Link>
         <Link href="/onboarding" className="text-sm text-primary underline-offset-4 hover:underline">
           Run setup again
         </Link>
       </div>
       <BrandSection brand={(brandRow as BrandProfile) ?? null} />
       <ConnectionsSection groups={groups} />
-      <CategoryManager categories={(data ?? []) as Category[]} groups={groups} />
+      <CategoryManager
+        categories={(data ?? []) as Category[]}
+        groups={groups}
+        brandDone={Boolean((brandRow as BrandProfile | null)?.business_name?.trim())}
+      />
     </div>
   );
 }

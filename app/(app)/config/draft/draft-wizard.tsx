@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -8,15 +8,17 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { uploadStyleRefImage } from "../actions";
 import { categoryToDraft, type DraftTurn, type NormalizedDraft } from "@/lib/athena/draft-category";
+import { suggestionToTurns, type SuggestResponse } from "@/lib/athena/suggest-category";
 import type { Category } from "@/lib/types";
 import { PreviewPane } from "./preview-pane";
 
 interface Props {
   initialCategory: Category | null;
   keys: { anthropic: boolean; kie: boolean };
+  suggest?: boolean;
 }
 
-export function DraftWizard({ initialCategory, keys }: Props) {
+export function DraftWizard({ initialCategory, keys, suggest = false }: Props) {
   const router = useRouter();
   const [turns, setTurns] = useState<DraftTurn[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(initialCategory?.id ?? null);
@@ -32,6 +34,14 @@ export function DraftWizard({ initialCategory, keys }: Props) {
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+
+  // Suggest mode. The suggestion is held client-side and persists nothing
+  // until the user engages — otherwise every re-roll would litter Config with
+  // abandoned categories.
+  const [suggesting, setSuggesting] = useState(suggest);
+  const [suggestionId, setSuggestionId] = useState<string | null>(null);
+  const [excludeConcepts, setExcludeConcepts] = useState<string[]>([]);
+  const [excludeFormatIds, setExcludeFormatIds] = useState<string[]>([]);
 
   const lastDraft: NormalizedDraft | null =
     [...turns].reverse().find((t) => t.role === "assistant")?.draft ??
@@ -65,6 +75,43 @@ export function DraftWizard({ initialCategory, keys }: Props) {
     setUploading(null);
   }
 
+  async function fetchSuggestion() {
+    setSuggesting(true);
+    setError("");
+    try {
+      const res = await fetch("/api/categories/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ excludeConcepts, excludeFormatIds }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      const suggestion = json as SuggestResponse;
+      // Replaces the held suggestion rather than appending to it: a re-roll
+      // is a different proposal, not the next turn of a conversation.
+      setTurns(suggestionToTurns(suggestion));
+      setSuggestionId(suggestion.suggestionId);
+      setExcludeConcepts((prev) => [...prev, suggestion.sample.concept]);
+      if (suggestion.formatId) {
+        setExcludeFormatIds((prev) => [...prev, suggestion.formatId!]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  // Fires once. The ref guards against React's development double-invoke,
+  // which would otherwise bill two LLM calls and log two impressions.
+  const suggestedOnce = useRef(false);
+  useEffect(() => {
+    if (!suggest || !keys.anthropic || suggestedOnce.current) return;
+    suggestedOnce.current = true;
+    void fetchSuggestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggest, keys.anthropic]);
+
   async function send(text: string, imageUrls?: string[]) {
     const userTurn: DraftTurn = { role: "user", text, imageUrls };
     const nextTurns = [...turns, userTurn];
@@ -79,12 +126,14 @@ export function DraftWizard({ initialCategory, keys }: Props) {
           turns: nextTurns,
           categoryId: categoryId ?? undefined,
           styleRefUrl: pendingStyleRef ?? undefined,
+          suggestionId: suggestionId ?? undefined,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       setCategoryId(json.categoryId);
       setPendingStyleRef(null);
+      setSuggestionId(null);
       setTurns([...nextTurns, { role: "assistant", text: json.assistantMessage, draft: json.draft }]);
     } catch (e) {
       // Spec §7: a failed turn leaves conversation state untouched so the
@@ -126,7 +175,25 @@ export function DraftWizard({ initialCategory, keys }: Props) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!started && (
+            {suggesting && (
+              <p className="text-sm text-muted-foreground">Reading your brand and drafting a suggestion…</p>
+            )}
+
+            {!started && !suggesting && suggest && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Couldn&apos;t draft a suggestion.
+                </p>
+                <div className="flex gap-2">
+                  <Button onClick={() => void fetchSuggestion()}>Try again</Button>
+                  <Button variant="outline" render={<Link href="/config/draft" />}>
+                    Build my own instead
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!started && !suggesting && !suggest && (
               <div className="space-y-3">
                 <div>
                   <Label>Describe it</Label>
@@ -191,6 +258,12 @@ export function DraftWizard({ initialCategory, keys }: Props) {
                   ))}
                   {sending && <p className="text-sm text-muted-foreground">Thinking…</p>}
                 </div>
+                {suggestionId && (
+                  <Button variant="outline" size="sm" disabled={suggesting || sending}
+                    onClick={() => void fetchSuggestion()}>
+                    Suggest a different one
+                  </Button>
+                )}
                 <div className="flex gap-2">
                   <Textarea rows={2} value={composer} placeholder="Refine the draft…"
                     onChange={(e) => setComposer(e.target.value)} />

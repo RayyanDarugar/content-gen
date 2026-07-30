@@ -90,7 +90,19 @@ export function OnboardingSteps({
         <p className="mb-3 text-sm text-muted-foreground">
           Draft a post type — it opens the same wizard you&apos;ll reuse later from Config.
         </p>
-        <Button render={<Link href="/config/draft" />}>Draft a post type</Button>
+        <div className="flex flex-wrap gap-2">
+          {brandDone && (
+            <Button render={<Link href="/config/draft?suggest=1" />}>Suggest one for me</Button>
+          )}
+          <Button render={<Link href="/config/draft" />} variant={brandDone ? "outline" : undefined}>
+            Build my own
+          </Button>
+        </div>
+        {!brandDone && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Finish brand setup above and we can suggest a post type built on it.
+          </p>
+        )}
       </StepShell>
 
       <StepShell index={3} title="First ideas" state={states[2]}>

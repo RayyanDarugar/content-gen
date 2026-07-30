@@ -10,8 +10,9 @@ import {
   normalizeDraft, categoryToDraft, type DraftTurn, type NormalizedDraft,
 } from "@/lib/athena/draft-category";
 import type { BrandContext } from "@/lib/athena/prompts";
-import type { Category } from "@/lib/types";
+import type { Category, FormatSuggestion } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
+import { writebackPlan, inventedFormatRow } from "@/lib/athena/suggestion-writeback";
 
 export const maxDuration = 120;
 
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
   }
   const categoryId = typeof body?.categoryId === "string" && body.categoryId ? body.categoryId : null;
   const styleRefUrl = typeof body?.styleRefUrl === "string" && body.styleRefUrl ? body.styleRefUrl : null;
+  const suggestionId = typeof body?.suggestionId === "string" && body.suggestionId ? body.suggestionId : null;
 
   try {
     const supabase = await createServerSupabase();
@@ -133,6 +135,9 @@ export async function POST(request: NextRequest) {
       id = existing.id;
     } else {
       id = await insertDraft(supabase, user.id, draft, styleRefUrl ?? "");
+      // Insert path only. On an update this would mint a duplicate format on
+      // every subsequent turn of the same conversation.
+      if (suggestionId) await applyWriteback(supabase, user.id, suggestionId, id);
     }
 
     return NextResponse.json({ categoryId: id, assistantMessage: assistant_message, draft });
@@ -171,4 +176,61 @@ async function insertDraft(
     if (error && error.code !== "23505") throw new Error(error.message);
   }
   throw new Error("Could not find a free category name — ask for a different name and resend");
+}
+
+// Records where a kept suggestion came from, and saves the format itself when
+// the model invented one — this is how the library fills without anyone
+// curating it.
+//
+// Never throws. A category that saved correctly is the user's work; a missing
+// formats row is a lost analytics record. Failing the request here would
+// trade the former for the latter.
+async function applyWriteback(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  userId: string,
+  suggestionId: string,
+  categoryId: string,
+): Promise<void> {
+  try {
+    // RLS scopes this to the caller, so a forged id from another tenant
+    // simply finds nothing.
+    const { data, error: lookupError } = await supabase
+      .from("format_suggestions")
+      .select("format_id, invented_format, category_id")
+      .eq("id", suggestionId)
+      .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
+
+    // Server-side idempotency guard: category_id is stamped on first persist
+    // only. If a prior request already got this far — even if its response
+    // never reached the client, e.g. a dropped connection — retrying must be
+    // a no-op, not a second link/create and a second stamp that orphans the
+    // first category. The client-side suggestionId-clearing is defense in
+    // depth, not the guarantee.
+    const row = data as Pick<FormatSuggestion, "format_id" | "invented_format" | "category_id"> | null;
+    if (row?.category_id) return;
+
+    const plan = writebackPlan(row);
+
+    let sourceFormatId: string | null = null;
+    if (plan.kind === "link") {
+      sourceFormatId = plan.formatId;
+    } else if (plan.kind === "create") {
+      const { data: created, error } = await supabase
+        .from("formats").insert(inventedFormatRow(userId, plan.invented)).select("id").single();
+      if (error) throw new Error(error.message);
+      sourceFormatId = created.id as string;
+    }
+
+    if (sourceFormatId) {
+      const { error: categoryUpdateError } = await supabase.from("categories")
+        .update({ source_format_id: sourceFormatId }).eq("id", categoryId);
+      if (categoryUpdateError) throw new Error(categoryUpdateError.message);
+    }
+    const { error: suggestionUpdateError } = await supabase.from("format_suggestions")
+      .update({ category_id: categoryId }).eq("id", suggestionId);
+    if (suggestionUpdateError) throw new Error(suggestionUpdateError.message);
+  } catch (e) {
+    console.error("suggestion writeback failed:", e instanceof Error ? e.message : String(e));
+  }
 }

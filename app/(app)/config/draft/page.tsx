@@ -7,10 +7,10 @@ import type { Category } from "@/lib/types";
 export default async function DraftPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string }>;
+  searchParams: Promise<{ category?: string; suggest?: string }>;
 }) {
   const user = await requireUser();
-  const { category: categoryId } = await searchParams;
+  const { category: categoryId, suggest } = await searchParams;
 
   let category: Category | null = null;
   if (categoryId) {
@@ -20,5 +20,5 @@ export default async function DraftPage({
     category = (data as Category) ?? null;
   }
   const keys = await getKeyStatus(user.id);
-  return <DraftWizard initialCategory={category} keys={keys} />;
+  return <DraftWizard initialCategory={category} keys={keys} suggest={suggest === "1"} />;
 }
