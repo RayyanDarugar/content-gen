@@ -42,7 +42,19 @@ export async function submitStyleRefJobForUser(
     .insert({ user_id: userId, category_id: categoryId, kie_task_id: kieTaskId })
     .select("id")
     .single();
-  if (insertErr) throw new Error(insertErr.message);
+  if (insertErr) {
+    // The Kie task above already spent real credit and is already running —
+    // losing track of its id here means nothing will ever retrieve the
+    // image it generates. Surface the id in both the log and the thrown
+    // message so it's at least recoverable by hand, matching how
+    // app/api/jobs/poll/route.ts's fanOutCarousel/retryAnchorIfWorthwhile
+    // treat this exact failure mode (an orphaned paid task) as worth naming
+    // explicitly rather than swallowing.
+    console.error(`style ref job insert failed for orphaned Kie task ${kieTaskId}:`, insertErr.message);
+    throw new Error(
+      `${insertErr.message} (Kie task ${kieTaskId} was created and is generating, but nothing will retrieve the result)`,
+    );
+  }
 
   return { jobId: jobRow.id as string };
 }
@@ -50,12 +62,15 @@ export async function submitStyleRefJobForUser(
 export async function getStyleRefJobForUser(
   userId: string,
   jobId: string,
-): Promise<{ status: string; error: string; styleRefUrl: string }> {
+): Promise<{ status: string; error: string; styleRefUrl: string; pollCount: number; createdAt: string }> {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase
     .from("style_ref_jobs").select("*").eq("id", jobId).eq("user_id", userId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`unknown style ref job ${jobId}`);
   const job = data as StyleRefJob;
-  return { status: job.status, error: job.error, styleRefUrl: job.style_ref_url };
+  return {
+    status: job.status, error: job.error, styleRefUrl: job.style_ref_url,
+    pollCount: job.poll_count, createdAt: job.created_at,
+  };
 }

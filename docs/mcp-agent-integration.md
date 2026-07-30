@@ -4,7 +4,7 @@ This guide explains how to connect Claude Code to the content-gen-app MCP server
 
 ## Overview
 
-The content-gen-app MCP server exposes 24 tools across two tiers:
+The content-gen-app MCP server exposes 26 tools across two tiers:
 
 - **Tier 1** (read-only or reversible): Brand profiles, post types (categories), ideas, and Buffer connections
 - **Tier 2** (irreversible or externally consequential): Category deletion, image generation, and live social scheduling via Buffer
@@ -107,6 +107,7 @@ These tools are read-only or have no side effects on external systems. They can 
 - **`update_category`** — Update an existing post type's configuration
 - **`clear_role_ref_url`** — Remove a promoted role reference image so that role reverts to the category's base style reference
 - **`draft_category_turn`** — Advance a conversational draft of a post type by one turn (the model proposes/updates fields and replies with a message)
+- **`get_style_ref_job`** — Check the status of a style reference image generation submitted with `generate_style_ref`
 
 #### Ideas
 - **`list_ideas`** — List post ideas, optionally filtered by post type or status (pending_review, approved, rejected, generating, generated, posted)
@@ -134,6 +135,7 @@ These tools are read-only or have no side effects on external systems. They can 
 - **`remove_buffer_connection`** — Disconnect a Buffer account from this app (irreversible)
 - **`submit_image_generation`** — Submit ideas for AI image generation (spends real API credit; $0.10+ per image)
 - **`resubmit_slide`** — Regenerate a single carousel slide (spends real API credit)
+- **`generate_style_ref`** — Generate a new AI brand reference image for a post type (spends real API credit; fire-and-forget — poll `get_style_ref_job` for completion)
 - **`schedule_post`** — Schedule generated images to post to Buffer-connected social accounts at a specified future time (⚠️ **REACHES A LIVE SOCIAL ACCOUNT AND CANNOT BE UN-POSTED** — see below)
 
 #### The `schedule_post` Tool: Critical Warning

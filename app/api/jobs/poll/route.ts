@@ -4,7 +4,7 @@ import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getKieRecord, createKieTask, uploadStyleRef } from "@/lib/athena/kie";
-import { decidePoll } from "@/lib/athena/poll-logic";
+import { decidePoll, POLL_CAP } from "@/lib/athena/poll-logic";
 import {
   shouldFanOut,
   slideIndexesToFanOut,
@@ -29,6 +29,12 @@ const FAN_OUT_SWEEP_CAP = 5;
 // Single-image, no fan-out — a much smaller cap than INGEST_CAP is fine.
 const STYLE_REF_POLL_CAP = 10;
 const STYLE_REF_MAX_BYTES = 15 * 1024 * 1024;
+// Ingest (download + Cloudinary upload + two DB writes) is much heavier than
+// a bare poll — bounded separately from STYLE_REF_POLL_CAP (which only
+// limits how many rows get fetched/poll-checked at all) so a busy tick can't
+// let style-ref ingestion eat the whole shared 120s cron budget, mirroring
+// how INGEST_CAP bounds the main generations loop's own equivalent work.
+const STYLE_REF_INGEST_CAP = 3;
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -418,7 +424,28 @@ async function pollStyleRefJobs(
   for (const job of pending) {
     try {
       const apiKey = await kieKeyFor(job.user_id);
-      if (!apiKey) continue; // owner removed their key; leave the row for a later tick
+      if (!apiKey) {
+        // Unlike a real Kie poll, a missing key can never resolve on its own.
+        // Advance poll_count directly so a permanently keyless job eventually
+        // ages out via the same POLL_CAP decidePoll enforces elsewhere,
+        // rather than occupying every batch forever — FIFO ordering plus
+        // this function's own .limit() means a stuck row at the front would
+        // otherwise starve every other tenant's style-ref jobs.
+        const nextCount = job.poll_count + 1;
+        if (nextCount >= POLL_CAP) {
+          failed++;
+          await supabase
+            .from("style_ref_jobs")
+            .update({ status: "failed", error: "no Kie API key configured" })
+            .eq("id", job.id);
+        } else {
+          await supabase
+            .from("style_ref_jobs")
+            .update({ status: "polling", poll_count: nextCount })
+            .eq("id", job.id);
+        }
+        continue;
+      }
       polled++;
       const record = await getKieRecord(apiKey, job.kie_task_id);
       const decision = decidePoll(record, job.poll_count);
@@ -440,6 +467,7 @@ async function pollStyleRefJobs(
       }
 
       // decision.action === "ingest"
+      if (succeeded >= STYLE_REF_INGEST_CAP) continue; // leave untouched; a later tick ingests it — success never consumes poll_count, so the cap can't expire it.
       const res = await fetch(decision.resultUrl);
       if (!res.ok) throw new Error(`style ref image download failed (HTTP ${res.status})`);
       const contentType = (res.headers.get("content-type") || "").split(";")[0].trim();
@@ -456,7 +484,7 @@ async function pollStyleRefJobs(
       const { url } = await uploadImageToCloudinary(buffer, contentType);
 
       const { error: catErr } = await supabase
-        .from("categories").update({ style_ref_url: url }).eq("id", job.category_id);
+        .from("categories").update({ style_ref_url: url }).eq("id", job.category_id).eq("user_id", job.user_id);
       if (catErr) throw new Error(`category update failed: ${catErr.message}`);
 
       const { error: jobErr } = await supabase

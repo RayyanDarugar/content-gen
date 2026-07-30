@@ -428,10 +428,10 @@ async function handleMcp(request: NextRequest): Promise<Response> {
       {
         title: "Generate brand reference image",
         description:
-          "Generate a new AI brand style reference image for a post type, grounded in the brand's colors/fonts/visual notes, optionally steered by notes. Fire-and-forget: spends real API credit and completes asynchronously — poll get_style_ref_job with the returned jobId to see when it's done. Requires confirm: true.",
+          "Generate a new AI brand style reference image for a post type, grounded in the brand's colors/fonts/visual notes, optionally steered by notes. Fire-and-forget: spends real API credit and completes asynchronously — poll get_style_ref_job with the returned jobId to see when it's done. Calling update_category on style_ref_url before this job finishes will be overwritten once it completes (or vice versa) — there is no coordination between the two. Requires confirm: true.",
         inputSchema: z.object({
           categoryId: z.string(),
-          notes: z.string().optional(),
+          notes: z.string().max(500).optional(),
           confirm: z.boolean().optional(),
         }),
       },
