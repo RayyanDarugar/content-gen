@@ -8,6 +8,7 @@ import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buff
 import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
 import type { RoleRefUrls } from "@/lib/types";
 import { parseBrandList } from "@/lib/brand";
+import { createApiTokenForUser, listApiTokensForUser, revokeApiTokenForUser } from "@/lib/auth/api-tokens";
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
@@ -252,4 +253,26 @@ export async function deleteFormat(id: string): Promise<{ error?: string }> {
   if (error) return { error: error.message };
   revalidatePath("/config/formats");
   return {};
+}
+
+export async function createApiToken(label: string): Promise<{ token?: string; error?: string }> {
+  const user = await requireUser();
+  try {
+    const { token } = await createApiTokenForUser(user.id, label);
+    revalidatePath("/config");
+    return { token };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function listApiTokens() {
+  const user = await requireUser();
+  return listApiTokensForUser(user.id);
+}
+
+export async function revokeApiToken(tokenId: string): Promise<void> {
+  const user = await requireUser();
+  await revokeApiTokenForUser(user.id, tokenId);
+  revalidatePath("/config");
 }
