@@ -207,3 +207,49 @@ export async function removeBufferConnectionAction(connectionId: string) {
   await removeBufferConnection(user.id, connectionId);
   revalidatePath("/config");
 }
+
+// Formats are always written as origin 'observed' from this surface —
+// 'invented' rows are only ever created by suggestion writeback. shared is
+// never set here: promoting a format is a manual step in Supabase, and RLS
+// enforces that independently of this action.
+export async function saveFormat(
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const user = await requireUser();
+  const supabase = await createServerSupabase();
+
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "").trim();
+  const structure = String(formData.get("structure") ?? "").trim();
+  if (!name) return { error: "Name is required" };
+  if (!structure) return { error: "Structure is required" };
+
+  const fields = {
+    name,
+    structure,
+    why_it_works: String(formData.get("why_it_works") ?? "").trim(),
+    source_example: String(formData.get("source_example") ?? "").trim(),
+    brand_fit: String(formData.get("brand_fit") ?? "").trim(),
+    screenshot_url: String(formData.get("screenshot_url") ?? "").trim(),
+    active: formData.get("active") === "on",
+  };
+
+  const { error } = id
+    ? await supabase.from("formats").update(fields).eq("id", id)
+    : await supabase.from("formats").insert({
+        ...fields, user_id: user.id, origin: "observed", shared: false,
+      });
+  if (error) return { error: error.message };
+
+  revalidatePath("/config/formats");
+  return {};
+}
+
+export async function deleteFormat(id: string): Promise<{ error?: string }> {
+  await requireUser();
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from("formats").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/config/formats");
+  return {};
+}
