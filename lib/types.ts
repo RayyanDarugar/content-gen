@@ -127,6 +127,21 @@ export interface Generation {
   updated_at: string;
 }
 
+export type StyleRefJobStatus = "submitted" | "polling" | "succeeded" | "failed";
+
+export interface StyleRefJob {
+  id: string;
+  user_id: string;
+  category_id: string;
+  kie_task_id: string;
+  status: StyleRefJobStatus;
+  poll_count: number;
+  style_ref_url: string;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Post {
   id: string;
   user_id: string;
