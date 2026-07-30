@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 export type MajordomoFeature =
   | "brand_analysis"
   | "category_draft"
+  | "category_suggest"
   | "post_caption_adapt"
   | "post_caption_rewrite"
   | "content_idea_generation"
