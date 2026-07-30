@@ -88,6 +88,7 @@ These tools are read-only or have no side effects on external systems. They can 
 - **`create_category`** — Create a new post type with style guide, format, aspect ratio, and role-based guides
 - **`update_category`** — Update an existing post type's configuration
 - **`clear_role_ref_url`** — Remove a promoted role reference image so that role reverts to the category's base style reference
+- **`draft_category_turn`** — Advance a conversational draft of a post type by one turn (the model proposes/updates fields and replies with a message)
 
 #### Ideas
 - **`list_ideas`** — List post ideas, optionally filtered by post type or status (pending_review, approved, rejected, generating, generated, posted)
