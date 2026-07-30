@@ -17,7 +17,7 @@ import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
-import type { Category, Generation, Idea } from "@/lib/types";
+import type { Category, Generation, Idea, StyleRefJob } from "@/lib/types";
 
 export const maxDuration = 120;
 const INGEST_CAP = 5;
@@ -26,6 +26,9 @@ const INGEST_CAP = 5;
 // many paid fan-outs one tick can attempt.
 const SWEEP_IDEA_CAP = 50;
 const FAN_OUT_SWEEP_CAP = 5;
+// Single-image, no fan-out — a much smaller cap than INGEST_CAP is fine.
+const STYLE_REF_POLL_CAP = 10;
+const STYLE_REF_MAX_BYTES = 15 * 1024 * 1024;
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -381,6 +384,97 @@ async function sweepOrphanedAnchors(supabase: SupabaseClient): Promise<number> {
   return attempted;
 }
 
+// Fire-and-forget completion for generate_style_ref (MCP tool). Mirrors the
+// main generations-polling loop above: same decidePoll/getKieRecord contract,
+// same per-user Kie-key caching, same per-row try/catch so one bad row can't
+// stop the rest. Unlike ingestImage, there is no fan-out and no sharp
+// recompression — this validates and re-hosts exactly the way the browser's
+// own style-ref finalize phase already does (app/api/categories/draft/style-ref/route.ts).
+async function pollStyleRefJobs(
+  supabase: SupabaseClient,
+): Promise<{ polled: number; succeeded: number; failed: number }> {
+  const { data, error } = await supabase
+    .from("style_ref_jobs")
+    .select("*")
+    .in("status", ["submitted", "polling"])
+    .order("created_at", { ascending: true })
+    .limit(STYLE_REF_POLL_CAP);
+  if (error) {
+    console.error("style ref job query failed:", error.message);
+    return { polled: 0, succeeded: 0, failed: 0 };
+  }
+  const pending = (data ?? []) as StyleRefJob[];
+
+  let polled = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  const keyCache = new Map<string, string | null>();
+  async function kieKeyFor(uid: string): Promise<string | null> {
+    if (!keyCache.has(uid)) keyCache.set(uid, await getKieKeyOrNull(uid));
+    return keyCache.get(uid) ?? null;
+  }
+
+  for (const job of pending) {
+    try {
+      const apiKey = await kieKeyFor(job.user_id);
+      if (!apiKey) continue; // owner removed their key; leave the row for a later tick
+      polled++;
+      const record = await getKieRecord(apiKey, job.kie_task_id);
+      const decision = decidePoll(record, job.poll_count);
+
+      if (decision.action === "wait") {
+        await supabase
+          .from("style_ref_jobs")
+          .update({ status: "polling", poll_count: decision.pollCount })
+          .eq("id", job.id);
+        continue;
+      }
+      if (decision.action === "fail") {
+        failed++;
+        await supabase
+          .from("style_ref_jobs")
+          .update({ status: "failed", error: decision.error })
+          .eq("id", job.id);
+        continue;
+      }
+
+      // decision.action === "ingest"
+      const res = await fetch(decision.resultUrl);
+      if (!res.ok) throw new Error(`style ref image download failed (HTTP ${res.status})`);
+      const contentType = (res.headers.get("content-type") || "").split(";")[0].trim();
+      if (!contentType.startsWith("image/")) {
+        throw new Error(`expected an image response, got ${contentType || "unknown content-type"}`);
+      }
+      const contentLength = res.headers.get("content-length");
+      if (contentLength && Number(contentLength) > STYLE_REF_MAX_BYTES) {
+        throw new Error("style ref image exceeds 15MB limit");
+      }
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.byteLength > STYLE_REF_MAX_BYTES) throw new Error("style ref image exceeds 15MB limit");
+
+      const { url } = await uploadImageToCloudinary(buffer, contentType);
+
+      const { error: catErr } = await supabase
+        .from("categories").update({ style_ref_url: url }).eq("id", job.category_id);
+      if (catErr) throw new Error(`category update failed: ${catErr.message}`);
+
+      const { error: jobErr } = await supabase
+        .from("style_ref_jobs").update({ status: "succeeded", style_ref_url: url }).eq("id", job.id);
+      if (jobErr) throw new Error(`style ref job update failed: ${jobErr.message}`);
+
+      succeeded++;
+    } catch (e) {
+      // Transient per-row error (network, storage blip): log and let the next
+      // tick retry — recordInfo is read-only so nothing is lost, and the row
+      // stays "submitted"/"polling" until decidePoll's own poll cap gives up.
+      console.error(`style ref poll error for job ${job.id}:`, e);
+    }
+  }
+
+  return { polled, succeeded, failed };
+}
+
 export async function GET(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -448,5 +542,20 @@ export async function GET(request: NextRequest) {
     console.error("fan-out sweep failed:", e);
   }
 
-  return NextResponse.json({ polled, ingested, failed, pending: pending.length, sweptFanOuts });
+  let styleRefPolled = 0;
+  let styleRefSucceeded = 0;
+  let styleRefFailed = 0;
+  try {
+    const result = await pollStyleRefJobs(supabase);
+    styleRefPolled = result.polled;
+    styleRefSucceeded = result.succeeded;
+    styleRefFailed = result.failed;
+  } catch (e) {
+    console.error("style ref job poll failed:", e);
+  }
+
+  return NextResponse.json({
+    polled, ingested, failed, pending: pending.length, sweptFanOuts,
+    styleRefPolled, styleRefSucceeded, styleRefFailed,
+  });
 }
