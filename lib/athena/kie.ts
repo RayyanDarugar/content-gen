@@ -62,6 +62,31 @@ export async function createKieTask(
   return taskId as string;
 }
 
+// Pure text-to-image — no seed image, no input_urls. Used to generate a
+// placeholder brand style reference when a category has none yet.
+export async function createTextToImageKieTask(
+  apiKey: string,
+  prompt: string,
+  aspectRatio: string,
+): Promise<string> {
+  const res = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
+    method: "POST",
+    headers: kieHeaders(apiKey),
+    body: JSON.stringify({
+      model: "gpt-image-2-text-to-image",
+      input: { prompt, aspect_ratio: aspectRatio },
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  const taskId = json?.data?.taskId;
+  if (!res.ok || !taskId) {
+    throw new Error(
+      `Kie text-to-image createTask failed (HTTP ${res.status}): ${JSON.stringify(json).slice(0, 300)}`,
+    );
+  }
+  return taskId as string;
+}
+
 export async function getKieRecord(apiKey: string, taskId: string): Promise<KieRecord> {
   const res = await fetch(
     `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`,
