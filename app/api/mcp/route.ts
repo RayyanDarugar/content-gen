@@ -404,7 +404,12 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         inputSchema: z.object({ ideaId: z.string(), slideIndex: z.number().int().min(1), refinementNotes: z.string().optional(), confirm: z.boolean().optional() }),
       },
       async ({ ideaId, slideIndex, refinementNotes, confirm }) => {
-        assertConfirmed({ confirm }, `regenerate slide ${slideIndex} of idea ${ideaId} (spends API credit)`);
+        // slideIndex is 0-based internally (see resubmitSlide's own "slide
+        // ${slideIndex + 1} is still generating" message) — the confirm
+        // summary must show the same 1-based number a human would count, or
+        // "regenerate slide 2" would actually spend credit on slide index 2
+        // (the third slide) instead of the one the user thinks they approved.
+        assertConfirmed({ confirm }, `regenerate slide ${slideIndex + 1} of idea ${ideaId} (spends API credit)`);
         return { content: [{ type: "text", text: JSON.stringify(await resubmitSlide(userId, ideaId, slideIndex, refinementNotes ?? "")) }] };
       },
     );

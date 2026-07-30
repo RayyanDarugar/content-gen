@@ -239,6 +239,14 @@ export async function scheduleValidatedPost(
     .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
   if (catErr || !category || !(category as Category).active) throw new Error("unknown or inactive category");
 
+  // Mirrors the POST route's own duplicate-channel-id check below — without
+  // it, the same live channel listed twice in `channels[]` would sail
+  // through createPostForUser's per-channel loop and queue two identical,
+  // un-unpostable posts to one real connected account.
+  if (new Set(input.channels.map((c) => c.channelId)).size !== input.channels.length) {
+    throw new Error("duplicate channel in selection");
+  }
+
   const { data: gensData, error: genErr } = await supabase
     .from("generations").select("*, idea:ideas(*)").in("id", input.generationIds).eq("user_id", userId);
   if (genErr) throw new Error(genErr.message);
