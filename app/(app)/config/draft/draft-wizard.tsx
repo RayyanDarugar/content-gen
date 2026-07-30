@@ -38,7 +38,7 @@ export function DraftWizard({ initialCategory, keys, suggest = false }: Props) {
   // Suggest mode. The suggestion is held client-side and persists nothing
   // until the user engages — otherwise every re-roll would litter Config with
   // abandoned categories.
-  const [suggesting, setSuggesting] = useState(false);
+  const [suggesting, setSuggesting] = useState(suggest);
   const [suggestionId, setSuggestionId] = useState<string | null>(null);
   const [excludeConcepts, setExcludeConcepts] = useState<string[]>([]);
   const [excludeFormatIds, setExcludeFormatIds] = useState<string[]>([]);
