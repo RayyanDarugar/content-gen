@@ -5,14 +5,14 @@ import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadBrandContext } from "@/lib/athena/brand-context";
 import { listBufferConnections, getBufferChannelsForConnection, removeBufferConnection } from "@/lib/settings/buffer";
+import { saveBrandProfileForUser } from "@/lib/brand-profile";
 import {
-  saveBrandProfileForUser,
   createCategoryForUser,
   updateCategoryForUser,
   clearRoleRefUrlForUser,
   deleteCategoryForUser,
-} from "@/app/(app)/config/actions";
-import { setIdeaDecisionForUser, createManualIdeaForUser } from "@/app/(app)/ideas/actions";
+} from "@/lib/category-mutations";
+import { setIdeaDecisionForUser, createManualIdeaForUser } from "@/lib/idea-mutations";
 import { extractBrandProfileForUser } from "@/app/api/brand/extract/route";
 import { draftCategoryTurnForUser } from "@/app/api/categories/draft/route";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
@@ -22,6 +22,14 @@ import { assertConfirmed } from "@/lib/mcp/confirm";
 import { submitGenerations } from "@/lib/athena/submit-generations";
 import { resubmitSlide } from "@/lib/athena/resubmit-slide";
 import { scheduleValidatedPost } from "@/app/api/posts/create/route";
+
+// Matches the longest budget of any route this one fans into (brand/extract,
+// categories/draft, posts/rewrite-caption, posts/adapt-caption, ideas/generate
+// and images/generate all set 120). Without it this route would run at the
+// platform default, and a schedule_post killed part-way through
+// createPostForUser's per-channel loop can leave a live Buffer post queued
+// with no local `posts` row — a duplicate waiting to happen on retry.
+export const maxDuration = 120;
 
 // Every tool-registration task below (8, 9, 11) adds server.registerTool(...)
 // calls inside this same callback, closing over `userId` from the
@@ -449,6 +457,18 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         const result = await scheduleValidatedPost(userId, {
           categoryKey, generationIds, channels, caption, scheduledAt: parsed.toISOString(), postGroupId: postGroupId ?? null,
         });
+        // Every-channel failure is surfaced as a thrown error — the same way
+        // every other tool in this file signals failure, and the same way the
+        // HTTP route turns allFailed into a 500. Returning the usual
+        // success-shaped JSON here would hide a total failure behind a
+        // per-channel "status":"failed" an agent has to dig for. The payload
+        // is kept in the message because postGroupId is what a retry needs.
+        if (result.allFailed) {
+          throw new Error(
+            `schedule_post failed on every channel — nothing was queued. Retry with postGroupId ` +
+              `"${result.postGroupId}" to reuse this post group: ${JSON.stringify(result)}`,
+          );
+        }
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       },
     );

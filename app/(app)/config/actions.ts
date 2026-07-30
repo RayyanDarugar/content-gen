@@ -1,69 +1,31 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { createAdminSupabase } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/require-user";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
-import { type CategoryFields, validateCategoryFields, slugify } from "@/lib/categories";
-import type { RoleRefUrls } from "@/lib/types";
+import { type CategoryFields } from "@/lib/categories";
 import { parseBrandList } from "@/lib/brand";
 import { createApiTokenForUser, listApiTokensForUser, revokeApiTokenForUser } from "@/lib/auth/api-tokens";
+import {
+  createCategoryForUser,
+  updateCategoryForUser,
+  clearRoleRefUrlForUser,
+  deleteCategoryForUser,
+} from "@/lib/category-mutations";
+import { saveBrandProfileForUser } from "@/lib/brand-profile";
 
-export async function createCategoryForUser(userId: string, fields: CategoryFields): Promise<void> {
-  validateCategoryFields(fields);
-  const supabase = createAdminSupabase();
-  const { error } = await supabase.from("categories").insert({
-    user_id: userId,
-    key: slugify(fields.name),
-    name: fields.name,
-    style_guide: fields.style_guide,
-    output_format: fields.output_format,
-    style_ref_url: fields.style_ref_url,
-    post_caption: fields.post_caption,
-    buffer_channel_id: fields.buffer_channel_id,
-    buffer_connection_id: fields.buffer_connection_id || null,
-    caption_guide: fields.caption_guide,
-    buffer_channel_service: fields.buffer_channel_service,
-    images_per_carousel: fields.images_per_carousel,
-    post_type: fields.post_type,
-    role_guides: fields.role_guides,
-    aspect_ratio: fields.aspect_ratio || "4:5",
-    active: fields.active,
-  });
-  if (error) {
-    if (error.code === "23505") throw new Error("You already have a category with a similar name");
-    throw new Error(error.message);
-  }
-}
+// Everything exported from this file is a "use server" action — i.e. a public
+// endpoint reachable by direct POST. Every export below therefore starts with
+// requireUser(); the userId-parameterized cores they delegate to deliberately
+// live in plain lib/ modules (lib/category-mutations.ts, lib/brand-profile.ts)
+// so they are NOT published as actions of their own.
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
   await createCategoryForUser(user.id, fields);
   revalidatePath("/config");
-}
-
-export async function updateCategoryForUser(userId: string, id: string, fields: CategoryFields): Promise<void> {
-  validateCategoryFields(fields);
-  const supabase = createAdminSupabase();
-  const { error } = await supabase.from("categories").update({
-    name: fields.name,
-    style_guide: fields.style_guide,
-    output_format: fields.output_format,
-    style_ref_url: fields.style_ref_url,
-    post_caption: fields.post_caption,
-    buffer_channel_id: fields.buffer_channel_id,
-    buffer_connection_id: fields.buffer_connection_id || null,
-    caption_guide: fields.caption_guide,
-    buffer_channel_service: fields.buffer_channel_service,
-    images_per_carousel: fields.images_per_carousel,
-    post_type: fields.post_type,
-    role_guides: fields.role_guides,
-    aspect_ratio: fields.aspect_ratio || "4:5",
-    active: fields.active,
-  }).eq("id", id).eq("user_id", userId);
-  if (error) throw new Error(error.message);
 }
 
 export async function updateCategory(id: string, fields: CategoryFields) {
@@ -76,30 +38,10 @@ export async function updateCategory(id: string, fields: CategoryFields) {
 // so that role falls back to style_ref_url again (spec §10). Only this
 // action and the promotion endpoint touch role_ref_urls — manual saves
 // never do (CategoryFields deliberately excludes it).
-export async function clearRoleRefUrlForUser(
-  userId: string, categoryId: string, role: "hook" | "beat" | "payoff" | "single",
-): Promise<void> {
-  const supabase = createAdminSupabase();
-  const { data: category } = await supabase
-    .from("categories").select("role_ref_urls").eq("id", categoryId).eq("user_id", userId).maybeSingle();
-  if (!category) throw new Error("unknown category");
-  const next: RoleRefUrls = { ...(category.role_ref_urls ?? {}) };
-  delete next[role];
-  const { error } = await supabase.from("categories").update({ role_ref_urls: next })
-    .eq("id", categoryId).eq("user_id", userId);
-  if (error) throw new Error(error.message);
-}
-
 export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" | "payoff" | "single") {
   const user = await requireUser();
   await clearRoleRefUrlForUser(user.id, categoryId, role);
   revalidatePath("/config");
-}
-
-export async function deleteCategoryForUser(userId: string, id: string): Promise<void> {
-  const supabase = createAdminSupabase();
-  const { error } = await supabase.from("categories").delete().eq("id", id).eq("user_id", userId);
-  if (error) throw new Error(error.message);
 }
 
 export async function deleteCategory(id: string) {
@@ -167,21 +109,6 @@ export async function uploadBrandDocument(
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
-}
-
-interface BrandProfileFields {
-  business_name: string; business_description: string; audience: string; voice: string; avoid: string;
-  proof_points: string[]; standing: string[]; colors: string[]; fonts: string[]; visual_notes: string;
-}
-
-export async function saveBrandProfileForUser(userId: string, fields: BrandProfileFields): Promise<void> {
-  if (!fields.business_name.trim()) throw new Error("Give the brand a name.");
-  const supabase = createAdminSupabase();
-  const { error } = await supabase.from("brand_profiles").upsert(
-    { user_id: userId, ...fields },
-    { onConflict: "user_id" },
-  );
-  if (error) throw new Error(error.message);
 }
 
 export async function saveBrandProfile(

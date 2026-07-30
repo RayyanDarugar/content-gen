@@ -233,7 +233,7 @@ export async function createPostForUser(
 export async function scheduleValidatedPost(
   userId: string,
   input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string; postGroupId: string | null },
-): Promise<{ postGroupId: string; results: ChannelResult[] }> {
+): Promise<{ postGroupId: string; results: ChannelResult[]; allFailed: boolean }> {
   const supabase = createAdminSupabase();
   const { data: category, error: catErr } = await supabase
     .from("categories").select("*").eq("key", input.categoryKey).eq("user_id", userId).single();
@@ -277,12 +277,17 @@ export async function scheduleValidatedPost(
   const singleIdeaId = uniqueIdeaIds.length === 1 ? uniqueIdeaIds[0] : null;
   const postGroupId = input.postGroupId ?? randomUUID();
 
-  const { postGroupId: pg, results } = await createPostForUser(userId, {
+  // allFailed is passed through, never discarded: the HTTP route turns it into
+  // a 500, and its non-HTTP caller (the MCP schedule_post tool) needs the same
+  // signal — otherwise a submission where every channel failed still returns a
+  // success-shaped { postGroupId, results } and only the per-channel
+  // "status":"failed" buried in the array tells the truth.
+  const { postGroupId: pg, results, allFailed } = await createPostForUser(userId, {
     categoryKey: input.categoryKey, postGroupId, channels: input.channels, baseCaption: input.caption,
     scheduledAt: input.scheduledAt, suppliedPostGroupId: input.postGroupId, ordered, imageUrls,
     singleIdeaId, siblings, gens, uniqueIdeaIds,
   });
-  return { postGroupId: pg, results };
+  return { postGroupId: pg, results, allFailed };
 }
 
 export async function POST(request: NextRequest) {

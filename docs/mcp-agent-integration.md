@@ -11,15 +11,33 @@ The content-gen-app MCP server exposes 24 tools across two tiers:
 
 ## Step 1: Mint an API Token
 
-An API token is a `cga_`-prefixed credential that authenticates your Claude Code plugin to the MCP server. Tokens are created once and shown once — you cannot recover a token after creation, but you can revoke and create new ones.
+An API token is a `cga_`-prefixed credential that authenticates your Claude Code plugin to the MCP server. Only the SHA-256 hash is stored, so a token is shown once and cannot be recovered — but you can always mint another.
 
-1. Log in to your content-gen-app instance
-2. Navigate to **Settings** → **API Tokens** (in the config section)
-3. Click **Create Token** and give it a label (e.g., "Claude Code MCP")
-4. Copy the token immediately — it will not be shown again
-5. Save the token securely (e.g., in your Claude Code `.env.local` or password manager)
+**There is no token UI.** Tokens are minted from a one-off script, `scripts/create-api-token.ts`, which calls `createApiTokenForUser(userId, label)` from `lib/auth/api-tokens.ts` — the same code path the server uses, so the prefix and hash can never drift from what `verifyApiToken` expects.
 
-To revoke a token later, visit the same page and click **Revoke** next to the token you want to disable.
+From a checkout of this repo:
+
+```bash
+# .env.local must point at the environment you want the token to work against
+# (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY of that Supabase project —
+# use the deployed project's values to mint a token for the deployed app).
+npm run create-api-token -- you@example.com "Claude Code MCP"
+```
+
+It prints the token once:
+
+```
+Token for you@example.com ("Claude Code MCP") — shown once, store it now:
+
+cga_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Save it somewhere safe (a password manager, or the `CONTENT_GEN_APP_API_TOKEN` env var used below) before closing the terminal.
+
+Notes:
+- The email must belong to an existing user of the app — the script looks the user up and mints the token for that user's id. All MCP calls made with the token act as that user, scoped to their tenant data.
+- The `--conditions=react-server` flag in the npm script is what lets a plain Node script import the app's `server-only`-marked `lib/auth/api-tokens.ts`. Run it via `npm run create-api-token` rather than bare `npx tsx`, or that import will throw.
+- To revoke a token, delete its row from the `api_tokens` table (the `revokeApiTokenForUser` helper does the same thing, scoped to the owning user, once a UI exists to call it). Revocation is immediate — `verifyApiToken` looks the hash up on every request.
 
 ## Step 2: Install the Plugin
 
@@ -134,6 +152,10 @@ These tools are read-only or have no side effects on external systems. They can 
 
 Failure to follow this discipline may result in unintended posts to public social accounts.
 
+**It does not guard against re-posting a slide that has already gone out.** The composer UI hides slides already delivered to a channel (its `alreadyPosted` filter), but that protection is client-side only — neither `scheduleValidatedPost` nor the HTTP route enforces it. `schedule_post` will happily send a generation to a channel that already received it, producing a duplicate on a live account. Before scheduling, check the account's prior posts (and their `post_images`) for the generations you're about to send, and skip any that a given channel already has.
+
+**Partial and total failure:** each channel is posted independently and best-effort, so one channel failing never stops the others. A successful call returns `{ postGroupId, results, allFailed: false }`, where `results` carries a per-channel `"status": "queued" | "failed"` — always read it, because a partial failure still returns successfully. If *every* channel failed, the tool raises an error instead of returning a result; the error message carries the same payload, including the `postGroupId` to pass back in a retry so the failed rows are replaced rather than duplicated.
+
 ## Example Usage
 
 ### Simple Brand Lookup
@@ -211,9 +233,11 @@ print("Post scheduled for social media!")
 ## Troubleshooting
 
 ### "unauthorized" Error
-- Verify the token starts with `cga_`
+- Verify the token starts with `cga_` — anything else is rejected before any lookup, including a Supabase session JWT
 - Check that `CONTENT_GEN_APP_API_TOKEN` is set correctly in your environment
-- Confirm the token has not been revoked in the Settings → API Tokens UI
+- Confirm the token's row still exists in the `api_tokens` table (a deleted row = revoked)
+- Confirm you minted the token against the same environment you're calling (a token minted against local Supabase will not authenticate against the deployed app)
+- Mint a fresh one with `npm run create-api-token -- you@example.com "Claude Code MCP"`
 
 ### "unknown category" or "not found" Errors
 - Use `list_categories` to see all available post types and their keys

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "seed": "tsx scripts/seed-categories.ts",
     "create-admin": "tsx scripts/create-admin-user.ts",
+    "create-api-token": "tsx --conditions=react-server scripts/create-api-token.ts",
     "verify-isolation": "tsx scripts/verify-isolation.ts",
     "verify-formats-rls": "tsx scripts/verify-formats-rls.ts",
     "import-legacy": "tsx scripts/import-athena-legacy.ts"
