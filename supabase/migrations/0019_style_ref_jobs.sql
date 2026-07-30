@@ -28,6 +28,9 @@ create table style_ref_jobs (
 create index style_ref_jobs_user_idx on style_ref_jobs(user_id);
 create index style_ref_jobs_pending_idx on style_ref_jobs(status) where status in ('submitted', 'polling');
 
+create trigger style_ref_jobs_updated_at before update on style_ref_jobs
+  for each row execute function set_updated_at();
+
 alter table style_ref_jobs enable row level security;
 create policy "owner all" on style_ref_jobs for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
