@@ -15,6 +15,14 @@ import type { Category, Slide } from "@/lib/types";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 const PREVIEW_IDEA_MAX_TOKENS = 4000; // one idea, max 10 slides
 
+// Mirrors this codebase's other bounded-tolerance windows (e.g.
+// MAX_CONSECUTIVE_POLL_ERRORS in the polling helper) — each attempt is a
+// fresh, real generation call, so this is not unbounded retry. The batch
+// idea-generation path (generate-ideas.ts) tolerates exactly this same class
+// of occasional malformed slide shape by requesting many ideas and dropping
+// the bad ones; a preview only ever wants one idea, so it retries instead.
+const MAX_PREVIEW_ATTEMPTS = 3;
+
 // Pure prompt assembly for a preview run: the same buildSlidePrompt calls
 // production makes, minus every DB write. Anchor is unchained; slides 1..N
 // are chained against [brand style ref, anchor image].
@@ -58,21 +66,29 @@ export async function generateSamplePreviewIdea(
     apiKey: await requireAnthropicKey(userId),
     feature: "content_preview",
   });
-  const response = await anthropic.messages.parse({
-    model: MODEL,
-    max_tokens: PREVIEW_IDEA_MAX_TOKENS,
-    system: buildIdeaSystemPrompt(brand, [category]),
-    messages: [{ role: "user", content: buildIdeaUserPrompt(1, [category.key]) }],
-    output_config: { format: zodOutputFormat(IdeasOutput) },
-  });
-  const idea = response.parsed_output?.ideas?.[0];
-  if (!idea) throw new Error("preview idea generation returned no usable idea");
 
   const expected = category.post_type === "narrative" ? category.images_per_carousel : 1;
-  const slides = (idea.slides ?? []) as Slide[];
-  const shape = validateSlideShape(slides, expected);
-  if (!shape.ok) throw new Error(`preview idea had the wrong shape: ${shape.reason}`);
-  return { concept: idea.concept, slides };
+  let lastReason = "no usable idea returned";
+  for (let attempt = 1; attempt <= MAX_PREVIEW_ATTEMPTS; attempt++) {
+    const response = await anthropic.messages.parse({
+      model: MODEL,
+      max_tokens: PREVIEW_IDEA_MAX_TOKENS,
+      system: buildIdeaSystemPrompt(brand, [category]),
+      messages: [{ role: "user", content: buildIdeaUserPrompt(1, [category.key]) }],
+      output_config: { format: zodOutputFormat(IdeasOutput) },
+    });
+    const idea = response.parsed_output?.ideas?.[0];
+    if (!idea) {
+      lastReason = "no usable idea returned";
+      continue;
+    }
+    const slides = (idea.slides ?? []) as Slide[];
+    const shape = validateSlideShape(slides, expected);
+    if (shape.ok) return { concept: idea.concept, slides };
+    console.warn(`preview idea attempt ${attempt}/${MAX_PREVIEW_ATTEMPTS} had the wrong shape: ${shape.reason}`);
+    lastReason = shape.reason;
+  }
+  throw new Error(`preview idea had the wrong shape after ${MAX_PREVIEW_ATTEMPTS} attempts: ${lastReason}`);
 }
 
 export async function submitPreviewAnchor(
