@@ -88,7 +88,7 @@ export async function generateSamplePreviewIdea(
     console.warn(`preview idea attempt ${attempt}/${MAX_PREVIEW_ATTEMPTS} had the wrong shape: ${shape.reason}`);
     lastReason = shape.reason;
   }
-  throw new Error(`preview idea had the wrong shape after ${MAX_PREVIEW_ATTEMPTS} attempts: ${lastReason}`);
+  throw new Error(`preview idea generation failed after ${MAX_PREVIEW_ATTEMPTS} attempts: ${lastReason}`);
 }
 
 export async function submitPreviewAnchor(

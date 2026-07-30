@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     const category = data as Category;
 
     if (phase === "generate") {
-      const notes = typeof body?.notes === "string" ? body.notes : undefined;
+      const notes = typeof body?.notes === "string" ? body.notes.slice(0, 500) : undefined;
       const { data: brandRow } = await supabase
         .from("brand_profiles").select("*").eq("user_id", user.id).maybeSingle();
       const brand: BrandContext = {

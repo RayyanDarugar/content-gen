@@ -3,13 +3,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { pollTask, generateStyleRef } from "@/lib/style-ref-client";
+import { pollTask, generateStyleRef, persistStyleRef } from "@/lib/style-ref-client";
 import type { Slide } from "@/lib/types";
 
 interface Props {
   categoryId: string;
   postType: "independent" | "narrative";
-  styleRefUrl: string; // "" means no reference exists yet
+  styleRefUrl: string; // "" means no reference at all right now
+  isPersisted: boolean; // false means styleRefUrl exists but isn't in the DB yet
   hasKieKey: boolean;
   onStyleRefGenerated: (url: string) => void;
 }
@@ -54,7 +55,7 @@ function groupByRole(candidates: RefCandidate[]): Map<Role, RefCandidate[]> {
   return byRole;
 }
 
-export function PreviewPane({ categoryId, postType, styleRefUrl, hasKieKey, onStyleRefGenerated }: Props) {
+export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, hasKieKey, onStyleRefGenerated }: Props) {
   const [run, setRun] = useState<PreviewRun | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -80,7 +81,11 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, hasKieKey, onSt
     setPromoteError("");
     try {
       let refUrl = styleRefUrl;
-      if (!refUrl) {
+      if (refUrl && !isPersisted) {
+        setStageMessage("Saving your uploaded reference image…");
+        refUrl = await persistStyleRef(categoryId, refUrl);
+        onStyleRefGenerated(refUrl);
+      } else if (!refUrl) {
         setStageMessage("Generating a starter reference image for your brand…");
         refUrl = await generateStyleRef(categoryId);
         onStyleRefGenerated(refUrl);
@@ -206,7 +211,7 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, hasKieKey, onSt
             <div className="flex gap-2">
               <Textarea rows={1} placeholder="Optional notes for regenerating (e.g. more muted colors)"
                 value={notes} onChange={(e) => setNotes(e.target.value)} className="text-xs" />
-              <Button size="sm" variant="outline" disabled={regenerating}
+              <Button size="sm" variant="outline" disabled={regenerating || busy}
                 onClick={async () => {
                   setRegenerating(true);
                   setError("");
@@ -227,7 +232,7 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, hasKieKey, onSt
         )}
         {hasKieKey && (
           <div className="flex gap-2">
-            <Button size="sm" onClick={startTest} disabled={busy}>
+            <Button size="sm" onClick={startTest} disabled={busy || regenerating}>
               {busy && !run ? (stageMessage || "Generating…") : run ? "Retry test" : "Test this draft"}
             </Button>
             {postType === "narrative" && run?.anchor.status === "done" && !run.fanout && (

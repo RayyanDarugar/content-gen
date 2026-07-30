@@ -231,6 +231,9 @@ function CategoryEditor({ category, groups, hasKieKey }: { category?: Category; 
               }}>
               {regeneratingStyleRef ? "Regenerating…" : "Regenerate with AI"}
             </Button>
+            <p className="text-xs text-muted-foreground">
+              Regenerating saves immediately — no need to press Save for this field.
+            </p>
           </div>
         )}
       </div>

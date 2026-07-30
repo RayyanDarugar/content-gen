@@ -65,8 +65,8 @@ export async function generateStyleRef(categoryId: string, notes?: string): Prom
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ categoryId, phase: "generate", notes }),
   });
-  const genJson = await genRes.json();
-  if (!genRes.ok) throw new Error(genJson.error ?? `HTTP ${genRes.status}`);
+  const genJson = await genRes.json().catch(() => null);
+  if (!genRes.ok || !genJson) throw new Error(genJson?.error ?? `HTTP ${genRes.status}`);
 
   const done = await pollTask(genJson.taskId);
   if (!done.ok || !done.url) throw new Error(done.error ?? "style reference generation failed");
@@ -76,7 +76,25 @@ export async function generateStyleRef(categoryId: string, notes?: string): Prom
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ categoryId, phase: "finalize", imageUrl: done.url }),
   });
-  const finalJson = await finalRes.json();
-  if (!finalRes.ok) throw new Error(finalJson.error ?? `HTTP ${finalRes.status}`);
+  const finalJson = await finalRes.json().catch(() => null);
+  if (!finalRes.ok || !finalJson) throw new Error(finalJson?.error ?? `HTTP ${finalRes.status}`);
   return finalJson.styleRefUrl as string;
+}
+
+// Persists an already-hosted image URL (e.g. one just uploaded via a manual
+// file upload, not yet sent through a chat turn) as the category's real
+// style_ref_url. Reuses the finalize phase's re-host+validate+persist logic
+// rather than duplicating it — a fresh upload deserves the same validation
+// as a freshly generated image before becoming canonical, and this is the
+// ONLY path that may overwrite an existing persisted reference with
+// something the user did not just explicitly regenerate.
+export async function persistStyleRef(categoryId: string, imageUrl: string): Promise<string> {
+  const res = await fetch("/api/categories/draft/style-ref", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ categoryId, phase: "finalize", imageUrl }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json) throw new Error(json?.error ?? `HTTP ${res.status}`);
+  return json.styleRefUrl as string;
 }
