@@ -13,6 +13,47 @@ export type RoleGuides = Partial<Record<Slide["role"], string>>;
 // but values are durable Cloudinary URLs instead of prose.
 export type RoleRefUrls = Partial<Record<Slide["role"], string>>;
 
+export type FormatOrigin = "observed" | "invented";
+
+// A reusable post structure. Landing early from project 2's object model:
+// the suggestion lane reads it, and a future scraper writes into it.
+export interface Format {
+  id: string;
+  user_id: string;
+  name: string;
+  structure: string;
+  why_it_works: string;
+  source_example: string;
+  brand_fit: string;
+  screenshot_url: string;
+  origin: FormatOrigin;
+  shared: boolean;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// What the model conceived when it invented a structure instead of drawing
+// on the library. Stored on the suggestion row at suggest time so writeback
+// keeps what it actually conceived, rather than reconstructing a lossy
+// version from the category's columns after the fact.
+export interface InventedFormat {
+  name: string;
+  structure: string;
+  why_it_works: string;
+  brand_fit: string;
+}
+
+export interface FormatSuggestion {
+  id: string;
+  user_id: string;
+  format_id: string | null;
+  concept: string;
+  invented_format: InventedFormat | null;
+  category_id: string | null;
+  created_at: string;
+}
+
 export interface Slide {
   role: "hook" | "beat" | "payoff" | "single";
   text: string;   // the words that appear on the panel
@@ -45,6 +86,7 @@ export interface Category {
   buffer_channel_service: string;
   images_per_carousel: number;
   aspect_ratio: string;
+  source_format_id: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
