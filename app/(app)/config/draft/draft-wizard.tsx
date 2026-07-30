@@ -284,8 +284,9 @@ export function DraftWizard({ initialCategory, keys, suggest = false }: Props) {
           <PreviewPane
             categoryId={categoryId}
             postType={lastDraft.post_type}
-            hasStyleRef={!!brandRefUrl && !pendingStyleRef}
+            styleRefUrl={pendingStyleRef ? "" : brandRefUrl}
             hasKieKey={keys.kie}
+            onStyleRefGenerated={(url) => { setBrandRefUrl(url); setPendingStyleRef(null); }}
           />
         )}
       </div>

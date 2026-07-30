@@ -1,14 +1,17 @@
 "use client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { pollTask, generateStyleRef } from "@/lib/style-ref-client";
 import type { Slide } from "@/lib/types";
 
 interface Props {
   categoryId: string;
   postType: "independent" | "narrative";
-  hasStyleRef: boolean;
+  styleRefUrl: string; // "" means no reference exists yet
   hasKieKey: boolean;
+  onStyleRefGenerated: (url: string) => void;
 }
 
 interface TaskState { taskId: string; url?: string; status: "pending" | "done" | "failed"; error?: string }
@@ -51,58 +54,13 @@ function groupByRole(candidates: RefCandidate[]): Map<Role, RefCandidate[]> {
   return byRole;
 }
 
-// Confirmed against the state values documented on the preview route's GET
-// handler (app/api/categories/draft/preview/route.ts:79-80): "success" ->
-// done, "fail" -> failed, anything else -> still in flight.
-const DONE_STATE = "success";
-const FAILED_STATE = "fail";
-
-// Kie polling is documented as intermittently flaky, and production tolerates
-// this via cron re-polls (see repo docs). A single bad poll — a network
-// blip, a malformed body, or one non-ok response — must not permanently fail
-// a slide when the underlying task may still succeed seconds later. Only
-// give up after this many CONSECUTIVE poll errors.
-const MAX_CONSECUTIVE_POLL_ERRORS = 3;
-
-async function pollTask(taskId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
-  let consecutiveErrors = 0;
-  let lastError: string | undefined;
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await fetch(`/api/categories/draft/preview?taskId=${encodeURIComponent(taskId)}`);
-      const json = await res.json().catch(() => null);
-      if (!res.ok || json == null) {
-        lastError = json?.error ?? `HTTP ${res.status}`;
-        consecutiveErrors++;
-        if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) return { ok: false, error: lastError };
-        await new Promise((r) => setTimeout(r, 5000));
-        continue;
-      }
-      consecutiveErrors = 0;
-      if (json.state === DONE_STATE) {
-        if (json.resultUrl) return { ok: true, url: json.resultUrl };
-        return { ok: false, error: "generation reported success but returned no image" };
-      }
-      if (json.state === FAILED_STATE) return { ok: false, error: "image generation failed" };
-    } catch (e) {
-      // A network-level failure (fetch rejects) — treat like any other
-      // transient failed poll rather than throwing out of the caller's
-      // Promise.all.
-      lastError = e instanceof Error ? e.message : String(e);
-      consecutiveErrors++;
-      if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) return { ok: false, error: lastError };
-      await new Promise((r) => setTimeout(r, 5000));
-      continue;
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-  }
-  return { ok: false, error: "timed out after 5 minutes" };
-}
-
-export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Props) {
+export function PreviewPane({ categoryId, postType, styleRefUrl, hasKieKey, onStyleRefGenerated }: Props) {
   const [run, setRun] = useState<PreviewRun | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [stageMessage, setStageMessage] = useState("");
+  const [notes, setNotes] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
 
   // Promotion state — local to the pane (§10). Keyed by role, not by
   // candidate identity, so it survives re-renders across polling updates.
@@ -121,6 +79,13 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
     setPromoteState("idle");
     setPromoteError("");
     try {
+      let refUrl = styleRefUrl;
+      if (!refUrl) {
+        setStageMessage("Generating a starter reference image for your brand…");
+        refUrl = await generateStyleRef(categoryId);
+        onStyleRefGenerated(refUrl);
+      }
+      setStageMessage("Generating your sample post…");
       const res = await fetch("/api/categories/draft/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -142,6 +107,7 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setStageMessage("");
     }
   }
 
@@ -226,16 +192,43 @@ export function PreviewPane({ categoryId, postType, hasStyleRef, hasKieKey }: Pr
           Generates one real sample post against this draft. Nothing is saved to your ideas or gallery.
         </p>
         {!hasKieKey && <p className="text-muted-foreground">Add your Kie.ai API key in Config to run tests.</p>}
-        {hasKieKey && !hasStyleRef && (
-          <p className="text-muted-foreground">
-            This draft has no brand visual reference image — add one on the start screen or in the category editor,
-            then re-open the wizard.
-          </p>
+        {hasKieKey && (
+          <div className="space-y-2 border-b pb-3">
+            <p className="text-xs font-medium text-muted-foreground">Brand reference image</p>
+            {styleRefUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={styleRefUrl} alt="brand style reference" className="h-24 w-24 rounded border object-cover" />
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                None yet — one is generated automatically from your brand the first time you test this draft.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Textarea rows={1} placeholder="Optional notes for regenerating (e.g. more muted colors)"
+                value={notes} onChange={(e) => setNotes(e.target.value)} className="text-xs" />
+              <Button size="sm" variant="outline" disabled={regenerating}
+                onClick={async () => {
+                  setRegenerating(true);
+                  setError("");
+                  try {
+                    const url = await generateStyleRef(categoryId, notes.trim() || undefined);
+                    onStyleRefGenerated(url);
+                    setNotes("");
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setRegenerating(false);
+                  }
+                }}>
+                {regenerating ? "Regenerating…" : "Regenerate"}
+              </Button>
+            </div>
+          </div>
         )}
-        {hasKieKey && hasStyleRef && (
+        {hasKieKey && (
           <div className="flex gap-2">
             <Button size="sm" onClick={startTest} disabled={busy}>
-              {busy && !run ? "Generating…" : run ? "Retry test" : "Test this draft"}
+              {busy && !run ? (stageMessage || "Generating…") : run ? "Retry test" : "Test this draft"}
             </Button>
             {postType === "narrative" && run?.anchor.status === "done" && !run.fanout && (
               <Button size="sm" variant="outline" onClick={fullTest} disabled={busy}>
