@@ -15,6 +15,10 @@ import {
   clearRoleRefUrlForUser,
   deleteCategoryForUser,
 } from "@/lib/category-mutations";
+import {
+  createOverlayForUser, updateOverlayForUser, deleteOverlayForUser,
+} from "@/lib/overlay-mutations";
+import type { OverlayFields } from "@/lib/overlays";
 import { saveBrandProfileForUser, createBrandForUser } from "@/lib/brand-profile";
 import { setActiveBrand } from "@/app/(app)/brand-actions";
 
@@ -50,6 +54,24 @@ export async function clearRoleRefUrl(categoryId: string, role: "hook" | "beat" 
 export async function deleteCategory(id: string) {
   const user = await requireUser();
   await deleteCategoryForUser(user.id, id);
+  revalidatePath("/config");
+}
+
+export async function createOverlay(categoryId: string, fields: OverlayFields) {
+  const user = await requireUser();
+  await createOverlayForUser(user.id, categoryId, fields);
+  revalidatePath("/config");
+}
+
+export async function updateOverlay(id: string, fields: OverlayFields) {
+  const user = await requireUser();
+  await updateOverlayForUser(user.id, id, fields);
+  revalidatePath("/config");
+}
+
+export async function deleteOverlay(id: string) {
+  const user = await requireUser();
+  await deleteOverlayForUser(user.id, id);
   revalidatePath("/config");
 }
 
