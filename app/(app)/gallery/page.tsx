@@ -18,15 +18,20 @@ export default async function GalleryPage() {
     .from("categories").select("key").eq("brand_id", brand.id);
   const keys = ((catData ?? []) as { key: string }[]).map((c) => c.key);
 
-  const { data } = await supabase
-    .from("ideas")
-    .select("*, generations(*)")
-    // Same reason as the Ideas page: the brand filter must precede .limit(200),
-    // or the cap is shared across brands and a busy brand hides a quiet one.
-    .in("category_key", keys)
-    .order("created_at", { ascending: false })
-    .order("created_at", { referencedTable: "generations", ascending: false })
-    .limit(200);
+  // Guarded like app/(app)/post/page.tsx:49-54 — an empty .in() list is
+  // skipped by convention here rather than relying on unverified PostgREST
+  // behavior for an empty in.() filter.
+  const { data } = keys.length
+    ? await supabase
+        .from("ideas")
+        .select("*, generations(*)")
+        // Same reason as the Ideas page: the brand filter must precede .limit(200),
+        // or the cap is shared across brands and a busy brand hides a quiet one.
+        .in("category_key", keys)
+        .order("created_at", { ascending: false })
+        .order("created_at", { referencedTable: "generations", ascending: false })
+        .limit(200)
+    : { data: [] as IdeaWithGenerations[] };
 
   const ideas = scopeToCategoryKeys((data ?? []) as IdeaWithGenerations[], keys)
     .filter((i) => i.generations.length > 0);

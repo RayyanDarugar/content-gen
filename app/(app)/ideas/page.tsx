@@ -18,14 +18,19 @@ export default async function IdeasPage() {
     .from("categories").select("*").eq("brand_id", brand.id).eq("active", true).order("key");
   const categories = (catData ?? []) as Category[];
 
-  const { data } = await supabase
-    .from("ideas").select("*")
-    // The brand filter goes in the QUERY, ahead of .limit(200). Filtering in
-    // memory after an account-wide limit shares that cap across every brand,
-    // so a busy brand can push a quieter one out of its own Ideas page —
-    // which renders as an empty state with nothing saying content was dropped.
-    .in("category_key", categories.map((c) => c.key))
-    .order("created_at", { ascending: false }).limit(200);
+  // Guarded like app/(app)/post/page.tsx:49-54 — an empty .in() list is
+  // skipped by convention here rather than relying on unverified PostgREST
+  // behavior for an empty in.() filter.
+  const { data } = categories.length
+    ? await supabase
+        .from("ideas").select("*")
+        // The brand filter goes in the QUERY, ahead of .limit(200). Filtering in
+        // memory after an account-wide limit shares that cap across every brand,
+        // so a busy brand can push a quieter one out of its own Ideas page —
+        // which renders as an empty state with nothing saying content was dropped.
+        .in("category_key", categories.map((c) => c.key))
+        .order("created_at", { ascending: false }).limit(200)
+    : { data: [] as Idea[] };
   const ideas = scopeToCategoryKeys((data ?? []) as Idea[], categories.map((c) => c.key));
 
   const brandMissing = !brand.business_name.trim();
