@@ -123,7 +123,13 @@ An overlay whose fetch fails must not fail the whole ingest: log it, skip that l
 
 If `compositeOverlays` returns non-null, upload the result and write `composited_url`. If it returns null, write nothing.
 
-**Test Run — `GET /api/categories/draft/preview`.** Gains optional `categoryId` and `role` query parameters; `pollTask` in `lib/style-ref-client.ts` forwards them only when supplied. When both are present and compositing produces a buffer, the route returns it as a base64 data URI in the same `resultUrl` field the client already reads — `preview-pane.tsx` renders a data URI identically, so **no client change is required**, and nothing is persisted, keeping that card's "nothing is saved" copy literally true.
+**Test Run — `GET /api/categories/draft/preview`.** Gains optional `categoryId` and `role` query parameters; `pollTask` in `lib/style-ref-client.ts` forwards them only when supplied. When both are present and compositing produces a buffer, the route returns it as a base64 data URI **in a separate `compositedUrl` field, leaving `resultUrl` clean.** Nothing is persisted, keeping that card's "nothing is saved" copy literally true.
+
+**The two artifacts must stay separate on the wire, exactly as they are in the database.** An earlier draft of this spec put the composited image into `resultUrl` itself, reasoning that no client change was needed because a data URI renders like any other URL. That was wrong in precisely the way this project exists to prevent: `preview-pane.tsx` stores the anchor poll's result into `run.anchor.url` and then sends that same value back as `anchorImageUrl` for the fan-out, which reaches `createKieTask` as an `input_url`. Overwriting `resultUrl` hands Kie a QR-stamped image as the visual reference for every later preview slide — the poisoned anchor, through the preview door.
+
+So `pollTask` returns both: `url` (clean — what goes back to Kie) and `displayUrl` (composited when present — what the user sees). The preview image renders `displayUrl`; the fan-out sends `url`.
+
+This also keeps "Cement selected as references" working. That flow promotes a chosen preview image into `categories.role_ref_urls`, a Kie seed input for all future real generations, and `promote-refs` validates each entry as an https URL and rejects the whole request if any one fails. Cementing must send `url`, never `displayUrl`.
 
 **Style-reference generation must never composite.** `generateStyleRef`/`persistStyleRef` have no slide role, and a brand's reference image is a template asset, not a published post. The route composites only when both parameters are present; a poll missing either behaves exactly as today.
 
