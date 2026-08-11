@@ -27,4 +27,23 @@ describe("safeNextPath", () => {
   it("rejects an empty string", () => {
     expect(safeNextPath("")).toBe("/ideas");
   });
+
+  // new URL() normalizes a leading backslash for special schemes, so this
+  // resolves to https://evil.test/ despite starting with a single slash.
+  it("rejects a backslash-prefixed host", () => {
+    expect(safeNextPath("/\\evil.test")).toBe("/ideas");
+  });
+
+  it("rejects a mixed slash-backslash host", () => {
+    expect(safeNextPath("/\\/evil.test")).toBe("/ideas");
+  });
+
+  // WHATWG parsing strips embedded tab/CR/LF before resolving.
+  it("rejects a host hidden behind an embedded tab", () => {
+    expect(safeNextPath("/\t/evil.test")).toBe("/ideas");
+  });
+
+  it("keeps a query string and hash on an accepted path", () => {
+    expect(safeNextPath("/auth/update-password?a=1#b")).toBe("/auth/update-password?a=1#b");
+  });
 });

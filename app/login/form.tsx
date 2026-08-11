@@ -14,6 +14,7 @@ export function LoginForm({ linkFailed = false }: { linkFailed?: boolean }) {
   const [err, setErr] = useState("");
   const [mode, setMode] = useState<"signin" | "reset">("signin");
   const [notice, setNotice] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const router = useRouter();
 
   async function signIn(e: React.FormEvent) {
@@ -32,10 +33,12 @@ export function LoginForm({ linkFailed = false }: { linkFailed?: boolean }) {
   async function requestReset(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
+    setResetBusy(true);
     const supabase = createBrowserSupabase();
     await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
     });
+    setResetBusy(false);
     // Deliberately the same message whether or not that email has an account,
     // and the call's error is not surfaced — revealing which addresses are
     // registered is exactly what app/signup/actions.ts declines to do too.
@@ -82,7 +85,9 @@ export function LoginForm({ linkFailed = false }: { linkFailed?: boolean }) {
             <form onSubmit={requestReset} className="space-y-3">
               <Input type="email" placeholder="you@example.com" value={email}
                 onChange={(e) => setEmail(e.target.value)} required />
-              <Button type="submit" className="w-full">Send reset link</Button>
+              <Button type="submit" className="w-full" disabled={resetBusy}>
+                {resetBusy ? "Sending…" : "Send reset link"}
+              </Button>
               {err && <p className="text-sm text-destructive">{err}</p>}
               {notice && <p className="text-sm text-muted-foreground">{notice}</p>}
             </form>
