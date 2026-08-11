@@ -28,7 +28,17 @@ export async function compositeOverlays(
   const layers = overlaysForRole(overlays, role);
   if (layers.length === 0) return null;
 
-  const meta = await sharp(base).metadata();
+  // Guarded like every other sharp/network call here: compositeOverlays must
+  // never throw. By the time it runs, the generation's image has already
+  // succeeded and been stored — losing it because the buffer was unparseable
+  // would be far worse than a post missing its logo.
+  let meta;
+  try {
+    meta = await sharp(base).metadata();
+  } catch (e) {
+    console.error("overlay compositing skipped — unreadable base image:", e);
+    return null;
+  }
   if (!meta.width || !meta.height) return null;
 
   let current = base;
