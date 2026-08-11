@@ -8,7 +8,7 @@ import { CategoryManager } from "./category-manager";
 import { KeysSection } from "./keys-section";
 import { BrandSection } from "./brand-section";
 import { ConnectionsSection } from "./connections-section";
-import type { Category } from "@/lib/types";
+import type { Category, CategoryOverlay } from "@/lib/types";
 
 export default async function ConfigPage() {
   const user = await requireUser();
@@ -27,6 +27,10 @@ export default async function ConfigPage() {
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from("categories").select("*").eq("brand_id", brand.id).order("key");
+  const categoryIds = ((data ?? []) as Category[]).map((c) => c.id);
+  const { data: overlayData } = categoryIds.length
+    ? await supabase.from("category_overlays").select("*").in("category_id", categoryIds).order("sort_order")
+    : { data: [] as CategoryOverlay[] };
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold">Config</h1>
@@ -63,6 +67,7 @@ export default async function ConfigPage() {
           groups={groups}
           brandDone={Boolean(brand.business_name.trim())}
           hasKieKey={status.kie}
+          overlays={(overlayData ?? []) as CategoryOverlay[]}
         />
       </section>
     </div>

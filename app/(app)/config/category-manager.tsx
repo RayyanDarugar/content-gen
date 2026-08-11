@@ -12,8 +12,9 @@ import { Switch } from "@/components/ui/switch";
 import {
   createCategory, updateCategory, deleteCategory, uploadStyleRefImage, clearRoleRefUrl,
 } from "./actions";
+import { OverlaySection } from "./overlay-section";
 import type { CategoryFields } from "@/lib/categories";
-import type { Category } from "@/lib/types";
+import type { Category, CategoryOverlay } from "@/lib/types";
 import type { ChannelGroup } from "@/lib/settings/buffer";
 import { encodeChannelChoice, decodeChannelChoice, resolveChannelService } from "@/lib/channel-choice";
 
@@ -24,7 +25,9 @@ const EMPTY: CategoryFields = {
   post_type: "independent", role_guides: {},
 };
 
-function CategoryEditor({ category, groups, hasKieKey }: { category?: Category; groups: ChannelGroup[]; hasKieKey: boolean }) {
+function CategoryEditor({
+  category, groups, hasKieKey, overlays,
+}: { category?: Category; groups: ChannelGroup[]; hasKieKey: boolean; overlays: CategoryOverlay[] }) {
   const router = useRouter();
   const [form, setForm] = useState<CategoryFields>(
     category
@@ -164,6 +167,14 @@ function CategoryEditor({ category, groups, hasKieKey }: { category?: Category; 
             </div>
           ))}
         </div>
+      )}
+
+      {category ? (
+        <OverlaySection categoryId={category.id} overlays={overlays} />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Save this post type first, then you can add logos and QR codes to it.
+        </p>
       )}
 
       {category && category.role_ref_urls && Object.keys(category.role_ref_urls).length > 0 && (
@@ -309,17 +320,27 @@ export function CategoryManager({
   groups,
   brandDone,
   hasKieKey,
+  overlays,
 }: {
   categories: Category[];
   groups: ChannelGroup[];
   brandDone: boolean;
   hasKieKey: boolean;
+  overlays: CategoryOverlay[];
 }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        {categories.map((c) => <CategoryEditor key={c.id} category={c} groups={groups} hasKieKey={hasKieKey} />)}
+        {categories.map((c) => (
+          <CategoryEditor
+            key={c.id}
+            category={c}
+            groups={groups}
+            hasKieKey={hasKieKey}
+            overlays={overlays.filter((o) => o.category_id === c.id)}
+          />
+        ))}
         <div>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Add a new category</p>
@@ -334,7 +355,7 @@ export function CategoryManager({
               </Button>
             </div>
           </div>
-          <CategoryEditor groups={groups} hasKieKey={hasKieKey} />
+          <CategoryEditor groups={groups} hasKieKey={hasKieKey} overlays={[]} />
         </div>
       </CardContent>
     </Card>
