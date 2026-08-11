@@ -286,9 +286,14 @@ function OverlayEditor({
           Treatment
         </p>
 
-        {(form.shape !== "none" || form.tint !== "none") && (
+        {/* A border is the likeliest of the three to break a scan — it paints
+            the outer pixels opaque on all four sides, and 25% is permitted,
+            which destroys the quiet zone and both left finder patterns. A
+            warning only: it never blocks saving, since most overlays are not
+            QR codes. */}
+        {(form.shape !== "none" || form.tint !== "none" || form.border_width_pct > 0) && (
           <p className="text-[11px] text-amber-700">
-            Masking or tinting will stop a QR code scanning.
+            Masking, tinting or bordering will stop a QR code scanning.
           </p>
         )}
 
@@ -314,9 +319,15 @@ function OverlayEditor({
                 const tint = e.target.value as OverlayTint;
                 // The validator rejects a tint colour on a non-colour tint, so
                 // clearing it here keeps the form saveable rather than erroring
-                // about a field the user can no longer see.
-                set("tint", tint);
-                if (tint !== "color") set("tint_color", "");
+                // about a field the user can no longer see. Switching TO a
+                // colour tint seeds white for the opposite reason — see the
+                // Border % field.
+                setForm((f) => ({
+                  ...f,
+                  tint,
+                  tint_color:
+                    tint !== "color" ? "" : f.tint_color.trim() ? f.tint_color : "#ffffff",
+                }));
               }}
             >
               <option value="none">None</option>
@@ -331,7 +342,21 @@ function OverlayEditor({
             <Label className="text-[10px]">Border %</Label>
             <Input
               type="number" className="h-7 text-xs" value={form.border_width_pct}
-              onChange={(e) => set("border_width_pct", Number(e.target.value))}
+              onChange={(e) => {
+                const pct = Number(e.target.value);
+                // The swatch renders "#ffffff" for an empty stored colour, so
+                // a user who takes that apparent white at face value and saves
+                // gets "Pick a border colour" — and re-opening the picker and
+                // choosing white need not fire onChange at all, because the
+                // DOM value already IS #ffffff, leaving the error unclearable.
+                // Seeding the colour on the transition that makes it required
+                // means the swatch tells the truth.
+                setForm((f) => ({
+                  ...f,
+                  border_width_pct: pct,
+                  border_color: pct > 0 && !f.border_color.trim() ? "#ffffff" : f.border_color,
+                }));
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">

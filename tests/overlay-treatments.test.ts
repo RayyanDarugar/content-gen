@@ -26,6 +26,26 @@ describe("treatmentGeometry", () => {
     expect(large.shadowBlurPx).toBeGreaterThan(small.shadowBlurPx);
   });
 
+  // Keyed off WIDTH, the blur a wide layer got was larger than its whole
+  // height — and the builder insets the silhouette by that blur on all four
+  // sides, so a 432x22 wordmark's shadow decayed to invisible and then snapped
+  // back to a hard-edged bar. Same shorter-side rule as the corner radius.
+  it("derives the shadow offset and blur from the shorter side", () => {
+    const wide = treatmentGeometry({ width: 1000, height: 100 }, { border_width_pct: 0, shape: "none" });
+    const square = treatmentGeometry({ width: 100, height: 100 }, { border_width_pct: 0, shape: "none" });
+    expect(wide.shadowBlurPx).toBe(square.shadowBlurPx);
+    expect(wide.shadowOffsetPx).toBe(square.shadowOffsetPx);
+  });
+
+  // The builder's inset (height - 2 * blur) must stay positive, or it takes
+  // the degenerate branch that renders a uniform hard-edged bar.
+  it("leaves a wide layer room to inset by the blur on both axes", () => {
+    for (const height of [1000, 300, 100, 60, 22, 10, 3]) {
+      const g = treatmentGeometry({ width: 1080, height }, { border_width_pct: 0, shape: "none" });
+      expect(height - 2 * g.shadowBlurPx).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   it("never produces a zero shadow offset or blur", () => {
     const g = treatmentGeometry({ width: 10, height: 10 }, { border_width_pct: 0, shape: "none" });
     expect(g.shadowOffsetPx).toBeGreaterThanOrEqual(1);

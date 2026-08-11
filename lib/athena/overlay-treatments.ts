@@ -4,8 +4,15 @@ import type { CategoryOverlay } from "@/lib/types";
 // parts of B3 worth testing, and they are only testable because no sharp call
 // sits beside them — the same separation that makes computePlacement testable.
 
-// Derived from the layer's own width so a shadow looks right on a 15% logo
-// and a 35% headshot alike, and across this app's 4:5 and 1:1 canvases.
+// Derived from the layer's own size so a shadow looks right on a 15% logo and
+// a 35% headshot alike, and across this app's 4:5 and 1:1 canvases.
+//
+// Of the SHORTER side, for the same reason as ROUNDED_RADIUS_PCT below: the
+// builder insets the silhouette by the blur radius on ALL FOUR sides to give
+// the blur transparent margin to bleed into, so a blur derived from a wide
+// layer's width eats its whole height. Keyed off width, a 432x22 wordmark's
+// shadow decayed to invisible and then snapped back to a hard-edged bar once
+// the inset went degenerate.
 const SHADOW_OFFSET_PCT = 2;
 const SHADOW_BLUR_PCT = 3;
 // Of the SHORTER side — 12% of a wide layer's width would exceed half its
@@ -35,8 +42,8 @@ export function treatmentGeometry(
 
   return {
     borderPx,
-    shadowOffsetPx: Math.max(1, Math.round((box.width * SHADOW_OFFSET_PCT) / 100)),
-    shadowBlurPx: Math.max(1, Math.round((box.width * SHADOW_BLUR_PCT) / 100)),
+    shadowOffsetPx: Math.max(1, Math.round((shorter * SHADOW_OFFSET_PCT) / 100)),
+    shadowBlurPx: Math.max(1, Math.round((shorter * SHADOW_BLUR_PCT) / 100)),
     cornerRadiusPx:
       o.shape === "rounded"
         ? Math.max(1, Math.round((shorter * ROUNDED_RADIUS_PCT) / 100))
