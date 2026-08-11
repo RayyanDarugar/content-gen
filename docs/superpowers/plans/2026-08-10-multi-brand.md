@@ -2299,6 +2299,22 @@ When `creatingBrand`, the three-step checklist must not report the *active* bran
 
 and pass `creatingBrand` to `OnboardingSteps`.
 
+**Create mode must exit itself after a successful create.** `creatingBrand` derives purely from the URL, and `router.refresh()` re-fetches the *same* URL — so without an explicit navigation the page stays in create mode forever. That is not cosmetic: the three step flags stay forced `false`, so the checklist is pinned at step 1 and "Generate 5 ideas" never enables; and because `BrandSection` is still bound to `createBrandAction`, **every subsequent submit inserts another brand row.** There is no delete-brand action in this codebase, so those rows are permanent. `createBrandAction` already calls `setActiveBrand`, so the brand just created is the active one — dropping the query param is all that is needed for the page to re-derive real progress against it:
+
+```tsx
+<BrandSection
+  brand={creatingBrand ? null : brand}
+  action={creatingBrand ? createBrandAction : saveBrandProfile}
+  onSaved={() => {
+    // Leave create mode once the brand exists, or creatingBrand stays true,
+    // the checklist stays pinned at step 1, and the next submit creates a
+    // SECOND brand. createBrandAction has already made this brand active.
+    if (creatingBrand) router.replace("/onboarding");
+    else router.refresh();
+  }}
+/>
+```
+
 - [ ] **Step 4: Verify end to end**
 
 With `npm run dev`:
