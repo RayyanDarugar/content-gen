@@ -50,3 +50,9 @@ next-env.d.ts
 
 # claude code worktrees
 .claude/
+
+# git worktrees (superpowers SDD)
+/.worktrees
+
+# subagent-driven-development scratch
+/.superpowers
