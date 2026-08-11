@@ -1,4 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { scopeToCategoryKeys } from "@/lib/scope";
 import { GalleryCard } from "./gallery-card";
 import { RealtimeRefresher } from "./realtime-refresher";
 import { categoryColor } from "@/lib/category-colors";
@@ -7,7 +10,14 @@ import type { Generation, Idea } from "@/lib/types";
 export type IdeaWithGenerations = Idea & { generations: Generation[] };
 
 export default async function GalleryPage() {
+  const user = await requireUser();
+  const brand = await requireActiveBrand(user.id);
   const supabase = await createServerSupabase();
+
+  const { data: catData } = await supabase
+    .from("categories").select("key").eq("brand_id", brand.id);
+  const keys = ((catData ?? []) as { key: string }[]).map((c) => c.key);
+
   const { data } = await supabase
     .from("ideas")
     .select("*, generations(*)")
@@ -15,9 +25,8 @@ export default async function GalleryPage() {
     .order("created_at", { referencedTable: "generations", ascending: false })
     .limit(200);
 
-  const ideas = ((data ?? []) as IdeaWithGenerations[]).filter(
-    (i) => i.generations.length > 0,
-  );
+  const ideas = scopeToCategoryKeys((data ?? []) as IdeaWithGenerations[], keys)
+    .filter((i) => i.generations.length > 0);
 
   const byCategory = new Map<string, IdeaWithGenerations[]>();
   for (const idea of ideas) {

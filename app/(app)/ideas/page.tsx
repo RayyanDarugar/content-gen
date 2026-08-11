@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getActiveBrand } from "@/lib/auth/active-brand";
+import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { scopeToCategoryKeys } from "@/lib/scope";
 import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
 import { ManualIdeaDialog } from "./manual-idea-dialog";
@@ -10,16 +11,18 @@ import type { Category, Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
   const user = await requireUser();
+  const brand = await requireActiveBrand(user.id);
   const supabase = await createServerSupabase();
-  const { data } = await supabase
-    .from("ideas").select("*").order("created_at", { ascending: false }).limit(200);
-  const ideas = (data ?? []) as Idea[];
 
   const { data: catData } = await supabase
-    .from("categories").select("*").eq("active", true).order("key");
+    .from("categories").select("*").eq("brand_id", brand.id).eq("active", true).order("key");
+  const categories = (catData ?? []) as Category[];
 
-  const brand = await getActiveBrand(user.id);
-  const brandMissing = !brand?.business_name?.trim();
+  const { data } = await supabase
+    .from("ideas").select("*").order("created_at", { ascending: false }).limit(200);
+  const ideas = scopeToCategoryKeys((data ?? []) as Idea[], categories.map((c) => c.key));
+
+  const brandMissing = !brand.business_name.trim();
 
   const byCategory = new Map<string, Idea[]>();
   for (const idea of ideas) {
@@ -30,7 +33,7 @@ export default async function IdeasPage() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Ideas</h1>
-        <ManualIdeaDialog categories={(catData ?? []) as Category[]} />
+        <ManualIdeaDialog categories={categories} />
       </div>
       {brandMissing && (
         <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
