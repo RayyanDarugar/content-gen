@@ -57,7 +57,13 @@ export async function buildOverlayLayer(
   if (o.tint === "grayscale") {
     buf = await sharp(buf).grayscale().png().toBuffer();
   } else if (o.tint === "color") {
-    buf = await sharp(buf).grayscale().tint(hexToRgb(o.tint_color)).png().toBuffer();
+    // sharp is a declarative pipeline with a fixed internal operation order:
+    // grayscale is always applied AFTER tint regardless of chain order, so
+    // .grayscale().tint(...) collapses to plain grey (measured: 135,135,135
+    // vs tint-alone's 94,125,255 on a 200/120/40 input tinted #3366ff — see
+    // the B3 Task 3 report). tint() already works in LAB space, preserving
+    // luminance and replacing chroma — that IS the monotone this needs.
+    buf = await sharp(buf).tint(hexToRgb(o.tint_color)).png().toBuffer();
   }
 
   // mask
@@ -88,16 +94,50 @@ export async function buildOverlayLayer(
   // effect.
   let shadow: Buffer | null = null;
   if (o.shadow) {
-    const { data: alphaData, info: alphaInfo } = await sharp(buf)
-      .extractChannel("alpha")
-      .blur(g.shadowBlurPx)
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const b = g.shadowBlurPx;
+    // For any shape but circle, the masked alpha is uniform 255 all the way
+    // to the buffer's edge — blur has no transparent margin to bleed into,
+    // so shape: "none" (and rounded's straight edges) produced a hard-edged
+    // block instead of a soft shadow (measured pre-fix: alpha 255 at the
+    // corner, edge midpoint, AND centre of a 200px layer — see the B3 Task 3
+    // report). Fix: shrink the silhouette by the blur radius on each side,
+    // then pad it back out to the full buffer size with a transparent
+    // margin, so the blur has room to soften every edge. The shadow buffer
+    // itself stays exactly width x height throughout — that's load-bearing
+    // for the caller's clamp, which assumes it never needs to handle an
+    // out-of-bounds composite.
+    //
+    // Kept as one unbroken pipeline through to .raw(): round-tripping the
+    // extracted channel through an intermediate .png().toBuffer() and
+    // reloading it was measured to upconvert the single-channel greyscale
+    // to 3 channels on the next .blur() (verified empirically — see the B3
+    // Task 3 report), which would have silently corrupted the alpha data
+    // read below.
+    const insetW = width - 2 * b;
+    const insetH = height - 2 * b;
+    const alphaPipeline =
+      insetW < 1 || insetH < 1
+        ? // Degenerate case: the layer is too small for the blur radius to
+          // inset without collapsing to nothing. Skip the inset and blur the
+          // silhouette as-is rather than erroring.
+          sharp(buf).extractChannel("alpha").blur(b)
+        : sharp(buf)
+            .extractChannel("alpha")
+            .resize(insetW, insetH, { fit: "fill" })
+            .extend({ top: b, bottom: b, left: b, right: b, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+            .blur(b);
+    const { data: alphaData, info: alphaInfo } = await alphaPipeline.raw().toBuffer({ resolveWithObject: true });
 
+    // Darkness (0.45) and the overlay's own opacity both scale the same
+    // channel: a faded overlay should cast a faded shadow, not a
+    // full-strength one. Chaining .linear() directly onto the
+    // extractChannel/blur pipeline is a no-op in this sharp version, so the
+    // raw buffer is re-wrapped as its own sharp() input before .linear() is
+    // applied — verified empirically, see the B3 Task 3 report.
     const { data: scaledAlpha } = await sharp(alphaData, {
       raw: { width: alphaInfo.width, height: alphaInfo.height, channels: 1 },
     })
-      .linear(0.45, 0)
+      .linear((0.45 * o.opacity) / 100, 0)
       .raw()
       .toBuffer({ resolveWithObject: true });
 
