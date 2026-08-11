@@ -15,7 +15,8 @@ import {
   clearRoleRefUrlForUser,
   deleteCategoryForUser,
 } from "@/lib/category-mutations";
-import { saveBrandProfileForUser } from "@/lib/brand-profile";
+import { saveBrandProfileForUser, createBrandForUser } from "@/lib/brand-profile";
+import { setActiveBrand } from "@/app/(app)/brand-actions";
 
 // Everything exported from this file is a "use server" action — i.e. a public
 // endpoint reachable by direct POST. Every export below therefore starts with
@@ -132,6 +133,34 @@ export async function saveBrandProfile(
       fonts: parseBrandList(formData.get("fonts")),
       visual_notes: String(formData.get("visual_notes") ?? "").trim(),
     });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  revalidatePath("/config");
+  return { ok: true };
+}
+
+// Creating a brand and switching to it are one user intent: a new brand the
+// user is not looking at is a confusing outcome.
+export async function createBrandAction(
+  _prev: { error?: string; ok?: boolean } | undefined,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const user = await requireUser();
+  try {
+    const brandId = await createBrandForUser(user.id, {
+      business_name: String(formData.get("business_name") ?? "").trim(),
+      business_description: String(formData.get("business_description") ?? "").trim(),
+      audience: String(formData.get("audience") ?? "").trim(),
+      voice: String(formData.get("voice") ?? "").trim(),
+      avoid: String(formData.get("avoid") ?? "").trim(),
+      proof_points: parseBrandList(formData.get("proof_points")),
+      standing: parseBrandList(formData.get("standing")),
+      colors: parseBrandList(formData.get("colors")),
+      fonts: parseBrandList(formData.get("fonts")),
+      visual_notes: String(formData.get("visual_notes") ?? "").trim(),
+    });
+    await setActiveBrand(brandId);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

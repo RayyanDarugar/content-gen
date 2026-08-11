@@ -10,12 +10,25 @@ export default async function OnboardingPage() {
 
   const brand = await getActiveBrand(user.id);
 
+  // brand may legitimately be null: an account with zero brands reaches this
+  // page via requireActiveBrand's redirect elsewhere, and this page is the
+  // one place that must tolerate that state rather than looping back to it.
+  // The sentinel id matches no real brand_id, so a brandless account simply
+  // sees an empty category list instead of every account's categories.
   const { data: catData } = await supabase
-    .from("categories").select("*").eq("active", true).order("key");
+    .from("categories").select("*")
+    .eq("brand_id", brand?.id ?? "00000000-0000-0000-0000-000000000000")
+    .eq("active", true).order("key");
   const categories = (catData ?? []) as Category[];
 
-  const { count: ideaCount } = await supabase
-    .from("ideas").select("*", { count: "exact", head: true });
+  // ideas has no brand_id column of its own (spec §3.2) — scope through the
+  // brand's own category keys, same as app/(app)/ideas/page.tsx, and skip the
+  // query on an empty list rather than relying on unverified .in([]) behavior.
+  const { count: ideaCount } = categories.length
+    ? await supabase
+        .from("ideas").select("*", { count: "exact", head: true })
+        .in("category_key", categories.map((c) => c.key))
+    : { count: 0 };
 
   const brandDone = Boolean(brand?.business_name?.trim());
   const categoryDone = categories.length > 0;
