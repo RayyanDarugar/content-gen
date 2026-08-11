@@ -71,6 +71,9 @@ export interface BufferConnection {
 export type OverlayCorner =
   | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
 
+export type OverlayShape = "none" | "circle" | "rounded";
+export type OverlayTint = "none" | "grayscale" | "color";
+
 // An exact asset composited onto finished slides (spec §2). Configured per
 // category and targeted by role, the same way role_guides is.
 export interface CategoryOverlay {
@@ -86,6 +89,13 @@ export interface CategoryOverlay {
   margin_pct: number;
   size_pct: number;
   opacity: number;
+  shape: OverlayShape;
+  // Percentage of the layer's own width.
+  border_width_pct: number;
+  border_color: string;
+  tint: OverlayTint;
+  tint_color: string;
+  shadow: boolean;
   sort_order: number;
   active: boolean;
   created_at: string;

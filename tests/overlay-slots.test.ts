@@ -8,6 +8,7 @@ function ov(over: Partial<CategoryOverlay>): CategoryOverlay {
     image_url: "https://x.test/logo.png", is_slot: false,
     roles: ["single"], corner: "bottom-right",
     margin_pct: 5, size_pct: 15, opacity: 100, sort_order: 0, active: true,
+    shape: "none", border_width_pct: 0, border_color: "", tint: "none", tint_color: "", shadow: false,
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
     ...over,
   };
