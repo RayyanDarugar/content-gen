@@ -25,6 +25,10 @@ export async function middleware(request: NextRequest) {
   const isPublic =
     pathname.startsWith("/login") ||
     pathname.startsWith("/signup") ||
+    // Contract: everything under /auth/ is public — the callback must be
+    // reachable unauthenticated. Any page added under /auth/ from now on
+    // silently opts out of this gate and MUST guard itself (see
+    // app/auth/update-password/page.tsx's requireUser() for the pattern).
     pathname.startsWith("/auth");
 
   if (!user && !isPublic) {

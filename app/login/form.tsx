@@ -34,15 +34,19 @@ export function LoginForm({ linkFailed = false }: { linkFailed?: boolean }) {
     e.preventDefault();
     setErr("");
     setResetBusy(true);
-    const supabase = createBrowserSupabase();
-    await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
-    });
-    setResetBusy(false);
-    // Deliberately the same message whether or not that email has an account,
-    // and the call's error is not surfaced — revealing which addresses are
-    // registered is exactly what app/signup/actions.ts declines to do too.
-    setNotice("If that email has an account, a reset link is on its way.");
+    try {
+      const supabase = createBrowserSupabase();
+      await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
+      });
+      // Deliberately the same message whether or not that email has an
+      // account, and the call's error is not surfaced — revealing which
+      // addresses are registered is exactly what app/signup/actions.ts
+      // declines to do too.
+      setNotice("If that email has an account, a reset link is on its way.");
+    } finally {
+      setResetBusy(false);
+    }
   }
 
   return (

@@ -215,6 +215,8 @@ export function GalleryCard({
           {isCarousel && allSucceeded && (
             <a
               href={`/api/posts/${idea.id}/download`}
+              target="_blank"
+              rel="noopener"
               className="text-xs underline text-muted-foreground"
             >
               Download all {slideCount}

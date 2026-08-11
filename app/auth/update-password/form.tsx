@@ -21,15 +21,18 @@ export function UpdatePasswordForm() {
       return;
     }
     setBusy(true);
-    const supabase = createBrowserSupabase();
-    const { error } = await supabase.auth.updateUser({ password });
-    setBusy(false);
-    if (error) {
-      setErr(error.message);
-      return;
+    try {
+      const supabase = createBrowserSupabase();
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        setErr(error.message);
+        return;
+      }
+      router.push("/ideas");
+      router.refresh();
+    } finally {
+      setBusy(false);
     }
-    router.push("/ideas");
-    router.refresh();
   }
 
   return (

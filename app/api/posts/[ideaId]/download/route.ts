@@ -36,19 +36,32 @@ export async function GET(
     return NextResponse.json({ error: "this post has no finished images" }, { status: 404 });
   }
 
+  // Fetched concurrently — sequential fetches under a 20s-per-slide timeout
+  // can blow past the route's own maxDuration once there are more than a
+  // handful of slides. Results are collected by index (not push) so the zip
+  // preserves entry order regardless of which fetch resolves first.
+  const fetched = await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        const res = await fetch(entry.url, { signal: AbortSignal.timeout(20_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.arrayBuffer();
+      } catch (e) {
+        // A partial download beats a 500 when four of five images are fine.
+        console.error(`zip: skipping ${entry.name} for idea ${ideaId}:`, e);
+        return null;
+      }
+    }),
+  );
+
   const zip = new JSZip();
   let added = 0;
-  for (const entry of entries) {
-    try {
-      const res = await fetch(entry.url, { signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      zip.file(entry.name, await res.arrayBuffer());
-      added++;
-    } catch (e) {
-      // A partial download beats a 500 when four of five images are fine.
-      console.error(`zip: skipping ${entry.name} for idea ${ideaId}:`, e);
-    }
-  }
+  entries.forEach((entry, i) => {
+    const data = fetched[i];
+    if (data === null) return;
+    zip.file(entry.name, data);
+    added++;
+  });
 
   // An empty zip would look like success. Fail loudly instead.
   if (added === 0) {

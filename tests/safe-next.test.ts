@@ -46,4 +46,16 @@ describe("safeNextPath", () => {
   it("keeps a query string and hash on an accepted path", () => {
     expect(safeNextPath("/auth/update-password?a=1#b")).toBe("/auth/update-password?a=1#b");
   });
+
+  // The origin check passes (the sentinel is intact) but the canonical form
+  // is itself protocol-relative, and that is what gets re-parsed downstream.
+  it("rejects an input that canonicalizes into a protocol-relative path", () => {
+    expect(safeNextPath("/.//evil.test")).toBe("/ideas");
+    expect(safeNextPath("/..//evil.test")).toBe("/ideas");
+    expect(safeNextPath("/./\\/evil.test")).toBe("/ideas");
+  });
+
+  it("rejects a sentinel-host payload that canonicalizes off-origin", () => {
+    expect(safeNextPath("//safe-next.invalid//evil.test")).toBe("/ideas");
+  });
 });
