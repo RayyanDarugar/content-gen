@@ -1634,76 +1634,124 @@ git commit -m "feat: onboarding creates and activates a brand"
 
 **Interfaces:**
 - Consumes: `resolveBrandByName`, `listBrandsForUser` (Task 2).
-- Produces: an optional `brand: z.string().optional()` input on `get_brand_profile`, `update_brand_profile`, `create_category`, `draft_category_turn`, and `generate_ideas`; a new `list_brands` tool.
+- Produces:
+  - `brandForUser(userId: string, name?: string): Promise<BrandProfile>` in `lib/brands.ts`
+  - an optional `brand: z.string().optional()` input on `get_brand_profile`, `update_brand_profile`, `create_category`, `draft_category_turn`, and `generate_ideas`
+  - a new `list_brands` tool
 
 `extract_brand_from_source` is **not** in this list — `app/api/brand/extract/route.ts` touches no tables, so it has no brand to resolve.
 
+This task's test exercises the MCP wiring, not the resolution rule — `resolveBrandByName` is already covered by `tests/brands.test.ts` (Task 2) and re-testing it here would be duplicated coverage with no red phase. What is genuinely untested is whether a tool actually *routes through* the resolver.
+
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/mcp-brand.test.ts`. This tests the resolution contract the tools depend on, at the boundary the tools actually use:
+Create `tests/mcp-brand.test.ts`:
 
 ```ts
-import { describe, expect, it } from "vitest";
-import { resolveBrandByName } from "@/lib/brands";
+import { describe, expect, it, vi } from "vitest";
 import type { BrandProfile } from "@/lib/types";
 
 function brand(id: string, name: string): BrandProfile {
   return {
-    id, user_id: "u1", is_default: false, business_name: name,
+    id, user_id: "user-1", is_default: id === "b1", business_name: name,
     business_description: "", audience: "", voice: "", avoid: "",
     proof_points: [], standing: [], colors: [], fonts: [], visual_notes: "",
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
   };
 }
 
-describe("MCP brand argument contract", () => {
-  const one = [brand("b1", "super{set}")];
-  const many = [brand("b1", "super{set}"), brand("b2", "Rewire"), brand("b3", "Kana")];
+const BRANDS = [brand("b1", "super{set}"), brand("b2", "Rewire")];
 
-  it("lets a single-brand account omit the argument entirely", () => {
-    expect(resolveBrandByName(one, undefined).id).toBe("b1");
+vi.mock("@/lib/auth/require-user", () => ({
+  requireUser: vi.fn(async (request?: Request) => {
+    if (request?.headers.get("authorization") === "Bearer valid-token") return { id: "user-1" };
+    throw new Error("unauthorized");
+  }),
+}));
+
+// listBrandsForUser is stubbed; resolveBrandByName and brandForUser stay real,
+// so this exercises the actual resolution the tools depend on.
+vi.mock("@/lib/brands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/brands")>();
+  return { ...actual, listBrandsForUser: vi.fn(async () => BRANDS) };
+});
+
+vi.mock("@/lib/athena/brand-context", () => ({
+  loadBrandContext: vi.fn(async (brandId: string) => ({ business_name: `loaded:${brandId}` })),
+}));
+
+import { POST } from "@/app/api/mcp/route";
+
+async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const request = new Request("http://localhost/api/mcp", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer valid-token",
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  const response = await POST(request as never);
+  // Read the raw body rather than parsing: mcp-handler may frame the reply as
+  // JSON or as an SSE data frame, and the assertions below only care that the
+  // resolver's message reached the caller either way.
+  return await response.text();
+}
+
+describe("MCP tools route through brand resolution", () => {
+  it("refuses to guess when the account has several brands and none was named", async () => {
+    const body = await callTool("get_brand_profile", {});
+    expect(body).toContain("super{set}");
+    expect(body).toContain("Rewire");
+    expect(body).not.toContain("loaded:b1");
   });
 
-  it("errors rather than defaulting when several brands exist", () => {
-    expect(() => resolveBrandByName(many, undefined)).toThrow();
+  it("loads the named brand when the argument is supplied", async () => {
+    const body = await callTool("get_brand_profile", { brand: "Rewire" });
+    expect(body).toContain("loaded:b2");
   });
 
-  it("names every available brand in the error, so the model can retry", () => {
-    try {
-      resolveBrandByName(many, undefined);
-      throw new Error("should have thrown");
-    } catch (e) {
-      const message = (e as Error).message;
-      expect(message).toContain("super{set}");
-      expect(message).toContain("Rewire");
-      expect(message).toContain("Kana");
-    }
+  it("reports an unknown brand name instead of falling back to the default", async () => {
+    const body = await callTool("get_brand_profile", { brand: "Kana" });
+    expect(body).toContain("Kana");
+    expect(body).not.toContain("loaded:b1");
   });
 
-  it("resolves an explicit brand name", () => {
-    expect(resolveBrandByName(many, "Kana").id).toBe("b3");
+  it("list_brands returns every brand on the account", async () => {
+    const body = await callTool("list_brands", {});
+    expect(body).toContain("super{set}");
+    expect(body).toContain("Rewire");
   });
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it passes already**
+- [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run tests/mcp-brand.test.ts`
-Expected: PASS — `resolveBrandByName` landed in Task 2. This test exists to pin the *contract the MCP tools rely on* so a later change to the resolution rule fails here loudly.
+Expected: FAIL — `get_brand_profile` currently takes no `brand` argument and resolves the account's single brand, and `list_brands` does not exist.
 
-- [ ] **Step 3: Add the brand argument to the five tools**
+If the failure is instead a transport error (empty body, or a 406 on the Accept header), fix the *request* in the test to match what `mcp-handler` expects and keep the assertions — they describe the behaviour under test and must not be weakened to whatever the current code happens to emit.
 
-In `app/api/mcp/route.ts`, add a shared helper just inside `handleMcp`, above `createMcpHandler`:
+- [ ] **Step 3: Add the shared resolver**
+
+In `lib/brands.ts`, add:
 
 ```ts
-  // Spec §6: one brand -> the argument is optional; several -> omitting it
-  // is an error naming the alternatives. Never a silent default.
-  async function brandFor(name?: string) {
-    return resolveBrandByName(await listBrandsForUser(userId), name);
-  }
+// Spec §6: one brand -> the argument is optional; several -> omitting it is
+// an error naming the alternatives. Never a silent default. Lives here rather
+// than inside the MCP route so it is reachable from a test without a request.
+export async function brandForUser(userId: string, name?: string): Promise<BrandProfile> {
+  return resolveBrandByName(await listBrandsForUser(userId), name);
+}
 ```
 
-Then give each of the five tools an optional `brand` input and route it through `brandFor`. `get_brand_profile`:
+- [ ] **Step 4: Add the brand argument to the five tools**
+
+In `app/api/mcp/route.ts`, import `brandForUser` and give each of the five tools an optional `brand` input routed through it. Replace every `resolveBrandByName(await listBrandsForUser(userId), …)` call introduced in Tasks 4, 5, 7, and 8 with `brandForUser(userId, brand)`. `get_brand_profile`:
 
 ```ts
     server.registerTool(
@@ -1714,7 +1762,7 @@ Then give each of the five tools an optional `brand` input and route it through 
         inputSchema: z.object({ brand: z.string().optional() }),
       },
       async ({ brand }) => {
-        const resolved = await brandFor(brand);
+        const resolved = await brandForUser(userId, brand);
         return { content: [{ type: "text", text: JSON.stringify(await loadBrandContext(resolved.id)) }] };
       },
     );
@@ -1724,7 +1772,7 @@ Then give each of the five tools an optional `brand` input and route it through 
 
 ```ts
       async ({ brand, ...fields }) => {
-        const resolved = await brandFor(brand);
+        const resolved = await brandForUser(userId, brand);
         await saveBrandProfileForUser(userId, resolved.id, fields);
         return { content: [{ type: "text", text: "brand profile updated" }] };
       },
@@ -1734,24 +1782,24 @@ Then give each of the five tools an optional `brand` input and route it through 
 
 ```ts
       async ({ brand, ...fields }) => {
-        const resolved = await brandFor(brand);
+        const resolved = await brandForUser(userId, brand);
         await createCategoryForUser(userId, resolved.id, fields);
         return { content: [{ type: "text", text: "category created" }] };
       },
 ```
 
-`draft_category_turn` — add `brand: z.string().optional()` to its input object and pass `brandId: (await brandFor(brand)).id`.
+`draft_category_turn` — add `brand: z.string().optional()` to its input object and pass `brandId: (await brandForUser(userId, brand)).id`.
 
 `generate_ideas` — add `brand: z.string().optional()`:
 
 ```ts
       async ({ categoryKey, count, brand }) => {
-        const resolved = await brandFor(brand);
+        const resolved = await brandForUser(userId, brand);
         return { content: [{ type: "text", text: JSON.stringify(await generateIdeas(userId, resolved.id, categoryKey, count)) }] };
       },
 ```
 
-- [ ] **Step 4: Add list_brands**
+- [ ] **Step 5: Add list_brands**
 
 ```ts
     server.registerTool(
@@ -1769,15 +1817,15 @@ Then give each of the five tools an optional `brand` input and route it through 
     );
 ```
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 6: Verify**
 
 Run: `npx tsc --noEmit && npx vitest run`
 Expected: PASS, including the existing `tests/mcp-route.test.ts` and `tests/mcp-tier2-gate.test.ts`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add app/api/mcp/route.ts tests/mcp-brand.test.ts
+git add lib/brands.ts app/api/mcp/route.ts tests/mcp-brand.test.ts
 git commit -m "feat: MCP brand argument and list_brands"
 ```
 
