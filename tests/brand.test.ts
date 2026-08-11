@@ -75,7 +75,9 @@ describe("mergeList", () => {
 // node-environment test — no config change, no stubbing of ./actions.
 describe("BrandSection markup (guards the design-token zero-out defect)", () => {
   const brand: BrandProfile = {
+    id: "b1",
     user_id: "u1",
+    is_default: true,
     business_name: "Acme",
     business_description: "",
     audience: "",

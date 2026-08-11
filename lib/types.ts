@@ -71,6 +71,7 @@ export interface BufferConnection {
 export interface Category {
   id: string;
   user_id: string;
+  brand_id: string;
   key: string;
   name: string;
   style_guide: string;
@@ -161,7 +162,9 @@ export interface Post {
 }
 
 export interface BrandProfile {
+  id: string;
   user_id: string;
+  is_default: boolean;
   business_name: string;
   business_description: string;
   audience: string;
