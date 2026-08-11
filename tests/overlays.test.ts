@@ -45,6 +45,7 @@ describe("validateOverlayFields", () => {
 
   it("rejects an opacity outside 0-100", () => {
     expect(() => validateOverlayFields(fields({ opacity: 101 }))).toThrow(/opacity/i);
+    expect(() => validateOverlayFields(fields({ opacity: -1 }))).toThrow(/opacity/i);
   });
 
   it("rejects an unknown corner", () => {

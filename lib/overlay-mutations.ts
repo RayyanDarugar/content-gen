@@ -36,8 +36,24 @@ export async function createOverlayForUser(
     .from("categories").select("id").eq("id", categoryId).eq("user_id", userId).maybeSingle();
   if (!cat) throw new Error("unknown category");
 
+  // Columns enumerated explicitly, never spread from `fields`. These
+  // functions are reachable from a "use server" action, where arguments
+  // arrive as deserialized JSON and the TypeScript shape is erased — a
+  // trailing `...fields` would let a caller-supplied `category_id` override
+  // the ownership check above, since a later spread wins in an object
+  // literal. Same reasoning and same shape as lib/category-mutations.ts.
   const { error } = await supabase.from("category_overlays").insert({
-    user_id: userId, category_id: categoryId, ...fields,
+    user_id: userId,
+    category_id: categoryId,
+    name: fields.name,
+    image_url: fields.image_url,
+    roles: fields.roles,
+    corner: fields.corner,
+    margin_pct: fields.margin_pct,
+    size_pct: fields.size_pct,
+    opacity: fields.opacity,
+    sort_order: fields.sort_order,
+    active: fields.active,
   });
   if (error) throw new Error(error.message);
 }
@@ -47,8 +63,22 @@ export async function updateOverlayForUser(
 ): Promise<void> {
   validateOverlayFields(fields);
   const supabase = createAdminSupabase();
-  const { error } = await supabase.from("category_overlays")
-    .update(fields).eq("id", id).eq("user_id", userId);
+  // Enumerated, not spread — and note the .eq() calls scope WHICH row is
+  // updated, never WHAT is written. Spreading `fields` would carry whatever
+  // keys the runtime object happens to have: a Task 7 edit form pre-filled
+  // from the existing record would ride `id`, `user_id`, `category_id` and
+  // the timestamps straight into the SET clause, with no malice required.
+  const { error } = await supabase.from("category_overlays").update({
+    name: fields.name,
+    image_url: fields.image_url,
+    roles: fields.roles,
+    corner: fields.corner,
+    margin_pct: fields.margin_pct,
+    size_pct: fields.size_pct,
+    opacity: fields.opacity,
+    sort_order: fields.sort_order,
+    active: fields.active,
+  }).eq("id", id).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
 
