@@ -1083,13 +1083,28 @@ git commit -m "feat: overlay validation and CRUD"
 
 Pass `overlays={(overlayData ?? []) as CategoryOverlay[]}` into `<CategoryManager>`. The empty-`.in()` guard matches this repo's convention (`app/(app)/post/page.tsx:49-54`).
 
-- [ ] **Step 2: Build the section**
+- [ ] **Step 2: Build the section — treatment A, rows that expand**
 
-Create `app/(app)/config/overlay-section.tsx` as a `"use client"` component in the layout chosen at Step 0. It must provide, per overlay: name, image upload (via `uploadStyleRefImage`, showing a thumbnail once set), a role checkbox set for hook/beat/payoff/single, a corner `<select>`, number inputs for margin/size/opacity, a sort-order input, an active `<Switch>`, and Save + Delete. Plus an "Add overlay" control.
+The human reviewed three treatments and chose **A**. Create `app/(app)/config/overlay-section.tsx` as a `"use client"` component with this structure:
 
-Validation on save reuses `validateOverlayFields` from `@/lib/overlays` so the form and the server agree on the rules — catch its throw and show the message, rather than reimplementing the checks in the component.
+**Collapsed row (the default for every saved overlay):** one line — a small image thumbnail, the overlay's name in medium weight, and a muted sub-line reading `roles joined by ", " · corner · size_pct%` (e.g. `payoff · bottom-right · 18%`) — plus an "Edit" button. That sub-line is the point of this treatment: it answers "what is on my payoff slide?" without opening anything.
 
-If the opacity recipe failed verification in Task 4 Step 5, omit the opacity input entirely rather than shipping a control that does nothing.
+**Expanded panel (one at a time, tracked by an `editingId` state):** replaces the collapsed row in place, accented with `border-primary` and a faint `bg-primary/5`. Contains:
+- Name text input and the image control side by side. The image control shows the current thumbnail plus a "Replace" file input; a new overlay shows an upload prompt. Uploads go through the existing `uploadStyleRefImage` server action — no new upload path.
+- A row of four role toggles (hook / beat / payoff / single) rendered as pill-style buttons, filled when selected. Not checkboxes — the mockup uses chips and they read better at this density.
+- A four-column row: corner `<select>`, and number inputs for margin %, size %, opacity.
+- Sort order number input and an `active` `<Switch>`.
+- Save and Delete buttons.
+
+**"+ Add overlay"** appends an unsaved draft in the expanded state, with the defaults from migration 0021 (`corner: "bottom-right"`, `margin_pct: 5`, `size_pct: 15`, `opacity: 100`, `sort_order: 0`, `active: true`) and no roles selected — the validator will require at least one, which is the intended nudge.
+
+**Empty state:** a dashed box reading "No overlays yet. Add a logo or QR code to appear on this post type's slides."
+
+Validation on save reuses `validateOverlayFields` from `@/lib/overlays` so the form and the server agree on the rules — wrap the call in try/catch and surface `e.message` inline, rather than reimplementing the checks in the component.
+
+**Keep the opacity input.** Task 4 verified the `sharp` `dest-in` alpha recipe against the real library (a 50% layer produced pixel `126 0 128` — a genuine blend, not an opaque one), so the control does something.
+
+Match the form idioms already in `category-manager.tsx` — same `Input`, `Label`, `Switch`, `Button` imports from `@/components/ui/*`, same `useTransition` + `router.refresh()` pattern around server actions, same inline error/message paragraph style.
 
 - [ ] **Step 3: Mount it in the category editor**
 
