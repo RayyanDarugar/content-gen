@@ -1,15 +1,14 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 import { OnboardingSteps } from "./onboarding-steps";
-import type { BrandProfile, Category } from "@/lib/types";
+import type { Category } from "@/lib/types";
 
 export default async function OnboardingPage() {
-  await requireUser();
+  const user = await requireUser();
   const supabase = await createServerSupabase();
 
-  const { data: brandRow } = await supabase
-    .from("brand_profiles").select("*").maybeSingle();
-  const brand = (brandRow as BrandProfile) ?? null;
+  const brand = await getActiveBrand(user.id);
 
   const { data: catData } = await supabase
     .from("categories").select("*").eq("active", true).order("key");

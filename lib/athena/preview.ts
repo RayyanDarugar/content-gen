@@ -1,10 +1,10 @@
 import "server-only";
 import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
-  buildIdeaSystemPrompt, buildIdeaUserPrompt, IdeasOutput, type BrandContext,
+  buildIdeaSystemPrompt, buildIdeaUserPrompt, IdeasOutput,
 } from "@/lib/athena/prompts";
+import { loadBrandContext } from "@/lib/athena/brand-context";
 import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { uploadStyleRef, createKieTask } from "@/lib/athena/kie";
 import { validateSlideShape } from "@/lib/athena/slides";
@@ -46,21 +46,7 @@ export async function generateSamplePreviewIdea(
   userId: string,
   category: Category,
 ): Promise<{ concept: string; slides: Slide[] }> {
-  const supabase = createAdminSupabase();
-  const { data: brandRow } = await supabase
-    .from("brand_profiles").select("*").eq("user_id", userId).maybeSingle();
-  const brand: BrandContext = {
-    business_name: brandRow?.business_name ?? "",
-    business_description: brandRow?.business_description ?? "",
-    audience: brandRow?.audience ?? "",
-    voice: brandRow?.voice ?? "",
-    avoid: brandRow?.avoid ?? "",
-    proof_points: brandRow?.proof_points ?? [],
-    standing: brandRow?.standing ?? [],
-    colors: brandRow?.colors ?? [],
-    fonts: brandRow?.fonts ?? [],
-    visual_notes: brandRow?.visual_notes ?? "",
-  };
+  const brand = await loadBrandContext(category.brand_id);
 
   const anthropic = createAnthropicClient({
     apiKey: await requireAnthropicKey(userId),

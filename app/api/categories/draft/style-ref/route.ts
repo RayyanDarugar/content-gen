@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 import { requireKieKey } from "@/lib/settings/user-secrets";
 import { createTextToImageKieTask } from "@/lib/athena/kie";
 import { buildStyleRefPrompt } from "@/lib/athena/style-ref-prompt";
@@ -37,8 +38,10 @@ export async function POST(request: NextRequest) {
 
     if (phase === "generate") {
       const notes = typeof body?.notes === "string" ? body.notes.slice(0, 500) : undefined;
-      const { data: brandRow } = await supabase
-        .from("brand_profiles").select("*").eq("user_id", user.id).maybeSingle();
+      const brandRow = await getActiveBrand(user.id);
+      if (!brandRow) {
+        return NextResponse.json({ error: "Set up a brand first." }, { status: 400 });
+      }
       const brand: BrandContext = {
         business_name: brandRow?.business_name ?? "",
         business_description: brandRow?.business_description ?? "",

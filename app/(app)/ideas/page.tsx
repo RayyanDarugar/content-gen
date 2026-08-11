@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth/require-user";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
 import { ManualIdeaDialog } from "./manual-idea-dialog";
 import { categoryColor } from "@/lib/category-colors";
-import type { BrandProfile, Category, Idea } from "@/lib/types";
+import type { Category, Idea } from "@/lib/types";
 
 export default async function IdeasPage() {
+  const user = await requireUser();
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from("ideas").select("*").order("created_at", { ascending: false }).limit(200);
@@ -15,9 +18,7 @@ export default async function IdeasPage() {
   const { data: catData } = await supabase
     .from("categories").select("*").eq("active", true).order("key");
 
-  const { data: brandRow } = await supabase
-    .from("brand_profiles").select("*").maybeSingle();
-  const brand = (brandRow as BrandProfile) ?? null;
+  const brand = await getActiveBrand(user.id);
   const brandMissing = !brand?.business_name?.trim();
 
   const byCategory = new Map<string, Idea[]>();

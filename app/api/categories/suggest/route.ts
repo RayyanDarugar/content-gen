@@ -3,6 +3,7 @@ import { createAnthropicClient } from "@/lib/anthropic";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { normalizeDraft } from "@/lib/athena/draft-category";
 import {
@@ -44,8 +45,7 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabase();
 
-    const { data: brandRow } = await supabase
-      .from("brand_profiles").select("*").eq("user_id", user.id).maybeSingle();
+    const brandRow = await getActiveBrand(user.id);
     if (!brandRow?.business_name?.trim()) {
       return NextResponse.json(
         { error: "Add your business name in brand setup first — a suggestion needs something to build on." },
