@@ -65,4 +65,27 @@ describe("computePlacement", () => {
     expect(p.width).toBeGreaterThanOrEqual(1);
     expect(p.height).toBeGreaterThanOrEqual(1);
   });
+
+  // size_pct constrains width only, so a tall asset overflows vertically at a
+  // perfectly legal percentage. This is the case the clamp exists for.
+  it("shrinks an overlay taller than the base to fit, preserving its aspect ratio", () => {
+    const p = computePlacement(BASE, { width: 100, height: 300 }, {
+      corner: "top-left", margin_pct: 0, size_pct: 42,
+    });
+    expect(p.top + p.height).toBeLessThanOrEqual(BASE.height);
+    expect(p.left + p.width).toBeLessThanOrEqual(BASE.width);
+    expect(p.height / p.width).toBeCloseTo(3, 1);
+  });
+
+  // Not reachable through validateOverlayFields, but the database has no CHECK
+  // on size_pct, so the arithmetic must not depend on validation upstream.
+  it("shrinks an overlay wider than the base to fit", () => {
+    const p = computePlacement(BASE, { width: 100, height: 100 }, {
+      corner: "center", margin_pct: 0, size_pct: 150,
+    });
+    expect(p.width).toBeLessThanOrEqual(BASE.width);
+    expect(p.height).toBeLessThanOrEqual(BASE.height);
+    expect(p.left).toBeGreaterThanOrEqual(0);
+    expect(p.top).toBeGreaterThanOrEqual(0);
+  });
 });

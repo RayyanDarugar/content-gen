@@ -22,8 +22,21 @@ export function computePlacement(
   overlay: { width: number; height: number },
   o: { corner: OverlayCorner; margin_pct: number; size_pct: number },
 ): Placement {
-  const width = Math.max(1, Math.round((base.width * o.size_pct) / 100));
-  const height = Math.max(1, Math.round(width * (overlay.height / overlay.width)));
+  let width = Math.max(1, Math.round((base.width * o.size_pct) / 100));
+  let height = Math.max(1, Math.round(width * (overlay.height / overlay.width)));
+
+  // Shrink to fit, preserving aspect. size_pct constrains WIDTH only, so any
+  // asset taller than the base's own aspect ratio overflows vertically at
+  // ordinary percentages — a 1:3 overlay at size_pct 42 on a 1000x1250 canvas
+  // derives to 420x1260. sharp throws on an out-of-bounds layer, which would
+  // lose an image that already generated successfully.
+  // Floor, not round: rounding could push a dimension back over the edge.
+  if (width > base.width || height > base.height) {
+    const scale = Math.min(base.width / width, base.height / height);
+    width = Math.max(1, Math.floor(width * scale));
+    height = Math.max(1, Math.floor(height * scale));
+  }
+
   const mx = Math.floor((base.width * o.margin_pct) / 100);
   const my = Math.floor((base.height * o.margin_pct) / 100);
 
