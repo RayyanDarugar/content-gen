@@ -8,6 +8,7 @@ import {
   generateSamplePreviewIdea, submitPreviewAnchor, submitPreviewFanout,
 } from "@/lib/athena/preview";
 import { compositeOverlays } from "@/lib/athena/overlay-composite";
+import { placeholderFillOverlays } from "@/lib/athena/overlay-placeholder";
 import { listOverlaysForCategory } from "@/lib/overlay-mutations";
 import type { Category, Slide } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
@@ -105,10 +106,14 @@ export async function GET(request: NextRequest) {
     if (record.state === "success" && record.resultUrl && categoryId && role) {
       try {
         const overlays = await listOverlaysForCategory(categoryId, user.id);
+        // Test Run has no idea, so slots have no fill. A neutral placeholder
+        // at the slot's real placement lets the layout be judged before any
+        // photo exists. Never persisted.
+        const previewOverlays = await placeholderFillOverlays(overlays);
         const res = await fetch(record.resultUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const composited = await compositeOverlays(
-          Buffer.from(await res.arrayBuffer()), overlays, role as Slide["role"],
+          Buffer.from(await res.arrayBuffer()), previewOverlays, role as Slide["role"],
         );
         if (composited) {
           // resultUrl stays the clean Kie image — it is what a later fan-out
