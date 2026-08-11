@@ -1525,7 +1525,13 @@ import { scopeToCategoryKeys } from "@/lib/scope";
   const categories = (catData ?? []) as Category[];
 
   const { data } = await supabase
-    .from("ideas").select("*").order("created_at", { ascending: false }).limit(200);
+    .from("ideas").select("*")
+    // The brand filter goes in the QUERY, ahead of .limit(200). Filtering in
+    // memory after an account-wide limit shares that cap across every brand,
+    // so a busy brand can push a quieter one out of its own Ideas page —
+    // which renders as an empty state with nothing saying content was dropped.
+    .in("category_key", categories.map((c) => c.key))
+    .order("created_at", { ascending: false }).limit(200);
   const ideas = scopeToCategoryKeys((data ?? []) as Idea[], categories.map((c) => c.key));
 
   const brandMissing = !brand.business_name.trim();
@@ -1555,6 +1561,9 @@ import { scopeToCategoryKeys } from "@/lib/scope";
   const { data } = await supabase
     .from("ideas")
     .select("*, generations(*)")
+    // Same reason as the Ideas page: the brand filter must precede .limit(200),
+    // or the cap is shared across brands and a busy brand hides a quiet one.
+    .in("category_key", keys)
     .order("created_at", { ascending: false })
     .order("created_at", { referencedTable: "generations", ascending: false })
     .limit(200);
