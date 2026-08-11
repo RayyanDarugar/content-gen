@@ -15,7 +15,13 @@ interface Props {
   onStyleRefGenerated: (url: string) => void;
 }
 
-interface TaskState { taskId: string; url?: string; status: "pending" | "done" | "failed"; error?: string }
+interface TaskState {
+  taskId: string;
+  url?: string; // clean image — the only value ever sent onward to Kie (anchorImageUrl, cementing)
+  displayUrl?: string; // composited (if any) or same as url — render-only
+  status: "pending" | "done" | "failed";
+  error?: string;
+}
 
 interface PreviewRun {
   concept: string;
@@ -30,16 +36,24 @@ const ALL_ROLES: readonly Role[] = ["hook", "beat", "payoff", "single"];
 
 // One entry per DONE image in the run, tagged with the role its slide plays.
 // "anchor" is always slides[0]; fanout[i] is always slides[i + 1] (§10).
-interface RefCandidate { key: string; url: string; role: Role }
+// `url` (clean) is what cementRefs sends to promote-refs; `displayUrl`
+// (composited, when present) is only ever for the thumbnail below.
+interface RefCandidate { key: string; url: string; displayUrl: string; role: Role }
 
 function buildCandidates(run: PreviewRun): RefCandidate[] {
   const list: RefCandidate[] = [];
   if (run.anchor.status === "done" && run.anchor.url && run.slides[0]) {
-    list.push({ key: "anchor", url: run.anchor.url, role: run.slides[0].role });
+    list.push({
+      key: "anchor", url: run.anchor.url,
+      displayUrl: run.anchor.displayUrl ?? run.anchor.url, role: run.slides[0].role,
+    });
   }
   run.fanout?.forEach((t, i) => {
     if (t.status === "done" && t.url && run.slides[i + 1]) {
-      list.push({ key: t.taskId, url: t.url, role: run.slides[i + 1].role });
+      list.push({
+        key: t.taskId, url: t.url,
+        displayUrl: t.displayUrl ?? t.url, role: run.slides[i + 1].role,
+      });
     }
   });
   return list;
@@ -106,7 +120,10 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
       const done = await pollTask(json.taskId, { categoryId, role: json.slides[0].role });
       setRun((p) => p && {
         ...p,
-        anchor: { ...p.anchor, status: done.ok ? "done" : "failed", url: done.url, error: done.error },
+        anchor: {
+          ...p.anchor, status: done.ok ? "done" : "failed",
+          url: done.url, displayUrl: done.displayUrl, error: done.error,
+        },
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -126,7 +143,12 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           categoryId, phase: "fanout",
-          slides: run.slides, styleUrl: run.styleUrl, anchorImageUrl: run.anchor.url,
+          slides: run.slides, styleUrl: run.styleUrl,
+          // Must be the clean url, never displayUrl: this becomes Kie's
+          // carousel anchor, and a composited (e.g. QR-stamped) image here
+          // would have every later slide generated against a smeared code.
+          // Do not "simplify" run.anchor back to a single url field.
+          anchorImageUrl: run.anchor.url,
         }),
       });
       const json = await res.json();
@@ -139,7 +161,7 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
       // resolves (Promise.all never rejects here).
       await Promise.all(
         taskIds.map(async (taskId, i) => {
-          let done: { ok: boolean; url?: string; error?: string };
+          let done: { ok: boolean; url?: string; displayUrl?: string; error?: string };
           try {
             const role = run.slides[i + 1]?.role;
             done = role
@@ -151,7 +173,10 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
           setRun((p) => {
             if (!p?.fanout) return p;
             const fanout = [...p.fanout];
-            fanout[i] = { taskId, status: done.ok ? "done" : "failed", url: done.url, error: done.error };
+            fanout[i] = {
+              taskId, status: done.ok ? "done" : "failed",
+              url: done.url, displayUrl: done.displayUrl, error: done.error,
+            };
             return { ...p, fanout };
           });
         }),
@@ -297,7 +322,7 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
                           } ${isExcluded ? "opacity-50" : ""}`}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={c.url} alt={`${role} candidate`} className="h-20 w-16 object-cover" />
+                          <img src={c.displayUrl} alt={`${role} candidate`} className="h-20 w-16 object-cover" />
                         </button>
                       ))}
                     </div>
@@ -340,9 +365,11 @@ function PreviewImage({ state, label }: { state: TaskState; label: string }) {
           {state.error ?? "failed"}
         </div>
       )}
-      {state.status === "done" && state.url && (
+      {state.status === "done" && (state.displayUrl ?? state.url) && (
+        // Render displayUrl (composited, when present) — humans see the
+        // overlay; only the clean `url` is ever sent onward to Kie.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={state.url} alt={label} className="h-40 w-32 rounded border object-cover" />
+        <img src={state.displayUrl ?? state.url} alt={label} className="h-40 w-32 rounded border object-cover" />
       )}
       <p className="mt-1 text-center text-xs capitalize text-muted-foreground">{label}</p>
     </div>

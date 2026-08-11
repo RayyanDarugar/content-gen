@@ -46,7 +46,13 @@ export async function compositeOverlays(
 
   for (const o of layers) {
     try {
-      const res = await fetch(o.image_url);
+      // app/api/jobs/poll/route.ts's cron loop runs every pending generation
+      // of every tenant sequentially under one shared maxDuration = 120, and
+      // undici's fetch has no default deadline — without this timeout, one
+      // overlay host that accepts a connection and never responds would
+      // stall past the function's budget and starve every generation queued
+      // after it, not just this tenant's.
+      const res = await fetch(o.image_url, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = Buffer.from(await res.arrayBuffer());
 
@@ -77,6 +83,11 @@ export async function compositeOverlays(
       const layerBuf = await layer.png().toBuffer();
       current = await sharp(current)
         .composite([{ input: layerBuf, left: p.left, top: p.top }])
+        // Match the clean image's encode (quality: 90, app/api/jobs/poll/route.ts)
+        // — without an explicit format call here, sharp defaults JPEG output
+        // to quality 80, so the published image would end up softer than the
+        // one nobody sees.
+        .jpeg({ quality: 90 })
         .toBuffer();
       composited++;
     } catch (e) {

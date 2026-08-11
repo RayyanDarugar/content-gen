@@ -296,7 +296,7 @@ export function OverlaySection({
         )}
       </div>
 
-      {editingId !== NEW_ID && (
+      {editingId === null && (
         <Button type="button" variant="outline" size="sm" onClick={() => setEditingId(NEW_ID)}>
           + Add overlay
         </Button>

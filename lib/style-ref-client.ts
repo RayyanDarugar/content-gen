@@ -13,7 +13,8 @@ const MAX_CONSECUTIVE_POLL_ERRORS = 3;
 
 export interface PollResult {
   ok: boolean;
-  url?: string;
+  url?: string; // clean image — the only value ever safe to send back to Kie as an anchor/reference
+  displayUrl?: string; // composited (if any) or same as url — for rendering only
   error?: string;
 }
 
@@ -45,7 +46,9 @@ export async function pollTask(
       }
       consecutiveErrors = 0;
       if (json.state === DONE_STATE) {
-        if (json.resultUrl) return { ok: true, url: json.resultUrl };
+        if (json.resultUrl) {
+          return { ok: true, url: json.resultUrl, displayUrl: json.compositedUrl ?? json.resultUrl };
+        }
         return { ok: false, error: "generation reported success but returned no image" };
       }
       if (json.state === FAILED_STATE) return { ok: false, error: "image generation failed" };

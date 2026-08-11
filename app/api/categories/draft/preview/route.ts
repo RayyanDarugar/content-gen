@@ -111,9 +111,13 @@ export async function GET(request: NextRequest) {
           Buffer.from(await res.arrayBuffer()), overlays, role as Slide["role"],
         );
         if (composited) {
+          // resultUrl stays the clean Kie image — it is what a later fan-out
+          // sends back to Kie as the carousel anchor, and a composited image
+          // (e.g. a QR-stamped hook) must never become that seed. The
+          // composited preview goes out under a NEW field instead.
           return NextResponse.json({
             ...record,
-            resultUrl: `data:image/jpeg;base64,${(await sharp(composited).jpeg({ quality: 90 }).toBuffer()).toString("base64")}`,
+            compositedUrl: `data:image/jpeg;base64,${(await sharp(composited).jpeg({ quality: 90 }).toBuffer()).toString("base64")}`,
           });
         }
       } catch (e) {
