@@ -1,12 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getActiveBrand } from "@/lib/auth/active-brand";
+import { loadBrandContext } from "@/lib/athena/brand-context";
 import { requireKieKey } from "@/lib/settings/user-secrets";
 import { createTextToImageKieTask } from "@/lib/athena/kie";
 import { buildStyleRefPrompt } from "@/lib/athena/style-ref-prompt";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
-import type { BrandContext } from "@/lib/athena/prompts";
 import type { Category } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
 
@@ -38,22 +37,12 @@ export async function POST(request: NextRequest) {
 
     if (phase === "generate") {
       const notes = typeof body?.notes === "string" ? body.notes.slice(0, 500) : undefined;
-      const brandRow = await getActiveBrand(user.id);
-      if (!brandRow) {
-        return NextResponse.json({ error: "Set up a brand first." }, { status: 400 });
-      }
-      const brand: BrandContext = {
-        business_name: brandRow?.business_name ?? "",
-        business_description: brandRow?.business_description ?? "",
-        audience: brandRow?.audience ?? "",
-        voice: brandRow?.voice ?? "",
-        avoid: brandRow?.avoid ?? "",
-        proof_points: brandRow?.proof_points ?? [],
-        standing: brandRow?.standing ?? [],
-        colors: brandRow?.colors ?? [],
-        fonts: brandRow?.fonts ?? [],
-        visual_notes: brandRow?.visual_notes ?? "",
-      };
+      // Brand comes from the category being acted on, not the session
+      // cookie — this route has a category in hand (loaded above), so the
+      // active-brand cookie must never decide what gets prompted here. See
+      // lib/style-ref-jobs.ts's submitStyleRefJobForUser for the MCP twin
+      // that already does this correctly.
+      const brand = await loadBrandContext(category.brand_id);
       const kieKey = await requireKieKey(user.id);
       const prompt = buildStyleRefPrompt(brand, notes);
       const taskId = await createTextToImageKieTask(kieKey, prompt, category.aspect_ratio);

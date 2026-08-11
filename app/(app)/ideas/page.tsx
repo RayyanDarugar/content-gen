@@ -14,9 +14,15 @@ export default async function IdeasPage() {
   const brand = await requireActiveBrand(user.id);
   const supabase = await createServerSupabase();
 
+  // Unfiltered by `active` — this list drives the ideas scope below, and an
+  // idea under a category the user just toggled inactive must stay visible
+  // (it still needs approving/rejecting), not vanish with no explanation.
   const { data: catData } = await supabase
-    .from("categories").select("*").eq("brand_id", brand.id).eq("active", true).order("key");
+    .from("categories").select("*").eq("brand_id", brand.id).order("key");
   const categories = (catData ?? []) as Category[];
+  // ManualIdeaDialog should only offer categories you can still generate
+  // into, so it gets the active-filtered subset instead.
+  const activeCategories = categories.filter((c) => c.active);
 
   // Guarded like app/(app)/post/page.tsx:49-54 — an empty .in() list is
   // skipped by convention here rather than relying on unverified PostgREST
@@ -44,7 +50,7 @@ export default async function IdeasPage() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Ideas</h1>
-        <ManualIdeaDialog categories={categories} />
+        <ManualIdeaDialog categories={activeCategories} />
       </div>
       {brandMissing && (
         <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
