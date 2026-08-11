@@ -4,7 +4,14 @@ import { getActiveBrand } from "@/lib/auth/active-brand";
 import { OnboardingSteps } from "./onboarding-steps";
 import type { Category } from "@/lib/types";
 
-export default async function OnboardingPage() {
+export default async function OnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ new?: string }>;
+}) {
+  const { new: isNew } = await searchParams;
+  const creatingBrand = isNew === "1";
+
   const user = await requireUser();
   const supabase = await createServerSupabase();
 
@@ -30,9 +37,14 @@ export default async function OnboardingPage() {
         .in("category_key", categories.map((c) => c.key))
     : { count: 0 };
 
-  const brandDone = Boolean(brand?.business_name?.trim());
-  const categoryDone = categories.length > 0;
-  const ideasDone = (ideaCount ?? 0) > 0;
+  // In create-a-second-brand mode (?new=1), `brand`/`categories`/`ideaCount`
+  // above describe the ACTIVE brand — some other, already-set-up brand. None
+  // of that progress belongs to the brand this visit is creating, so the
+  // checklist is forced back to step 1 rather than reporting a stranger's
+  // completion state as this new brand's.
+  const brandDone = creatingBrand ? false : Boolean(brand?.business_name?.trim());
+  const categoryDone = creatingBrand ? false : categories.length > 0;
+  const ideasDone = creatingBrand ? false : (ideaCount ?? 0) > 0;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -48,6 +60,7 @@ export default async function OnboardingPage() {
         categoryDone={categoryDone}
         ideasDone={ideasDone}
         firstCategoryKey={categories[0]?.key ?? null}
+        creatingBrand={creatingBrand}
       />
     </div>
   );

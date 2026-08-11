@@ -53,6 +53,9 @@ export default async function ConfigPage() {
           <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold tracking-wide text-primary">
             BRAND
           </span>
+          <Link href="/onboarding?new=1" className="ml-auto text-sm text-primary underline-offset-4 hover:underline">
+            Add brand
+          </Link>
         </div>
         <BrandSection brand={brand} />
         <CategoryManager

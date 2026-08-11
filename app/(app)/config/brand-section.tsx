@@ -31,9 +31,15 @@ function ProposalRow({ value, onUse, onKeep }: { value: string; onUse(): void; o
   );
 }
 
+type BrandFormAction = (
+  prev: { error?: string; ok?: boolean } | undefined,
+  formData: FormData,
+) => Promise<{ error?: string; ok?: boolean }>;
+
 export function BrandSection({
   brand,
   onSaved,
+  action: formAction = saveBrandProfile,
 }: {
   brand: BrandProfile | null;
   /**
@@ -45,8 +51,15 @@ export function BrandSection({
    * re-render with fresh data until the next navigation.
    */
   onSaved?(): void;
+  /**
+   * Which server action the form posts to. Defaults to `saveBrandProfile`
+   * (edit the active brand) so every existing caller keeps behaving exactly
+   * as before. `/onboarding` in create-a-second-brand mode passes
+   * `createBrandAction` instead — same signature, different target row.
+   */
+  action?: BrandFormAction;
 }) {
-  const [state, action, pending] = useActionState(saveBrandProfile, undefined);
+  const [state, action, pending] = useActionState(formAction, undefined);
   const [fields, setFields] = useState<TextFields>({
     business_name: brand?.business_name ?? "",
     business_description: brand?.business_description ?? "",

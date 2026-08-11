@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BrandSection } from "../config/brand-section";
+import { saveBrandProfile, createBrandAction } from "../config/actions";
 import type { BrandProfile } from "@/lib/types";
 
 type StepState = "done" | "current" | "upcoming";
@@ -43,12 +44,23 @@ export function OnboardingSteps({
   categoryDone,
   ideasDone,
   firstCategoryKey,
+  creatingBrand = false,
 }: {
   brand: BrandProfile | null;
   brandDone: boolean;
   categoryDone: boolean;
   ideasDone: boolean;
   firstCategoryKey: string | null;
+  /**
+   * True when this page was reached via /onboarding?new=1 (Config's "Add
+   * brand" link) rather than the account's own zero-brand setup flow. The
+   * three-step checklist below must track the NEW brand's progress, not
+   * whatever the currently-active brand already has — brandDone/categoryDone
+   * /ideasDone are forced false by the page in this mode, and the brand form
+   * here posts to createBrandAction (creates a row) instead of
+   * saveBrandProfile (edits the active brand's row).
+   */
+  creatingBrand?: boolean;
 }) {
   const router = useRouter();
   const [genBusy, setGenBusy] = useState(false);
@@ -83,7 +95,11 @@ export function OnboardingSteps({
   return (
     <div className="space-y-4">
       <StepShell index={1} title="Brand" state={states[0]}>
-        <BrandSection brand={brand} onSaved={() => router.refresh()} />
+        <BrandSection
+          brand={creatingBrand ? null : brand}
+          action={creatingBrand ? createBrandAction : saveBrandProfile}
+          onSaved={() => router.refresh()}
+        />
       </StepShell>
 
       <StepShell index={2} title="First post type" state={states[1]}>
