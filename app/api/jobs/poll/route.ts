@@ -17,6 +17,8 @@ import { buildSlidePrompt } from "@/lib/athena/image-prompt";
 import { resolveRoleRef, roleRefUploadKey } from "@/lib/athena/role-refs";
 import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { compositeOverlays } from "@/lib/athena/overlay-composite";
+import { listOverlaysForCategory } from "@/lib/overlay-mutations";
 import type { Category, Generation, Idea, StyleRefJob } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -65,6 +67,34 @@ async function ingestImage(
   if (ideaErr || !ideaRow) throw new Error(`idea lookup failed: ${ideaErr?.message}`);
   const idea = ideaRow as Idea;
   const slideCount = (idea.slides ?? []).length || 1;
+
+  // Overlays produce a SECOND artifact. public_url above stays the clean
+  // image because fanOutCarousel (just below), sweepOrphanedAnchors, and
+  // lib/athena/resubmit-slide.ts all hand it to Kie as the carousel anchor —
+  // compositing in place would burn a QR code into the model's visual
+  // reference for every later slide.
+  //
+  // Wrapped whole: this generation's status is already committed as
+  // succeeded, so a compositing failure must not throw past here and must
+  // not block the fan-out below.
+  try {
+    const { data: catRow } = await supabase
+      .from("categories").select("id")
+      .eq("key", idea.category_key).eq("user_id", gen.user_id).maybeSingle();
+    if (catRow) {
+      const overlays = await listOverlaysForCategory((catRow as { id: string }).id, gen.user_id);
+      const role = (idea.slides ?? [])[gen.slide_index]?.role ?? "single";
+      const composited = await compositeOverlays(jpeg, overlays, role);
+      if (composited) {
+        const { url: compositedUrl } = await uploadImageToCloudinary(composited, "image/jpeg");
+        const { error: compErr } = await supabase
+          .from("generations").update({ composited_url: compositedUrl }).eq("id", gen.id);
+        if (compErr) throw new Error(compErr.message);
+      }
+    }
+  } catch (e) {
+    console.error(`compositing failed for generation ${gen.id}:`, e);
+  }
 
   // Fan out the rest of the carousel against this anchor.
   if (gen.slide_index === 0) {
