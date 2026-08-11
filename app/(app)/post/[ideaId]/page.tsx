@@ -3,6 +3,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { listBufferConnections, getBufferChannelsForConnection, type ChannelGroup } from "@/lib/settings/buffer";
 import { resolveValidSlides, postedSlideIndexesByIdeaAndChannel, type Postable, type PostedSlideJoinRow } from "@/lib/athena/carousel";
+import { publishedImageUrl } from "@/lib/athena/published-image";
 import { Composer } from "./composer";
 import type { BrandProfile, BufferChannel, Category, Generation, Idea } from "@/lib/types";
 
@@ -83,7 +84,7 @@ export default async function ComposerPage({
     const poolSlideCount = (poolIdea.slides ?? []).length || 1;
     const poolUrlById = new Map<string, string>();
     for (const g of poolIdea.generations) {
-      if (g.status === "succeeded" && g.public_url) poolUrlById.set(g.id, g.public_url);
+      if (g.status === "succeeded" && publishedImageUrl(g)) poolUrlById.set(g.id, publishedImageUrl(g));
     }
     const poolResolved = resolveValidSlides(poolSlideCount, poolIdea.generations, poolUrlById);
     for (const slide of poolResolved) {
@@ -108,7 +109,7 @@ export default async function ComposerPage({
   const slideCount = (idea.slides ?? []).length || 1;
   const urlById = new Map<string, string>();
   for (const g of idea.generations) {
-    if (g.status === "succeeded" && g.public_url) urlById.set(g.id, g.public_url);
+    if (g.status === "succeeded" && publishedImageUrl(g)) urlById.set(g.id, publishedImageUrl(g));
   }
   const resolved = resolveValidSlides(slideCount, idea.generations, urlById);
 

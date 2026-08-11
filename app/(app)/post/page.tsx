@@ -3,6 +3,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { buildQueueRows } from "@/lib/athena/queue";
 import { postedSlideIndexesByIdea, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { groupPosts } from "@/lib/athena/post-groups";
+import { publishedImageUrl } from "@/lib/athena/published-image";
 import { ServiceIcon } from "@/app/(app)/post/[ideaId]/channel-chips";
 import { categoryColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +34,7 @@ export default async function PostPage() {
   const urlById = new Map<string, string>();
   for (const idea of ideas) {
     for (const g of idea.generations) {
-      if (g.status === "succeeded" && g.public_url) urlById.set(g.id, g.public_url);
+      if (g.status === "succeeded" && publishedImageUrl(g)) urlById.set(g.id, publishedImageUrl(g));
     }
   }
 

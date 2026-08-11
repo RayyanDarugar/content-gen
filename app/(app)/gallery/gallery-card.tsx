@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { buildSlideView } from "@/lib/athena/slide-view";
+import { publishedImageUrl } from "@/lib/athena/published-image";
 import type { Generation } from "@/lib/types";
 import type { IdeaWithGenerations } from "./page";
 
@@ -25,9 +26,10 @@ function SlideImage({ gen, alt }: { gen: Generation | null; alt: string }) {
       </div>
     );
   }
-  if (gen.status === "succeeded" && gen.public_url) {
+  const url = publishedImageUrl(gen);
+  if (gen.status === "succeeded" && url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={gen.public_url} alt={alt} className="h-full w-full object-cover" />;
+    return <img src={url} alt={alt} className="h-full w-full object-cover" />;
   }
   if (gen.status === "failed") {
     return (
@@ -195,7 +197,9 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
               </DialogTrigger>
               <DialogContent className="max-h-[80vh] overflow-y-auto">
                 <DialogHeader><DialogTitle>Superseded generations</DialogTitle></DialogHeader>
-                {superseded.map((g) => (
+                {superseded.map((g) => {
+                  const historyUrl = publishedImageUrl(g);
+                  return (
                   <div key={g.id} className="space-y-1 border-b pb-3">
                     <div className="flex items-center gap-2">
                       <Badge variant={statusVariant[g.status] ?? "outline"}>{g.status}</Badge>
@@ -206,16 +210,17 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
                         {new Date(g.created_at).toLocaleString()}
                       </span>
                     </div>
-                    {g.public_url && (
+                    {historyUrl && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={g.public_url} alt="" className="h-40 rounded-xl object-cover" />
+                      <img src={historyUrl} alt="" className="h-40 rounded-xl object-cover" />
                     )}
                     {g.refinement_notes && (
                       <p className="text-xs text-muted-foreground">Notes: {g.refinement_notes}</p>
                     )}
                     {g.error && <p className="text-xs text-destructive">{g.error}</p>}
                   </div>
-                ))}
+                  );
+                })}
               </DialogContent>
             </Dialog>
           )}

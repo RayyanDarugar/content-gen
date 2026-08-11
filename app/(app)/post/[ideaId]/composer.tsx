@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { PlatformPreview } from "@/components/preview/platform-preview";
 import { pickCaption, type Postable, type SlideResolution } from "@/lib/athena/carousel";
+import { publishedImageUrl } from "@/lib/athena/published-image";
 import { mediaForPlatform, normalizeService } from "@/lib/platform";
 import { summarizeFanOut, type ChannelResult } from "@/lib/athena/fan-out";
 import type { ChannelGroup } from "@/lib/settings/buffer";
@@ -238,9 +239,10 @@ export function Composer({
   const siblingsBySlide = useMemo(() => {
     const map = new Map<number, { id: string; url: string; created_at: string }[]>();
     for (const g of idea.generations) {
-      if (g.status !== "succeeded" || !g.public_url) continue;
+      const url = publishedImageUrl(g);
+      if (g.status !== "succeeded" || !url) continue;
       const list = map.get(g.slide_index) ?? [];
-      list.push({ id: g.id, url: g.public_url, created_at: g.created_at });
+      list.push({ id: g.id, url, created_at: g.created_at });
       map.set(g.slide_index, list);
     }
     for (const list of map.values()) list.sort((a, b) => b.created_at.localeCompare(a.created_at));

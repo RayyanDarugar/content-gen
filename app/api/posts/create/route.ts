@@ -7,6 +7,7 @@ import { findWrongAnchorGenerationIds, postedSlideIndexesByIdea, type PostedSlid
 import { getBufferTokenForConnection } from "@/lib/settings/buffer";
 import { mediaForPlatform, normalizeService } from "@/lib/platform";
 import { summarizeFanOut, sentSlidesByIdea, type ChannelResult } from "@/lib/athena/fan-out";
+import { publishedImageUrl } from "@/lib/athena/published-image";
 import type { Category, Generation, Idea } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -257,7 +258,7 @@ export async function scheduleValidatedPost(
   const slideKeys = gens.map((g) => `${g.idea_id}:${g.slide_index}`);
   if (new Set(slideKeys).size !== slideKeys.length) throw new Error("duplicate slide in selection");
   for (const g of gens) {
-    if (g.status !== "succeeded" || !g.public_url) throw new Error(`generation ${g.id} has no successful image`);
+    if (g.status !== "succeeded" || !publishedImageUrl(g)) throw new Error(`generation ${g.id} has no successful image`);
     if (g.idea.status !== "generated" && g.idea.status !== "generating") throw new Error(`idea for generation ${g.id} is not postable (${g.idea.status})`);
     if (g.idea.category_key !== input.categoryKey) throw new Error(`generation ${g.id} belongs to another category`);
   }
@@ -272,7 +273,7 @@ export async function scheduleValidatedPost(
 
   const byId = new Map(gens.map((g) => [g.id, g]));
   const ordered = input.generationIds.map((id) => byId.get(id)!);
-  const imageUrls = ordered.map((g) => g.public_url);
+  const imageUrls = ordered.map((g) => publishedImageUrl(g));
   const uniqueIdeaIds = Array.from(new Set(ideaIds));
   const singleIdeaId = uniqueIdeaIds.length === 1 ? uniqueIdeaIds[0] : null;
   const postGroupId = input.postGroupId ?? randomUUID();
@@ -393,7 +394,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "duplicate slide in selection" }, { status: 400 });
   }
   for (const g of gens) {
-    if (g.status !== "succeeded" || !g.public_url) {
+    if (g.status !== "succeeded" || !publishedImageUrl(g)) {
       return NextResponse.json({ error: `generation ${g.id} has no successful image` }, { status: 400 });
     }
     // A carousel stuck mid-generation (one slide permanently failed) is
@@ -437,7 +438,7 @@ export async function POST(request: NextRequest) {
   // Preserve the request's carousel order.
   const byId = new Map(gens.map((g) => [g.id, g]));
   const ordered = (generationIds as string[]).map((id) => byId.get(id)!);
-  const imageUrls = ordered.map((g) => g.public_url);
+  const imageUrls = ordered.map((g) => publishedImageUrl(g));
 
   // The single idea's id when every submitted generation belongs to it,
   // else null — a freeform post spanning several ideas isn't "the" idea's
