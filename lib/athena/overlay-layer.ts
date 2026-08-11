@@ -68,16 +68,48 @@ export async function buildOverlayLayer(
       .toBuffer();
   }
 
-  // shadow — DISABLED. The intended recipe (extractChannel("alpha") -> blur
-  // -> composite back with blend: "dest-in") was verified empirically during
-  // B3 Task 3 and does not work: extractChannel produces a single-channel
-  // PNG with hasAlpha: false, so it carries no alpha of its own for dest-in
-  // to multiply against, and the destination's alpha passes through
-  // unmodified (confirmed: corner and centre both read 115, i.e. uniform
-  // 0.45 * 255, rather than the expected 0 vs >0 split). Rather than guess
-  // at a substitute recipe, shadow is left null unconditionally; see the B3
-  // Task 3 report for the numbers. Task 4 must omit the shadow control.
-  const shadow: Buffer | null = null;
+  // shadow — from the MASKED alpha (buf at this point: resized, tinted,
+  // masked; not yet bordered or opacity-scaled), so the silhouette matches
+  // the shape rather than casting a rectangle behind a circular photo.
+  //
+  // The first recipe tried here (extractChannel -> blur -> composite back
+  // with blend: "dest-in") does not work: extractChannel's output has
+  // hasAlpha: false, so it carries no alpha of its own for dest-in to
+  // multiply against — verified empirically (B3 Task 3 report). joinChannel
+  // attaches the extracted, blurred greyscale directly AS the alpha channel
+  // of a black canvas instead, which was verified to behave correctly.
+  //
+  // Darkness is scaled on the extracted channel via .linear() rather than
+  // via the canvas's own alpha, because the canvas is a plain 3-channel
+  // black with no alpha of its own to scale. Also verified empirically:
+  // .linear() chained directly onto the extractChannel/blur pipeline is a
+  // no-op in this sharp version, so the raw buffer is re-wrapped as its own
+  // sharp() input before .linear() is applied — only then does it take
+  // effect.
+  let shadow: Buffer | null = null;
+  if (o.shadow) {
+    const { data: alphaData, info: alphaInfo } = await sharp(buf)
+      .extractChannel("alpha")
+      .blur(g.shadowBlurPx)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const { data: scaledAlpha } = await sharp(alphaData, {
+      raw: { width: alphaInfo.width, height: alphaInfo.height, channels: 1 },
+    })
+      .linear(0.45, 0)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    shadow = await sharp({
+      create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    })
+      .joinChannel(scaledAlpha, {
+        raw: { width: alphaInfo.width, height: alphaInfo.height, channels: 1 },
+      })
+      .png()
+      .toBuffer();
+  }
 
   // border — after the mask, so it traces the shape rather than the rectangle
   if (g.borderPx > 0) {
