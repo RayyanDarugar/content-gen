@@ -7,7 +7,13 @@ import { IdeaCard } from "./idea-card";
 import { GenerateImagesButton } from "./generate-images-button";
 import { ManualIdeaDialog } from "./manual-idea-dialog";
 import { categoryColor } from "@/lib/category-colors";
-import type { Category, Idea } from "@/lib/types";
+import type { Category, CategoryOverlay, Idea, IdeaOverlayFill } from "@/lib/types";
+
+// The fill controls below invoke setOverlayFill/clearOverlayFill, which
+// re-composite this idea's affected slides — a fetch, a sharp pass and a
+// Cloudinary upload each. Server Action budgets come from the page that calls
+// them, not from the "use server" module, so it has to live here.
+export const maxDuration = 120;
 
 export default async function IdeasPage() {
   const user = await requireUser();
@@ -38,6 +44,27 @@ export default async function IdeasPage() {
         .order("created_at", { ascending: false }).limit(200)
     : { data: [] as Idea[] };
   const ideas = scopeToCategoryKeys((data ?? []) as Idea[], categories.map((c) => c.key));
+
+  // Slots for these categories, and the fills the visible ideas already have.
+  // Both guarded like every other .in() here — an empty list skips the query.
+  const { data: slotData } = categories.length
+    ? await supabase
+        .from("category_overlays").select("*")
+        .in("category_id", categories.map((c) => c.id))
+        .eq("is_slot", true).eq("active", true)
+        .order("sort_order")
+    : { data: [] as CategoryOverlay[] };
+  const slots = (slotData ?? []) as CategoryOverlay[];
+
+  const { data: fillData } = ideas.length
+    ? await supabase
+        .from("idea_overlay_fills").select("*")
+        .in("idea_id", ideas.map((i) => i.id))
+    : { data: [] as IdeaOverlayFill[] };
+  const fills = (fillData ?? []) as IdeaOverlayFill[];
+
+  // An idea knows its category by KEY; a slot knows it by ID.
+  const categoryIdByKey = new Map(categories.map((c) => [c.key, c.id]));
 
   const brandMissing = !brand.business_name.trim();
 
@@ -86,7 +113,14 @@ export default async function IdeasPage() {
             )}
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {group.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
+            {group.map((idea) => (
+              <IdeaCard
+                key={idea.id}
+                idea={idea}
+                slots={slots.filter((s) => s.category_id === categoryIdByKey.get(idea.category_key))}
+                fills={fills.filter((f) => f.idea_id === idea.id)}
+              />
+            ))}
           </div>
         </section>
       ))}

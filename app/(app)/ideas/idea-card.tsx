@@ -5,24 +5,42 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { setIdeaDecision } from "./actions";
-import type { Idea } from "@/lib/types";
+import { SlotStrip } from "./slot-strip";
+import type { CategoryOverlay, Idea, IdeaOverlayFill } from "@/lib/types";
 
 const statusVariant: Record<string, "outline" | "pending" | "destructive" | "success" | "queued"> = {
   pending_review: "outline", approved: "pending", rejected: "destructive",
   generating: "pending", generated: "success", posted: "queued", failed: "destructive",
 };
 
-export function IdeaCard({ idea }: { idea: Idea }) {
+export function IdeaCard({
+  idea, slots = [], fills = [],
+}: {
+  idea: Idea;
+  slots?: CategoryOverlay[];
+  fills?: IdeaOverlayFill[];
+}) {
   const [expanded, setExpanded] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const reviewable = ["pending_review", "approved", "rejected"].includes(idea.status);
   const slides = idea.slides ?? [];
+  // A fill whose image_url is empty counts as unfilled, matching
+  // resolveOverlaysForIdea's treatment of an empty image as no fill.
+  const filledIds = new Set(fills.filter((f) => f.image_url).map((f) => f.overlay_id));
+  const unfilled = slots.filter((s) => !filledIds.has(s.id));
 
   return (
     <Card className="transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-primary/30">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <Badge variant={statusVariant[idea.status] ?? "outline"}>{idea.status}</Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant={statusVariant[idea.status] ?? "outline"}>{idea.status}</Badge>
+          {unfilled.length > 0 && (
+            <Badge variant="outline" className="border-amber-500/50 text-amber-700">
+              {unfilled.length === 1 ? "1 slot unfilled" : `${unfilled.length} slots unfilled`}
+            </Badge>
+          )}
+        </div>
         {reviewable && (
           <div className="flex gap-1.5">
             <Button
@@ -48,6 +66,8 @@ export function IdeaCard({ idea }: { idea: Idea }) {
       </CardHeader>
       <CardContent className="space-y-2">
         <p className="text-sm whitespace-pre-wrap">{idea.concept}</p>
+
+        <SlotStrip ideaId={idea.id} slots={slots} fills={fills} />
 
         {/* The point of reviewing an idea is judging the story, not the label.
             Collapsed shows the copy that lands on each panel; expanding adds
