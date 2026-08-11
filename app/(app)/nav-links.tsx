@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Lightbulb, Sparkles, Images, Send, Settings } from "lucide-react";
+import { Lightbulb, Sparkles, Images, Send, CalendarDays, Settings } from "lucide-react";
 
 const nav = [
   { href: "/ideas", label: "Ideas", icon: Lightbulb },
   { href: "/generate", label: "Generate", icon: Sparkles },
   { href: "/gallery", label: "Gallery", icon: Images },
   { href: "/post", label: "Post", icon: Send },
+  { href: "/schedule", label: "Schedule", icon: CalendarDays },
   { href: "/config", label: "Config", icon: Settings },
 ];
 
