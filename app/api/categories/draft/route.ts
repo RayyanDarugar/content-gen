@@ -116,7 +116,7 @@ export async function draftCategoryTurnForUser(
     if (error) throw new Error(error.message);
     id = existing.id;
   } else {
-    id = await insertDraft(supabase, userId, draft, input.styleRefUrl ?? "");
+    id = await insertDraft(supabase, userId, brandId, draft, input.styleRefUrl ?? "");
     // Insert path only. On an update this would mint a duplicate format on
     // every subsequent turn of the same conversation.
     if (input.suggestionId) await applyWriteback(supabase, userId, input.suggestionId, id);
@@ -167,6 +167,7 @@ export async function POST(request: NextRequest) {
 async function insertDraft(
   supabase: Awaited<ReturnType<typeof createAdminSupabase>>,
   userId: string,
+  brandId: string,
   draft: NormalizedDraft,
   styleRefUrl: string,
 ): Promise<string> {
@@ -176,6 +177,7 @@ async function insertDraft(
       .from("categories")
       .insert({
         user_id: userId,
+        brand_id: brandId,
         key,
         ...draftColumns(draft),
         style_ref_url: styleRefUrl,

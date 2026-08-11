@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
+import { requireActiveBrand } from "@/lib/auth/active-brand";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
@@ -24,7 +25,8 @@ import { saveBrandProfileForUser } from "@/lib/brand-profile";
 
 export async function createCategory(fields: CategoryFields) {
   const user = await requireUser();
-  await createCategoryForUser(user.id, fields);
+  const brand = await requireActiveBrand(user.id);
+  await createCategoryForUser(user.id, brand.id, fields);
   revalidatePath("/config");
 }
 

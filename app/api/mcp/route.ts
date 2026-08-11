@@ -209,7 +209,8 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         inputSchema: z.object(categoryFieldsShape),
       },
       async (fields) => {
-        await createCategoryForUser(userId, fields);
+        const brand = resolveBrandByName(await listBrandsForUser(userId));
+        await createCategoryForUser(userId, brand.id, fields);
         return { content: [{ type: "text", text: "category created" }] };
       },
     );

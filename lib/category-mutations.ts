@@ -17,11 +17,16 @@ import type { RoleRefUrls } from "@/lib/types";
 // module specifier — a sibling directory would make `@/lib/categories`
 // ambiguous to read.
 
-export async function createCategoryForUser(userId: string, fields: CategoryFields): Promise<void> {
+export async function createCategoryForUser(
+  userId: string,
+  brandId: string,
+  fields: CategoryFields,
+): Promise<void> {
   validateCategoryFields(fields);
   const supabase = createAdminSupabase();
   const { error } = await supabase.from("categories").insert({
     user_id: userId,
+    brand_id: brandId,
     key: slugify(fields.name),
     name: fields.name,
     style_guide: fields.style_guide,
