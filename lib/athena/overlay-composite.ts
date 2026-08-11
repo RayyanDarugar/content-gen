@@ -1,6 +1,9 @@
 import "server-only";
 import sharp from "sharp";
+import type { OverlayOptions } from "sharp";
 import { computePlacement } from "@/lib/athena/overlay-placement";
+import { buildOverlayLayer } from "@/lib/athena/overlay-layer";
+import { treatmentGeometry } from "@/lib/athena/overlay-treatments";
 import type { CategoryOverlay, Slide } from "@/lib/types";
 
 // Pure — exported separately so the selection rule is testable without any
@@ -65,27 +68,31 @@ export async function compositeOverlays(
         o,
       );
 
-      let layer = sharp(raw).resize(p.width, p.height, { fit: "fill" }).ensureAlpha();
-      if (o.opacity < 100) {
-        // Scale the layer's alpha by compositing a uniform grey over it with
-        // dest-in, which multiplies destination alpha by source alpha.
-        layer = layer.composite([{
-          input: {
-            create: {
-              width: p.width, height: p.height, channels: 4,
-              background: { r: 0, g: 0, b: 0, alpha: o.opacity / 100 },
-            },
-          },
-          blend: "dest-in",
-        }]);
-      }
+      // The per-layer build (resize, treatments, opacity) lives in
+      // lib/athena/overlay-layer.ts. This function stays an orchestrator:
+      // fetch, place, build, composite.
+      const { layer, shadow } = await buildOverlayLayer(raw, { width: p.width, height: p.height }, o);
 
-      const layerBuf = await layer.png().toBuffer();
+      const parts: OverlayOptions[] = [];
+      if (shadow) {
+        // Clamped inside the base rather than expanding the canvas: sharp
+        // throws when a composite layer falls outside, which is exactly the
+        // failure computePlacement already had to be fixed for. An overlay
+        // flush against the margin gets a slightly clipped shadow instead of
+        // a failed ingest.
+        const g = treatmentGeometry({ width: p.width, height: p.height }, o);
+        parts.push({
+          input: shadow,
+          left: Math.min(Math.max(0, p.left + g.shadowOffsetPx), Math.max(0, meta.width - p.width)),
+          top: Math.min(Math.max(0, p.top + g.shadowOffsetPx), Math.max(0, meta.height - p.height)),
+        });
+      }
+      parts.push({ input: layer, left: p.left, top: p.top });
+
       current = await sharp(current)
-        .composite([{ input: layerBuf, left: p.left, top: p.top }])
-        // Match the clean image's encode (quality: 90, app/api/jobs/poll/route.ts)
-        // — without an explicit format call here, sharp defaults JPEG output
-        // to quality 80, so the published image would end up softer than the
+        .composite(parts)
+        // Match the clean image's encode (quality: 90) — sharp defaults JPEG
+        // output to 80, so the published image would end up softer than the
         // one nobody sees.
         .jpeg({ quality: 90 })
         .toBuffer();
