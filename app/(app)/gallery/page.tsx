@@ -21,6 +21,9 @@ export default async function GalleryPage() {
   const { data } = await supabase
     .from("ideas")
     .select("*, generations(*)")
+    // Same reason as the Ideas page: the brand filter must precede .limit(200),
+    // or the cap is shared across brands and a busy brand hides a quiet one.
+    .in("category_key", keys)
     .order("created_at", { ascending: false })
     .order("created_at", { referencedTable: "generations", ascending: false })
     .limit(200);
