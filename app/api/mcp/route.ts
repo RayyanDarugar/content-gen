@@ -148,7 +148,8 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         }),
       },
       async (fields) => {
-        await saveBrandProfileForUser(userId, fields);
+        const brand = resolveBrandByName(await listBrandsForUser(userId));
+        await saveBrandProfileForUser(userId, brand.id, fields);
         return { content: [{ type: "text", text: "brand profile updated" }] };
       },
     );

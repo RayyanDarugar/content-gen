@@ -118,8 +118,9 @@ export async function saveBrandProfile(
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
+  const brand = await requireActiveBrand(user.id);
   try {
-    await saveBrandProfileForUser(user.id, {
+    await saveBrandProfileForUser(user.id, brand.id, {
       business_name: String(formData.get("business_name") ?? "").trim(),
       business_description: String(formData.get("business_description") ?? "").trim(),
       audience: String(formData.get("audience") ?? "").trim(),
