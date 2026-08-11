@@ -68,6 +68,28 @@ export interface BufferConnection {
   updated_at: string;
 }
 
+export type OverlayCorner =
+  | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+
+// An exact asset composited onto finished slides (spec §2). Configured per
+// category and targeted by role, the same way role_guides is.
+export interface CategoryOverlay {
+  id: string;
+  user_id: string;
+  category_id: string;
+  name: string;
+  image_url: string;
+  roles: Slide["role"][];
+  corner: OverlayCorner;
+  margin_pct: number;
+  size_pct: number;
+  opacity: number;
+  sort_order: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Category {
   id: string;
   user_id: string;
@@ -121,6 +143,10 @@ export interface Generation {
   refinement_notes: string;
   image_path: string;
   public_url: string;
+  // The published artifact — public_url with overlays composited on. Empty
+  // when the category has no overlays. Read via publishedImageUrl(), never
+  // directly, and never by a generation path.
+  composited_url: string;
   error: string;
   slide_index: number;
   anchor_generation_id: string | null;
