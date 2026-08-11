@@ -53,6 +53,7 @@ export function Composer({
   groups,
   brandName,
   schedulingEnabled,
+  unfilledSlots = 0,
 }: {
   idea: IdeaWithGenerations;
   category: Category;
@@ -65,6 +66,7 @@ export function Composer({
   groups: ChannelGroup[];
   brandName: string;
   schedulingEnabled: boolean;
+  unfilledSlots?: number;
 }) {
   const router = useRouter();
 
@@ -744,6 +746,13 @@ export function Composer({
             </div>
           </div>
         </section>
+
+        {unfilledSlots > 0 && (
+          <p className="text-xs text-amber-700">
+            {unfilledSlots === 1 ? "1 slot on this post has no image" : `${unfilledSlots} slots on this post have no image`}
+            {" — it will publish without it. Add one on the Ideas board."}
+          </p>
+        )}
 
         <section className="space-y-2 rounded-xl border p-3">
           <div className="flex items-center gap-2 text-sm">

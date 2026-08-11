@@ -47,7 +47,13 @@ function SlideImage({ gen, alt }: { gen: Generation | null; alt: string }) {
   );
 }
 
-export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
+export function GalleryCard({
+  idea,
+  unfilledSlots = 0,
+}: {
+  idea: IdeaWithGenerations;
+  unfilledSlots?: number;
+}) {
   const slideCount = (idea.slides ?? []).length || 1;
   // Siblings of one post, not prior attempts — only genuinely replaced rows
   // belong in history.
@@ -110,6 +116,14 @@ export function GalleryCard({ idea }: { idea: IdeaWithGenerations }) {
         >
           {isCarousel ? `${active + 1}/${slideCount} · ` : ""}{current?.status ?? "pending"}
         </Badge>
+        {unfilledSlots > 0 && (
+          <Badge
+            variant="outline"
+            className="absolute top-2 left-2 border-amber-500/50 bg-background/70 text-amber-700 backdrop-blur-sm"
+          >
+            {unfilledSlots === 1 ? "1 slot unfilled" : `${unfilledSlots} slots unfilled`}
+          </Badge>
+        )}
       </div>
 
       {isCarousel && (

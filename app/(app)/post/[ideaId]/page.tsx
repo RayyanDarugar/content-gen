@@ -5,7 +5,7 @@ import { listBufferConnections, getBufferChannelsForConnection, type ChannelGrou
 import { resolveValidSlides, postedSlideIndexesByIdeaAndChannel, type Postable, type PostedSlideJoinRow } from "@/lib/athena/carousel";
 import { publishedImageUrl } from "@/lib/athena/published-image";
 import { Composer } from "./composer";
-import type { BrandProfile, BufferChannel, Category, Generation, Idea } from "@/lib/types";
+import type { BrandProfile, BufferChannel, Category, CategoryOverlay, Generation, Idea } from "@/lib/types";
 
 type IdeaWithGenerations = Idea & { generations: Generation[] };
 
@@ -32,6 +32,23 @@ export default async function ComposerPage({
     .from("categories").select("*").eq("key", idea.category_key).maybeSingle();
   const category = catData as Category | null;
   if (!category) notFound();
+
+  // Only active slots count (an inactive slot cannot composite, so badging
+  // it would be noise) — mirrors resolveOverlaysForIdea
+  // (lib/athena/overlay-slots.ts), which also treats a fill with an empty
+  // image_url as unfilled.
+  const { data: slotData } = await supabase
+    .from("category_overlays").select("*")
+    .eq("category_id", category.id).eq("is_slot", true).eq("active", true);
+  const slots = (slotData ?? []) as CategoryOverlay[];
+  const { data: fillData } = await supabase
+    .from("idea_overlay_fills").select("overlay_id, image_url").eq("idea_id", idea.id);
+  const filledIds = new Set(
+    ((fillData ?? []) as { overlay_id: string; image_url: string }[])
+      .filter((f) => f.image_url)
+      .map((f) => f.overlay_id),
+  );
+  const unfilledSlots = slots.filter((s) => !filledIds.has(s.id)).length;
 
   let channels: BufferChannel[] = [];
   let channelsError = "";
@@ -167,6 +184,7 @@ export default async function ComposerPage({
       groups={groups}
       brandName={brand?.business_name?.trim() || "Your brand"}
       schedulingEnabled={SCHEDULING_ENABLED}
+      unfilledSlots={unfilledSlots}
     />
   );
 }
