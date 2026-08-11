@@ -98,7 +98,14 @@ export function OnboardingSteps({
         <BrandSection
           brand={creatingBrand ? null : brand}
           action={creatingBrand ? createBrandAction : saveBrandProfile}
-          onSaved={() => router.refresh()}
+          onSaved={() => {
+            // Leave create mode once the brand exists, or creatingBrand stays
+            // true, the checklist stays pinned at step 1, and the next
+            // submit creates a SECOND brand. createBrandAction has already
+            // made this brand active.
+            if (creatingBrand) router.replace("/onboarding");
+            else router.refresh();
+          }}
         />
       </StepShell>
 
