@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadBrandContext } from "@/lib/athena/brand-context";
-import { listBrandsForUser, resolveBrandByName } from "@/lib/brands";
+import { listBrandsForUser, brandForUser } from "@/lib/brands";
 import { listBufferConnections, getBufferChannelsForConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import { saveBrandProfileForUser } from "@/lib/brand-profile";
 import {
@@ -56,10 +56,28 @@ async function handleMcp(request: NextRequest): Promise<Response> {
 
     server.registerTool(
       "get_brand_profile",
-      { title: "Get brand profile", description: "Read the current brand profile (name, voice, audience, proof points, colors/fonts)." },
+      {
+        title: "Get brand profile",
+        description: "Read one brand's profile (name, voice, audience, proof points, colors/fonts). Pass brand when the account has more than one.",
+        inputSchema: z.object({ brand: z.string().optional() }),
+      },
+      async ({ brand }) => {
+        const resolved = await brandForUser(userId, brand);
+        return { content: [{ type: "text", text: JSON.stringify(await loadBrandContext(resolved.id)) }] };
+      },
+    );
+
+    server.registerTool(
+      "list_brands",
+      { title: "List brands", description: "List every brand on this account. Use the business_name as the `brand` argument on other tools." },
       async () => {
-        const brand = resolveBrandByName(await listBrandsForUser(userId));
-        return { content: [{ type: "text", text: JSON.stringify(await loadBrandContext(brand.id)) }] };
+        const brands = await listBrandsForUser(userId);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(brands.map((b) => ({ id: b.id, business_name: b.business_name, is_default: b.is_default }))),
+          }],
+        };
       },
     );
 
@@ -141,15 +159,16 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         title: "Update brand profile",
         description: "Overwrite the brand profile fields (name, description, audience, voice, avoid, proof points, standing, colors, fonts, visual notes).",
         inputSchema: z.object({
+          brand: z.string().optional(),
           business_name: z.string(), business_description: z.string(), audience: z.string(),
           voice: z.string(), avoid: z.string(), proof_points: z.array(z.string()),
           standing: z.array(z.string()), colors: z.array(z.string()), fonts: z.array(z.string()),
           visual_notes: z.string(),
         }),
       },
-      async (fields) => {
-        const brand = resolveBrandByName(await listBrandsForUser(userId));
-        await saveBrandProfileForUser(userId, brand.id, fields);
+      async ({ brand, ...fields }) => {
+        const resolved = await brandForUser(userId, brand);
+        await saveBrandProfileForUser(userId, resolved.id, fields);
         return { content: [{ type: "text", text: "brand profile updated" }] };
       },
     );
@@ -207,11 +226,11 @@ async function handleMcp(request: NextRequest): Promise<Response> {
       {
         title: "Create post type",
         description: "Create a new post type (category) with the given fields.",
-        inputSchema: z.object(categoryFieldsShape),
+        inputSchema: z.object({ brand: z.string().optional(), ...categoryFieldsShape }),
       },
-      async (fields) => {
-        const brand = resolveBrandByName(await listBrandsForUser(userId));
-        await createCategoryForUser(userId, brand.id, fields);
+      async ({ brand, ...fields }) => {
+        const resolved = await brandForUser(userId, brand);
+        await createCategoryForUser(userId, resolved.id, fields);
         return { content: [{ type: "text", text: "category created" }] };
       },
     );
@@ -259,10 +278,11 @@ async function handleMcp(request: NextRequest): Promise<Response> {
           categoryId: z.string().optional(),
           styleRefUrl: z.string().optional(),
           suggestionId: z.string().optional(),
+          brand: z.string().optional(),
         }),
       },
-      async ({ turns, categoryId, styleRefUrl, suggestionId }) => {
-        const brand = resolveBrandByName(await listBrandsForUser(userId));
+      async ({ turns, categoryId, styleRefUrl, suggestionId, brand }) => {
+        const resolved = await brandForUser(userId, brand);
         return {
           content: [{
             type: "text",
@@ -271,7 +291,7 @@ async function handleMcp(request: NextRequest): Promise<Response> {
               categoryId: categoryId ?? null,
               styleRefUrl: styleRefUrl ?? null,
               suggestionId: suggestionId ?? null,
-              brandId: brand.id,
+              brandId: resolved.id,
             })),
           }],
         };
@@ -283,11 +303,11 @@ async function handleMcp(request: NextRequest): Promise<Response> {
       {
         title: "Generate ideas",
         description: "Generate new AI post ideas for a post type — writes them into the review queue, does not auto-approve.",
-        inputSchema: z.object({ categoryKey: z.string(), count: z.number().int().min(1).max(20) }),
+        inputSchema: z.object({ categoryKey: z.string(), count: z.number().int().min(1).max(20), brand: z.string().optional() }),
       },
-      async ({ categoryKey, count }) => {
-        const brand = resolveBrandByName(await listBrandsForUser(userId));
-        return { content: [{ type: "text", text: JSON.stringify(await generateIdeas(userId, brand.id, categoryKey, count)) }] };
+      async ({ categoryKey, count, brand }) => {
+        const resolved = await brandForUser(userId, brand);
+        return { content: [{ type: "text", text: JSON.stringify(await generateIdeas(userId, resolved.id, categoryKey, count)) }] };
       },
     );
 

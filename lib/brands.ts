@@ -41,3 +41,10 @@ export async function listBrandsForUser(userId: string): Promise<BrandProfile[]>
   if (error) throw new Error(error.message);
   return (data ?? []) as BrandProfile[];
 }
+
+// Spec §6: one brand -> the argument is optional; several -> omitting it is
+// an error naming the alternatives. Never a silent default. Lives here rather
+// than inside the MCP route so it is reachable from a test without a request.
+export async function brandForUser(userId: string, name?: string): Promise<BrandProfile> {
+  return resolveBrandByName(await listBrandsForUser(userId), name);
+}
