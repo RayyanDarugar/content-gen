@@ -121,10 +121,22 @@ async function buildShadow(
 
   // Darkness (0.45) and the overlay's own opacity both scale the same channel:
   // a faded overlay should cast a faded shadow, not a full-strength one.
+  //
+  // .toColourspace("b-w") is LOAD-BEARING, not tidying. On a raw
+  // single-channel input, .linear() silently returns THREE channels (measured:
+  // 270000 bytes for a 300x300 silhouette where one channel is 90000), and the
+  // joinChannel below then reads that RGB buffer at a 1-byte stride — the
+  // alpha attached is the top third of the silhouette repeated three times, so
+  // the shadow's bottom and right edges come out as a hard black bar (measured
+  // pre-fix on a 300x300 shape:"none" layer: top/left 17 but bottom/right 114;
+  // a 200x200 circle's bottom corners 114, i.e. not even circular). Forcing
+  // the colourspace keeps the pipeline single-channel end to end. This code
+  // path has now been got wrong three separate times — leave this in.
   const { data: scaledAlpha } = await sharp(alphaData, {
     raw: { width: alphaInfo.width, height: alphaInfo.height, channels: 1 },
   })
     .linear((0.45 * opacity) / 100, 0)
+    .toColourspace("b-w")
     .raw()
     .toBuffer({ resolveWithObject: true });
 
@@ -182,7 +194,12 @@ export async function buildOverlayLayer(
         buf = await sharp(raw).resize(width, height, { fit: "fill" }).ensureAlpha().png().toBuffer();
         break;
 
-      // Before the mask, or the mask's antialiased edge keeps untinted pixels.
+      // Before the mask by convention, not by necessity: rendering
+      // tint-before-mask against mask-before-tint was measured to differ by at
+      // most 1 on antialiased edge pixels alone, because this version of sharp
+      // tints straight-alpha RGB whether or not the mask has run. The order is
+      // held in place by the pure treatmentStages test, not by any difference
+      // in the rendered output.
       case "tint": {
         if (o.tint === "grayscale") {
           buf = await sharp(buf).grayscale().png().toBuffer();

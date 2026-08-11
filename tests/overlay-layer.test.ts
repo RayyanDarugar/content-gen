@@ -94,7 +94,54 @@ describe("buildOverlayLayer — stage order", () => {
     expect(shadow).not.toBeNull();
     const p = await pixels(shadow!);
     expect(p.at(100, 100).a).toBeGreaterThan(80);
-    expect(p.at(0, 0).a).toBe(0);
+    // ALL FOUR corners, not just the top-left. Probing one corner is what let
+    // a silhouette whose bottom two corners read 114 — a hard black bar, not a
+    // circle — survive two rounds of review.
+    const corners = [p.at(0, 0).a, p.at(199, 0).a, p.at(0, 199).a, p.at(199, 199).a];
+    expect(corners).toEqual([0, 0, 0, 0]);
+  });
+
+  // The silhouette is extracted, scaled and re-attached as an alpha channel by
+  // hand, and a channel-count mismatch anywhere in that hand-off corrupts the
+  // buffer ASYMMETRICALLY: joinChannel reading a 3-channel buffer at a 1-byte
+  // stride attached the top third of the shadow three times over, leaving the
+  // bottom and right edges at full darkness (measured: top/left 17, bottom/
+  // right 114). Only a probe on every side catches that.
+  it("casts a symmetric shadow, dark in the centre and soft on all four sides", async () => {
+    const { shadow } = await buildOverlayLayer(
+      await source(600, 600),
+      { width: 300, height: 300 },
+      ov({ shadow: true }),
+    );
+    const p = await pixels(shadow!);
+    expect([p.info.width, p.info.height]).toEqual([300, 300]);
+    const centre = p.at(150, 150).a;
+    expect(centre).toBeGreaterThan(80);
+
+    const edges = [p.at(150, 0).a, p.at(150, 299).a, p.at(0, 150).a, p.at(299, 150).a];
+    const corners = [p.at(0, 0).a, p.at(299, 0).a, p.at(0, 299).a, p.at(299, 299).a];
+    for (const a of edges) expect(a).toBeLessThan(centre / 4);
+    for (const a of corners) expect(a).toBeLessThan(centre / 8);
+    // Every side fades by the same amount: no side may be darker than another.
+    expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(3);
+    expect(Math.max(...corners) - Math.min(...corners)).toBeLessThanOrEqual(3);
+  });
+
+  // Both the darkness constant and the overlay's own opacity scale the one
+  // extracted channel — the stage that .toColourspace("b-w") keeps at a single
+  // channel. If that scaling stopped taking effect the shadow would go back to
+  // full strength behind a faded overlay.
+  it("fades the shadow with the overlay's opacity", async () => {
+    const full = await buildOverlayLayer(
+      await source(600, 600), { width: 300, height: 300 }, ov({ shadow: true }),
+    );
+    const faded = await buildOverlayLayer(
+      await source(600, 600), { width: 300, height: 300 }, ov({ shadow: true, opacity: 30 }),
+    );
+    const a = (await pixels(full.shadow!)).at(150, 150).a;
+    const b = (await pixels(faded.shadow!)).at(150, 150).a;
+    expect(b / a).toBeGreaterThan(0.2);
+    expect(b / a).toBeLessThan(0.4);
   });
 
   // Opacity is applied last, so it scales the border too — a 50%-opaque
@@ -204,8 +251,12 @@ describe("buildOverlayLayer — wide layers", () => {
     );
     const p = await pixels(shadow!);
     expect([p.info.width, p.info.height]).toEqual([432, 22]);
-    expect(p.at(216, 11).a).toBeGreaterThan(80);
-    // The defect being guarded: a corner as dark as the centre IS the bar.
-    expect(p.at(0, 0).a).toBeLessThan(p.at(216, 11).a / 4);
+    const centre = p.at(216, 11).a;
+    expect(centre).toBeGreaterThan(80);
+    // The defect being guarded: a corner as dark as the centre IS the bar. All
+    // four, because the corruption this replaced only darkened two of them.
+    for (const a of [p.at(0, 0).a, p.at(431, 0).a, p.at(0, 21).a, p.at(431, 21).a]) {
+      expect(a).toBeLessThan(centre / 4);
+    }
   });
 });
