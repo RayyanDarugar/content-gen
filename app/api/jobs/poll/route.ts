@@ -19,6 +19,8 @@ import { getKieKeyOrNull } from "@/lib/settings/user-secrets";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { compositeOverlays } from "@/lib/athena/overlay-composite";
 import { listOverlaysForCategory } from "@/lib/overlay-mutations";
+import { resolveOverlaysForIdea } from "@/lib/athena/overlay-slots";
+import { listFillsForIdea } from "@/lib/overlay-fill-mutations";
 import type { Category, Generation, Idea, StyleRefJob } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -83,8 +85,14 @@ async function ingestImage(
       .eq("key", idea.category_key).eq("user_id", gen.user_id).maybeSingle();
     if (catRow) {
       const overlays = await listOverlaysForCategory((catRow as { id: string }).id, gen.user_id);
+      // Slots take their image from this idea's fills. resolveOverlaysForIdea
+      // substitutes them, so compositeOverlays receives ordinary overlays and
+      // never learns slots exist. An unfilled slot is simply absent from
+      // `resolved` — the post publishes without that layer, badged in the UI.
+      const fills = await listFillsForIdea(gen.idea_id, gen.user_id);
+      const { resolved } = resolveOverlaysForIdea(overlays, fills);
       const role = (idea.slides ?? [])[gen.slide_index]?.role ?? "single";
-      const composited = await compositeOverlays(jpeg, overlays, role);
+      const composited = await compositeOverlays(jpeg, resolved, role);
       if (composited) {
         const { url: compositedUrl } = await uploadImageToCloudinary(composited, "image/jpeg");
         const { error: compErr } = await supabase
