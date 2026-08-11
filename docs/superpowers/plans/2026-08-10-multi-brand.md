@@ -2078,9 +2078,11 @@ This is the gate. Nothing before this point lets an account hold a second brand,
 Run and read the output of each:
 
 ```bash
-grep -rn 'onConflict: "user_id"' lib app --include="*.ts"
+grep -rn '\.upsert(' lib app --include="*.ts" --include="*.tsx"
 ```
-Expected: **no matches.** A match means Task 8 was not completed and adding a brand will destroy an existing one — stop.
+Expected: **exactly one match** — `app/(app)/config/actions.ts`, upserting `user_settings`. Any match writing `brand_profiles` means a brand write still goes through an upsert and adding a brand may destroy an existing one — stop.
+
+Two traps this gate deliberately avoids: grepping `onConflict: "user_id"` would flag the `user_settings` upsert forever (that table's `user_id` genuinely is its primary key, one row per account), and grepping the word `upsert` unanchored would match the comment in `lib/brand-profile.ts` that explains why the old upsert was wrong.
 
 ```bash
 grep -rn 'from("brand_profiles")' lib app --include="*.ts" --include="*.tsx" | grep -v 'eq("id"' | grep -v "lib/brands.ts" | grep -v "lib/brand-profile.ts"
