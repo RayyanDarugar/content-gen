@@ -834,6 +834,20 @@ git commit -m "feat: re-composite affected slides when a slot fill changes"
 
 The layout was chosen from mockups: **a slot strip beneath the idea's concept** — thumbnail (or a dashed empty box), the slot's name with its placement summary, and an Upload/Replace control. Do not redesign it.
 
+- [ ] **Step 0: Give the page a budget for re-compositing**
+
+Task 5's brief tried to put `export const maxDuration = 120` in `app/(app)/ideas/actions.ts`. That was wrong and was correctly refused: per `node_modules/next/dist/docs/`, route-segment config only takes effect in `page.tsx` / `layout.tsx` / `route.ts`, so in a `"use server"` module it is a **silent no-op**, and Next's own docs say a Server Action's `maxDuration` must be set on the page that calls it.
+
+This page is that page — `setOverlayFill` and `clearOverlayFill` both re-composite, which is real network and image work. Add to `app/(app)/ideas/page.tsx`:
+
+```ts
+// The fill controls below invoke setOverlayFill/clearOverlayFill, which
+// re-composite this idea's affected slides — a fetch, a sharp pass and a
+// Cloudinary upload each. Server Action budgets come from the page that calls
+// them, not from the "use server" module, so it has to live here.
+export const maxDuration = 120;
+```
+
 - [ ] **Step 1: Load slots and fills on the Ideas page**
 
 In `app/(app)/ideas/page.tsx`, after `ideas` is computed, add:
