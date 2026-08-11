@@ -1,10 +1,19 @@
 "use client";
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { uploadStyleRefImage } from "@/app/(app)/config/actions";
 import { setOverlayFill, clearOverlayFill } from "./actions";
 import type { CategoryOverlay, IdeaOverlayFill } from "@/lib/types";
+
+// Shared by onFile and onRemove: recomposite results carry `failed` (see
+// lib/overlay-recomposite.ts) distinct from the try/catch error path — a
+// transient overlay-host failure still counts as "saved", just incompletely.
+function recompositeMessage(failed: number): string {
+  return failed === 1
+    ? "Saved, but 1 slide couldn't be re-composited. Try again."
+    : `Saved, but ${failed} slides couldn't be re-composited. Try again.`;
+}
 
 export function SlotStrip({
   ideaId, slots, fills,
@@ -14,9 +23,14 @@ export function SlotStrip({
   fills: IdeaOverlayFill[];
 }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [busySlot, setBusySlot] = useState("");
+  // Two separate messages, deliberately not one: `msg` is the hard-error path
+  // (upload failed, unknown overlay, ...) and `warn` is the partial-success
+  // path (the save went through, but the re-composite left N slides stale) —
+  // conflating them would make a transient recompositing hiccup look as bad
+  // as a failed save.
   const [msg, setMsg] = useState("");
+  const [warn, setWarn] = useState("");
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   if (slots.length === 0) return null;
@@ -26,13 +40,35 @@ export function SlotStrip({
   async function onFile(slotId: string, file: File) {
     setBusySlot(slotId);
     setMsg("");
+    setWarn("");
     try {
       const fd = new FormData();
       fd.append("file", file);
       const up = await uploadStyleRefImage(fd);
       if (up.error || !up.url) throw new Error(up.error ?? "upload failed");
       // Saving also re-composites any slides this slot appears on.
-      await setOverlayFill(ideaId, slotId, up.url);
+      const { failed } = await setOverlayFill(ideaId, slotId, up.url);
+      if (failed > 0) setWarn(recompositeMessage(failed));
+      router.refresh();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusySlot("");
+    }
+  }
+
+  async function onRemove(slotId: string) {
+    setBusySlot(slotId);
+    setMsg("");
+    setWarn("");
+    try {
+      // A stale page can still show Remove for a slot whose category-level
+      // config was deleted out from under it (deleting a slot cascades its
+      // fills). clearOverlayFillForUser then no-ops, but
+      // recompositeIdeaForOverlay still looks the overlay up by id and throws
+      // "unknown overlay" — catch it here instead of an unhandled rejection.
+      const { failed } = await clearOverlayFill(ideaId, slotId);
+      if (failed > 0) setWarn(recompositeMessage(failed));
       router.refresh();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -45,7 +81,7 @@ export function SlotStrip({
     <div className="mt-2 space-y-2 border-t border-dashed pt-2">
       {slots.map((slot) => {
         const fill = fillBySlot.get(slot.id);
-        const busy = busySlot === slot.id || pending;
+        const busy = busySlot === slot.id;
         return (
           <div key={slot.id} className="flex items-center gap-2">
             {fill ? (
@@ -83,12 +119,7 @@ export function SlotStrip({
             {fill && (
               <Button
                 size="xs" variant="ghost" disabled={busy}
-                onClick={() =>
-                  startTransition(async () => {
-                    await clearOverlayFill(ideaId, slot.id);
-                    router.refresh();
-                  })
-                }
+                onClick={() => void onRemove(slot.id)}
               >
                 Remove
               </Button>
@@ -97,6 +128,7 @@ export function SlotStrip({
         );
       })}
       {msg && <p className="text-xs text-destructive">{msg}</p>}
+      {warn && <p className="text-xs text-muted-foreground">{warn}</p>}
     </div>
   );
 }

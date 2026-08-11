@@ -29,8 +29,15 @@ export function resolveOverlaysForIdea(
     if (image) {
       resolved.push({ ...o, image_url: image });
     } else if (o.active) {
-      // Reported, not silently dropped — this is what the unfilled badge reads.
-      // An inactive slot cannot composite anyway, so badging it would be noise.
+      // Reported, not silently dropped: this documents which slots got
+      // excluded from `resolved` (and therefore from compositing) and is
+      // exercised by tests. None of the four "N slots unfilled" badge
+      // surfaces actually read this list — app/(app)/ideas/idea-card.tsx,
+      // app/(app)/gallery/page.tsx, and app/(app)/post/[ideaId]/page.tsx each
+      // load category_overlays and idea_overlay_fills directly and recompute
+      // the same filled/unfilled set themselves, since none of them call
+      // resolveOverlaysForIdea. An inactive slot cannot composite anyway, so
+      // badging it would be noise.
       unfilled.push(o);
     }
   }

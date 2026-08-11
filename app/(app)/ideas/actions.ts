@@ -44,23 +44,35 @@ export async function setOverlayFill(
   ideaId: string,
   overlayId: string,
   imageUrl: string,
-): Promise<void> {
+): Promise<{ updated: number; failed: number }> {
   const user = await requireUser();
   await setOverlayFillForUser(user.id, ideaId, overlayId, imageUrl);
   // Brings already-generated slides into line without a regeneration. An idea
   // with no succeeded generations yet simply re-composites nothing — ingest
-  // will resolve the fill when its images land.
-  await recompositeIdeaForOverlay(user.id, ideaId, overlayId);
+  // will resolve the fill when its images land. `failed` is surfaced to the
+  // caller (see slot-strip.tsx) rather than discarded, so a transient
+  // overlay-host outage that blanks composited_url is visible instead of
+  // silently counted as success.
+  const result = await recompositeIdeaForOverlay(user.id, ideaId, overlayId);
   revalidatePath("/ideas");
   revalidatePath("/gallery");
+  // The composer's "N slots have no image" line reads this same idea; without
+  // this the last look before publishing can show a stale count.
+  revalidatePath("/post", "layout");
+  return result;
 }
 
-export async function clearOverlayFill(ideaId: string, overlayId: string): Promise<void> {
+export async function clearOverlayFill(
+  ideaId: string,
+  overlayId: string,
+): Promise<{ updated: number; failed: number }> {
   const user = await requireUser();
   await clearOverlayFillForUser(user.id, ideaId, overlayId);
   // Re-composite AFTER the delete, so the removed layer actually disappears
   // from the published image — see the asymmetry note in lib/overlay-recomposite.ts.
-  await recompositeIdeaForOverlay(user.id, ideaId, overlayId);
+  const result = await recompositeIdeaForOverlay(user.id, ideaId, overlayId);
   revalidatePath("/ideas");
   revalidatePath("/gallery");
+  revalidatePath("/post", "layout");
+  return result;
 }

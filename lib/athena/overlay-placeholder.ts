@@ -7,17 +7,33 @@ import type { CategoryOverlay } from "@/lib/types";
 // the overlay's own dimensions — so a square placeholder previews the slot's
 // width faithfully and makes no claim about the height a real photo will have.
 const PLACEHOLDER_PX = 400;
+// Spec §6: "flat fill, a thin border" so the block is never mistaken for
+// content, even at low overlay opacity where a borderless flat fill can read
+// as a compositing artifact rather than a deliberate placeholder.
+const BORDER_PX = 6;
 
 let cached: string | null = null;
 
 async function placeholderDataUri(): Promise<string> {
   if (cached) return cached;
-  const fill = await sharp({
+  const inner = await sharp({
     create: {
-      width: PLACEHOLDER_PX, height: PLACEHOLDER_PX, channels: 4,
+      width: PLACEHOLDER_PX - BORDER_PX * 2, height: PLACEHOLDER_PX - BORDER_PX * 2, channels: 4,
       background: { r: 128, g: 128, b: 128, alpha: 0.55 },
     },
   }).png().toBuffer();
+  const fill = await sharp({
+    create: {
+      // The border layer is the full square in a darker tone; the flat fill
+      // is composited on top, inset by the border width, leaving a ring of
+      // the darker tone visible around it.
+      width: PLACEHOLDER_PX, height: PLACEHOLDER_PX, channels: 4,
+      background: { r: 90, g: 90, b: 90, alpha: 0.85 },
+    },
+  })
+    .composite([{ input: inner, left: BORDER_PX, top: BORDER_PX }])
+    .png()
+    .toBuffer();
   cached = `data:image/png;base64,${fill.toString("base64")}`;
   return cached;
 }

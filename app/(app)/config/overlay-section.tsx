@@ -51,12 +51,21 @@ function toFields(o: CategoryOverlay): OverlayFields {
 function OverlayRowCollapsed({ overlay, onEdit }: { overlay: CategoryOverlay; onEdit: () => void }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border p-2">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={overlay.image_url}
-        alt={overlay.name}
-        className="size-10 shrink-0 rounded border object-contain"
-      />
+      {overlay.is_slot ? (
+        // A slot has no image of its own — src="" would resolve to the page
+        // URL and re-request the whole page as an image. Same dashed-box
+        // treatment as an unfilled slot in SlotStrip.
+        <div className="flex size-10 shrink-0 items-center justify-center rounded border border-dashed text-muted-foreground">
+          +
+        </div>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={overlay.image_url}
+          alt={overlay.name}
+          className="size-10 shrink-0 rounded border object-contain"
+        />
+      )}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{overlay.name}</p>
         {/* The point of this treatment: answers "what's on my payoff slide?"
@@ -158,18 +167,45 @@ function OverlayEditor({
         </div>
         <div className="flex-1">
           <Label>Image</Label>
-          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="block text-sm" />
-          {uploading && <p className="text-xs text-muted-foreground">Uploading…</p>}
-          {form.image_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={form.image_url}
-              alt={form.name || "overlay"}
-              className="mt-2 h-16 w-16 rounded border object-contain"
-            />
+          {form.is_slot ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Each idea supplies its own image at composite time — nothing to upload here.
+            </p>
           ) : (
-            <p className="mt-1 text-xs text-muted-foreground">Upload the exact image to composite.</p>
+            <>
+              <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="block text-sm" />
+              {uploading && <p className="text-xs text-muted-foreground">Uploading…</p>}
+              {form.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={form.image_url}
+                  alt={form.name || "overlay"}
+                  className="mt-2 h-16 w-16 rounded border object-contain"
+                />
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">Upload the exact image to composite.</p>
+              )}
+            </>
           )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Switch
+          checked={form.is_slot}
+          onCheckedChange={(v) =>
+            // The validator requires a slot's image to be empty (a fill would
+            // otherwise never win at composite time), so flipping this on
+            // clears whatever image was uploaded before.
+            setForm((f) => ({ ...f, is_slot: v, image_url: v ? "" : f.image_url }))
+          }
+        />
+        <div>
+          <p className="text-sm">Filled per idea (slot)</p>
+          <p className="text-xs text-muted-foreground">
+            Each idea uploads its own image into this placement — a twelve-speaker series
+            gets one layout and twelve faces, instead of one fixed logo or QR code.
+          </p>
         </div>
       </div>
 

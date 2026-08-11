@@ -47,6 +47,7 @@ export async function createOverlayForUser(
     category_id: categoryId,
     name: fields.name,
     image_url: fields.image_url,
+    is_slot: fields.is_slot,
     roles: fields.roles,
     corner: fields.corner,
     margin_pct: fields.margin_pct,
@@ -71,6 +72,7 @@ export async function updateOverlayForUser(
   const { error } = await supabase.from("category_overlays").update({
     name: fields.name,
     image_url: fields.image_url,
+    is_slot: fields.is_slot,
     roles: fields.roles,
     corner: fields.corner,
     margin_pct: fields.margin_pct,
