@@ -79,6 +79,8 @@ export interface CategoryOverlay {
   category_id: string;
   name: string;
   image_url: string;
+  // true → the image comes from each idea's fill, and image_url is empty.
+  is_slot: boolean;
   roles: Slide["role"][];
   corner: OverlayCorner;
   margin_pct: number;
@@ -86,6 +88,18 @@ export interface CategoryOverlay {
   opacity: number;
   sort_order: number;
   active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// One idea's image for one slot. Joins on overlay_id, which is why the slot
+// needs no key of its own.
+export interface IdeaOverlayFill {
+  id: string;
+  user_id: string;
+  idea_id: string;
+  overlay_id: string;
+  image_url: string;
   created_at: string;
   updated_at: string;
 }

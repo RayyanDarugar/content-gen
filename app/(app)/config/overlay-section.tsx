@@ -23,6 +23,7 @@ const ROLES: OverlayFields["roles"] = ["hook", "beat", "payoff", "single"];
 const DRAFT_DEFAULTS: OverlayFields = {
   name: "",
   image_url: "",
+  is_slot: false,
   roles: [],
   corner: "bottom-right",
   margin_pct: 5,
@@ -36,6 +37,7 @@ function toFields(o: CategoryOverlay): OverlayFields {
   return {
     name: o.name,
     image_url: o.image_url,
+    is_slot: o.is_slot,
     roles: o.roles,
     corner: o.corner,
     margin_pct: o.margin_pct,

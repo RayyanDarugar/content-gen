@@ -3,6 +3,7 @@ import type { OverlayCorner, Slide } from "@/lib/types";
 export interface OverlayFields {
   name: string;
   image_url: string;
+  is_slot: boolean;
   roles: Slide["role"][];
   corner: OverlayCorner;
   margin_pct: number;
@@ -22,7 +23,14 @@ const CORNERS = new Set<string>([
 // are reachable from the MCP surface in future phases.
 export function validateOverlayFields(f: OverlayFields): void {
   if (!f.name.trim()) throw new Error("Give the overlay a name");
-  if (!f.image_url.trim()) throw new Error("Upload an image for the overlay");
+  // A slot's image comes from each idea's fill (spec §2), so it must NOT carry
+  // one of its own — the fill would win at composite time and the configured
+  // image would never appear.
+  if (f.is_slot) {
+    if (f.image_url.trim()) throw new Error("A slot's image comes from each idea — leave its image empty");
+  } else if (!f.image_url.trim()) {
+    throw new Error("Upload an image for the overlay");
+  }
   // An overlay with no roles composites nowhere — no effect, no error, and
   // nothing on screen to explain why.
   if (!f.roles.length) throw new Error("Pick at least one role for the overlay to appear on");

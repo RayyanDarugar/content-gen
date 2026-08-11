@@ -5,7 +5,7 @@ import type { CategoryOverlay } from "@/lib/types";
 function ov(over: Partial<CategoryOverlay>): CategoryOverlay {
   return {
     id: "o1", user_id: "u1", category_id: "c1", name: "Logo",
-    image_url: "https://example.test/logo.png",
+    image_url: "https://example.test/logo.png", is_slot: false,
     roles: ["single"], corner: "bottom-right",
     margin_pct: 5, size_pct: 15, opacity: 100, sort_order: 0, active: true,
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",

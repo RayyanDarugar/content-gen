@@ -3,7 +3,7 @@ import { validateOverlayFields, type OverlayFields } from "@/lib/overlays";
 
 function fields(over: Partial<OverlayFields> = {}): OverlayFields {
   return {
-    name: "QR code", image_url: "https://example.test/qr.png",
+    name: "QR code", image_url: "https://example.test/qr.png", is_slot: false,
     roles: ["payoff"], corner: "bottom-right",
     margin_pct: 5, size_pct: 15, opacity: 100, sort_order: 0, active: true,
     ...over,
@@ -50,5 +50,24 @@ describe("validateOverlayFields", () => {
 
   it("rejects an unknown corner", () => {
     expect(() => validateOverlayFields(fields({ corner: "middle-left" as never }))).toThrow(/corner/i);
+  });
+});
+
+describe("validateOverlayFields — slots", () => {
+  it("accepts a slot with no image, because the idea supplies it", () => {
+    expect(() => validateOverlayFields(fields({ is_slot: true, image_url: "" }))).not.toThrow();
+  });
+
+  // A slot carrying its own image is contradictory: the per-idea fill would
+  // silently win at composite time, so the configured image would never appear
+  // and nothing would say why.
+  it("rejects a slot that also carries an image", () => {
+    expect(() => validateOverlayFields(fields({ is_slot: true, image_url: "https://x.test/a.png" })))
+      .toThrow(/slot/i);
+  });
+
+  it("still requires an image on a non-slot overlay", () => {
+    expect(() => validateOverlayFields(fields({ is_slot: false, image_url: "" })))
+      .toThrow(/image/i);
   });
 });
