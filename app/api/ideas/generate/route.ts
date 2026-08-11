@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
 import { requireUser } from "@/lib/auth/require-user";
 import { friendlyLlmError } from "@/lib/llm-errors";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 
 export const maxDuration = 120;
 
@@ -21,8 +22,13 @@ export async function POST(request: NextRequest) {
       { error: "expected { categoryKey: string, count: 1-20 }" }, { status: 400 });
   }
 
+  const brand = await getActiveBrand(user.id);
+  if (!brand) {
+    return NextResponse.json({ error: "Set up a brand before generating ideas." }, { status: 400 });
+  }
+
   try {
-    const result = await generateIdeas(user.id, categoryKey, count);
+    const result = await generateIdeas(user.id, brand.id, categoryKey, count);
     return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

@@ -6,8 +6,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
   buildIdeaSystemPrompt, buildIdeaUserPrompt, clampIdeaCount,
   buildFilterSystemPrompt, IdeasOutput, FilterOutput,
-  type BrandContext,
 } from "@/lib/athena/prompts";
+import { loadBrandContext } from "@/lib/athena/brand-context";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
 import { applyFilterDecisions } from "@/lib/athena/filter";
 import { validateSlideShape } from "@/lib/athena/slides";
@@ -26,7 +26,12 @@ const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 // constant past ~21000.
 const IDEA_GENERATION_MAX_TOKENS = 16000;
 
-export async function generateIdeas(userId: string, categoryKey: string, count: number) {
+export async function generateIdeas(
+  userId: string,
+  brandId: string,
+  categoryKey: string,
+  count: number,
+) {
   const supabase = createAdminSupabase();
   // A one-shot, user-initiated call the user is actively waiting on (the
   // caller, app/api/ideas/generate/route.ts, sets maxDuration = 120) — worth
@@ -38,7 +43,12 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const anthropicIdeas = createAnthropicClient({ apiKey, feature: "content_idea_generation", maxRetries: 5 });
   const anthropicFilter = createAnthropicClient({ apiKey, feature: "content_idea_filter", maxRetries: 5 });
 
-  let query = supabase.from("categories").select("*").eq("user_id", userId).eq("active", true);
+  // "ALL" means all of THIS BRAND's active categories. Without the brand
+  // filter one prompt would carry several brands' categories against a
+  // single brand context — the bug this project exists to remove.
+  let query = supabase
+    .from("categories").select("*")
+    .eq("user_id", userId).eq("brand_id", brandId).eq("active", true);
   if (categoryKey !== "ALL") query = query.eq("key", categoryKey);
   const { data: categories, error: catErr } = await query;
   if (catErr) throw new Error(`categories query failed: ${catErr.message}`);
@@ -46,20 +56,7 @@ export async function generateIdeas(userId: string, categoryKey: string, count: 
   const cats = categories as Category[];
   const activeKeys = cats.map((c) => c.key);
 
-  const { data: brandRow } = await supabase
-    .from("brand_profiles").select("*").eq("user_id", userId).maybeSingle();
-  const brand: BrandContext = {
-    business_name: brandRow?.business_name ?? "",
-    business_description: brandRow?.business_description ?? "",
-    audience: brandRow?.audience ?? "",
-    voice: brandRow?.voice ?? "",
-    avoid: brandRow?.avoid ?? "",
-    proof_points: brandRow?.proof_points ?? [],
-    standing: brandRow?.standing ?? [],
-    colors: brandRow?.colors ?? [],
-    fonts: brandRow?.fonts ?? [],
-    visual_notes: brandRow?.visual_notes ?? "",
-  };
+  const brand = await loadBrandContext(brandId);
 
   // Call 1: generate ideas (structured output replaces the old JSON-repair parse)
   // Worst case: /generate allows count up to 20, and a category's

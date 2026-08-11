@@ -283,7 +283,10 @@ async function handleMcp(request: NextRequest): Promise<Response> {
         description: "Generate new AI post ideas for a post type — writes them into the review queue, does not auto-approve.",
         inputSchema: z.object({ categoryKey: z.string(), count: z.number().int().min(1).max(20) }),
       },
-      async ({ categoryKey, count }) => ({ content: [{ type: "text", text: JSON.stringify(await generateIdeas(userId, categoryKey, count)) }] }),
+      async ({ categoryKey, count }) => {
+        const brand = resolveBrandByName(await listBrandsForUser(userId));
+        return { content: [{ type: "text", text: JSON.stringify(await generateIdeas(userId, brand.id, categoryKey, count)) }] };
+      },
     );
 
     server.registerTool(
