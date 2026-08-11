@@ -32,7 +32,7 @@ export async function submitStyleRefJobForUser(
   if (!categoryRow) throw new Error(`unknown category ${categoryId}`);
   const category = categoryRow as Category;
 
-  const brand = await loadBrandContext(userId);
+  const brand = await loadBrandContext(category.brand_id);
   const kieKey = await requireKieKey(userId);
   const prompt = buildStyleRefPrompt(brand, notes);
   const kieTaskId = await createTextToImageKieTask(kieKey, prompt, category.aspect_ratio);

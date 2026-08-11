@@ -29,7 +29,7 @@ export async function rewriteCaptionForUser(
     const { data } = await supabase.from("ideas").select("*").eq("id", input.ideaId).eq("user_id", userId).maybeSingle();
     idea = (data as Idea) ?? null;
   }
-  const brand = await loadBrandContext(userId);
+  const brand = await loadBrandContext(category.brand_id);
 
   const system = [
     "You rewrite the published text of one social post. Return only the rewritten copy.",

@@ -10,6 +10,7 @@ import {
   normalizeDraft, categoryToDraft, type DraftTurn, type NormalizedDraft,
 } from "@/lib/athena/draft-category";
 import { loadBrandContext } from "@/lib/athena/brand-context";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 import type { Category, FormatSuggestion } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
 import { writebackPlan, inventedFormatRow } from "@/lib/athena/suggestion-writeback";
@@ -49,7 +50,13 @@ function isDraftTurn(t: unknown): t is DraftTurn {
 
 export async function draftCategoryTurnForUser(
   userId: string,
-  input: { turns: DraftTurn[]; categoryId: string | null; styleRefUrl: string | null; suggestionId: string | null },
+  input: {
+    turns: DraftTurn[];
+    categoryId: string | null;
+    styleRefUrl: string | null;
+    suggestionId: string | null;
+    brandId: string;
+  },
 ): Promise<{ categoryId: string; assistantMessage: string; draft: NormalizedDraft }> {
   const supabase = createAdminSupabase();
 
@@ -61,7 +68,11 @@ export async function draftCategoryTurnForUser(
     existing = data as Category;
   }
 
-  const brand = await loadBrandContext(userId);
+  // An existing category owns the truth; a first turn has none, so the
+  // caller's brand (session or MCP argument) decides where the new category
+  // will land.
+  const brandId = existing?.brand_id ?? input.brandId;
+  const brand = await loadBrandContext(brandId);
 
   const anthropic = createAnthropicClient({
     apiKey: await requireAnthropicKey(userId),
@@ -122,6 +133,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const brand = await getActiveBrand(user.id);
+  if (!brand) {
+    return NextResponse.json({ error: "Set up a brand before drafting a post type." }, { status: 400 });
+  }
+
   const body = await request.json().catch(() => null);
   const turns = body?.turns;
   if (!Array.isArray(turns) || !turns.length || !turns.every(isDraftTurn) ||
@@ -134,7 +150,9 @@ export async function POST(request: NextRequest) {
   const suggestionId = typeof body?.suggestionId === "string" && body.suggestionId ? body.suggestionId : null;
 
   try {
-    const result = await draftCategoryTurnForUser(user.id, { turns, categoryId, styleRefUrl, suggestionId });
+    const result = await draftCategoryTurnForUser(user.id, {
+      turns, categoryId, styleRefUrl, suggestionId, brandId: brand.id,
+    });
     return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

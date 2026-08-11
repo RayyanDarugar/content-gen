@@ -31,7 +31,7 @@ export async function adaptCaptionForUser(
     idea = (data as Idea) ?? null;
   }
 
-  const brand = await loadBrandContext(userId);
+  const brand = await loadBrandContext(category.brand_id);
 
   const anthropic = createAnthropicClient({
     apiKey: await requireAnthropicKey(userId),

@@ -2,10 +2,10 @@ import "server-only";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import type { BrandContext } from "@/lib/athena/prompts";
 
-export async function loadBrandContext(userId: string): Promise<BrandContext> {
+export async function loadBrandContext(brandId: string): Promise<BrandContext> {
   const supabase = createAdminSupabase();
   const { data: brandRow } = await supabase
-    .from("brand_profiles").select("*").eq("user_id", userId).maybeSingle();
+    .from("brand_profiles").select("*").eq("id", brandId).maybeSingle();
   return {
     business_name: brandRow?.business_name ?? "",
     business_description: brandRow?.business_description ?? "",

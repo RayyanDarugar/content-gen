@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadBrandContext } from "@/lib/athena/brand-context";
+import { listBrandsForUser, resolveBrandByName } from "@/lib/brands";
 import { listBufferConnections, getBufferChannelsForConnection, removeBufferConnection } from "@/lib/settings/buffer";
 import { saveBrandProfileForUser } from "@/lib/brand-profile";
 import {
@@ -56,7 +57,10 @@ async function handleMcp(request: NextRequest): Promise<Response> {
     server.registerTool(
       "get_brand_profile",
       { title: "Get brand profile", description: "Read the current brand profile (name, voice, audience, proof points, colors/fonts)." },
-      async () => ({ content: [{ type: "text", text: JSON.stringify(await loadBrandContext(userId)) }] }),
+      async () => {
+        const brand = resolveBrandByName(await listBrandsForUser(userId));
+        return { content: [{ type: "text", text: JSON.stringify(await loadBrandContext(brand.id)) }] };
+      },
     );
 
     server.registerTool(
@@ -255,17 +259,21 @@ async function handleMcp(request: NextRequest): Promise<Response> {
           suggestionId: z.string().optional(),
         }),
       },
-      async ({ turns, categoryId, styleRefUrl, suggestionId }) => ({
-        content: [{
-          type: "text",
-          text: JSON.stringify(await draftCategoryTurnForUser(userId, {
-            turns,
-            categoryId: categoryId ?? null,
-            styleRefUrl: styleRefUrl ?? null,
-            suggestionId: suggestionId ?? null,
-          })),
-        }],
-      }),
+      async ({ turns, categoryId, styleRefUrl, suggestionId }) => {
+        const brand = resolveBrandByName(await listBrandsForUser(userId));
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(await draftCategoryTurnForUser(userId, {
+              turns,
+              categoryId: categoryId ?? null,
+              styleRefUrl: styleRefUrl ?? null,
+              suggestionId: suggestionId ?? null,
+              brandId: brand.id,
+            })),
+          }],
+        };
+      },
     );
 
     server.registerTool(
