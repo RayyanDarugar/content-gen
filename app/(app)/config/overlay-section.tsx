@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { createOverlay, deleteOverlay, updateOverlay, uploadStyleRefImage } from "./actions";
 import { validateOverlayFields, type OverlayFields } from "@/lib/overlays";
-import type { CategoryOverlay, OverlayCorner } from "@/lib/types";
+import type { CategoryOverlay, OverlayCorner, OverlayShape, OverlayTint } from "@/lib/types";
 
 // Sentinel editingId for an unsaved draft (never collides with a uuid), so
 // the whole section — saved rows and the in-progress add — is tracked by one
@@ -278,6 +278,85 @@ function OverlayEditor({
         <div className="flex items-center gap-2 pt-5">
           <Switch checked={form.active} onCheckedChange={(v) => set("active", v)} />
           <span className="text-sm text-muted-foreground">Active</span>
+        </div>
+      </div>
+
+      <div className="space-y-2 rounded-lg border border-dashed p-2">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+          Treatment
+        </p>
+
+        {(form.shape !== "none" || form.tint !== "none") && (
+          <p className="text-[11px] text-amber-700">
+            Masking or tinting will stop a QR code scanning.
+          </p>
+        )}
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">Shape</Label>
+            <select
+              className="rounded-md border px-2 py-1 text-xs"
+              value={form.shape}
+              onChange={(e) => set("shape", e.target.value as OverlayShape)}
+            >
+              <option value="none">Square</option>
+              <option value="circle">Circle</option>
+              <option value="rounded">Rounded</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">Tint</Label>
+            <select
+              className="rounded-md border px-2 py-1 text-xs"
+              value={form.tint}
+              onChange={(e) => {
+                const tint = e.target.value as OverlayTint;
+                // The validator rejects a tint colour on a non-colour tint, so
+                // clearing it here keeps the form saveable rather than erroring
+                // about a field the user can no longer see.
+                set("tint", tint);
+                if (tint !== "color") set("tint_color", "");
+              }}
+            >
+              <option value="none">None</option>
+              <option value="grayscale">Grayscale</option>
+              <option value="color">Colour</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">Border %</Label>
+            <Input
+              type="number" className="h-7 text-xs" value={form.border_width_pct}
+              onChange={(e) => set("border_width_pct", Number(e.target.value))}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">Border colour</Label>
+            <Input
+              type="color" className="h-7 p-1"
+              value={form.border_color || "#ffffff"}
+              onChange={(e) => set("border_color", e.target.value)}
+            />
+          </div>
+          {form.tint === "color" && (
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">Tint colour</Label>
+              <Input
+                type="color" className="h-7 p-1"
+                value={form.tint_color || "#ffffff"}
+                onChange={(e) => set("tint_color", e.target.value)}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Switch checked={form.shadow} onCheckedChange={(v) => set("shadow", v)} />
+          <Label className="text-[10px]">Drop shadow</Label>
         </div>
       </div>
 
