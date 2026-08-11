@@ -12,6 +12,7 @@
 
 - **Next.js 16.2.10.** `cookies()` is **async** — always `const cookieStore = await cookies()`. `.set()`/`.delete()` may only be called from a Server Function (`"use server"`) or Route Handler, never during Server Component render. Read `node_modules/next/dist/docs/01-app/03-api-reference/04-functions/cookies.md` before touching cookies. Per `AGENTS.md`, do not assume App Router APIs match your training data — check `node_modules/next/dist/docs/` first.
 - **`"use server"` files publish every export as a POST-reachable endpoint.** Never export a `userId`-taking function from one. Authenticated wrappers live in `app/(app)/**/actions.ts`; the `*ForUser` cores live in plain `lib/` modules. This convention is documented at `lib/category-mutations.ts:6-18` and must be preserved.
+- **`requireActiveBrand` is for pages; `getActiveBrand` is for Route Handlers and server actions.** `redirect()` throws `NEXT_REDIRECT`, which a page turns into a navigation but a Route Handler surfaces as an opaque server error. A `requireActiveBrand` call inside `app/api/**` is a defect.
 - **Every Supabase query filtered by id must also filter by the tenant.** `.eq("id", x).eq("user_id", userId)` — never `.eq("id", x)` alone. See `lib/style-ref-jobs.ts:25-31` for why.
 - **Tests are Vitest, pure-logic only.** `npm run test`. This repo tests the logic *around* image/LLM work, never live encoding or network calls. Test files live flat in `tests/<name>.test.ts`.
 - **Migrations are applied manually against Supabase by the repo owner**, not by any script in this plan. A task that depends on a migration must say so and stop.
@@ -167,16 +168,31 @@ export interface Category {
 }
 ```
 
-- [ ] **Step 3: Verify the project still compiles**
+- [ ] **Step 3: Fix the one fully-typed fixture**
 
-Run: `npx tsc --noEmit`
-Expected: PASS. Adding required fields to these interfaces does not break reads; writes that construct a whole `Category`/`BrandProfile` literal would, and there are none (every write uses column subsets).
+`tests/brand.test.ts:77` declares `const brand: BrandProfile = { … }` — a complete literal, so two new required fields break it. Add them:
 
-- [ ] **Step 4: Apply the migration**
+```ts
+  const brand: BrandProfile = {
+    id: "b1",
+    user_id: "u1",
+    is_default: true,
+    business_name: "Acme",
+    // ...rest unchanged
+```
+
+Every other `Category`/`BrandProfile` value in the codebase comes from a Supabase read cast with `as`, which new required fields do not break.
+
+- [ ] **Step 4: Verify the project still compiles**
+
+Run: `npx tsc --noEmit && npx vitest run`
+Expected: PASS. If tsc names any *other* file constructing a complete `Category` or `BrandProfile` literal, add the new fields there too — do not loosen the interfaces to make it compile.
+
+- [ ] **Step 5: Apply the migration**
 
 **STOP.** Migrations are applied manually. Tell the repo owner: "0020 is ready — apply it to Supabase before Task 2." Do not proceed until confirmed applied.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add supabase/migrations/0020_multi_brand.sql lib/types.ts
@@ -352,8 +368,11 @@ git commit -m "feat: brand list query and resolution rules"
 - Produces:
   - `ACTIVE_BRAND_COOKIE: string`
   - `selectActiveBrand(brands: BrandProfile[], cookieValue: string | undefined): BrandProfile | null`
-  - `requireActiveBrand(userId: string): Promise<BrandProfile>` — redirects to `/onboarding` when the account has no brands
+  - `getActiveBrand(userId: string): Promise<BrandProfile | null>` — **for API routes and server actions.** Returns null for a brandless account.
+  - `requireActiveBrand(userId: string): Promise<BrandProfile>` — **for pages only.** Redirects to `/onboarding` when the account has no brands.
   - `setActiveBrand(brandId: string): Promise<void>` — server action
+
+**Two helpers, deliberately.** `redirect()` throws a `NEXT_REDIRECT` error, which a page turns into a navigation but a Route Handler surfaces as a server error with no useful body. API routes must therefore use `getActiveBrand` and return their own JSON error. Pages use `requireActiveBrand`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -431,10 +450,18 @@ export function selectActiveBrand(
   return fromCookie ?? pickDefaultBrand(brands);
 }
 
-export async function requireActiveBrand(userId: string): Promise<BrandProfile> {
+// For API routes and server actions. redirect() throws NEXT_REDIRECT, which a
+// page turns into a navigation but a Route Handler surfaces as an opaque
+// server error — so those callers take the null and return their own error.
+export async function getActiveBrand(userId: string): Promise<BrandProfile | null> {
   const brands = await listBrandsForUser(userId);
   const cookieStore = await cookies();
-  const active = selectActiveBrand(brands, cookieStore.get(ACTIVE_BRAND_COOKIE)?.value);
+  return selectActiveBrand(brands, cookieStore.get(ACTIVE_BRAND_COOKIE)?.value);
+}
+
+// For pages only.
+export async function requireActiveBrand(userId: string): Promise<BrandProfile> {
+  const active = await getActiveBrand(userId);
   if (!active) redirect("/onboarding");
   return active;
 }
@@ -649,16 +676,19 @@ Also update its one call site of `draftCategoryTurnForUser` (`app/api/mcp/route.
 
 - [ ] **Step 6: Update the web caller of draftCategoryTurnForUser**
 
-In `app/api/categories/draft/route.ts`, the `POST` handler that wraps `draftCategoryTurnForUser` must supply the session brand:
+In `app/api/categories/draft/route.ts`, the `POST` handler that wraps `draftCategoryTurnForUser` must supply the session brand. This is a Route Handler, so use `getActiveBrand` and return JSON — never `requireActiveBrand`, whose `redirect()` would surface here as an opaque server error:
 
 ```ts
-import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 ```
 
 and inside the handler, after `requireUser()`:
 
 ```ts
-  const brand = await requireActiveBrand(user.id);
+  const brand = await getActiveBrand(user.id);
+  if (!brand) {
+    return NextResponse.json({ error: "Set up a brand before drafting a post type." }, { status: 400 });
+  }
 ```
 
 passing `brandId: brand.id` into the `draftCategoryTurnForUser` input object.
@@ -731,14 +761,17 @@ The now-unused `BrandContext` type import may be dropped if nothing else in the 
 
 - [ ] **Step 3: Update the web caller**
 
-In `app/api/ideas/generate/route.ts`, resolve the session brand and pass it:
+In `app/api/ideas/generate/route.ts`, resolve the session brand and pass it. Route Handler, so `getActiveBrand` + JSON error:
 
 ```ts
-import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 ```
 
 ```ts
-  const brand = await requireActiveBrand(user.id);
+  const brand = await getActiveBrand(user.id);
+  if (!brand) {
+    return NextResponse.json({ error: "Set up a brand before generating ideas." }, { status: 400 });
+  }
   const result = await generateIdeas(user.id, brand.id, categoryKey, count);
 ```
 
@@ -805,33 +838,36 @@ Add `import { loadBrandContext } from "@/lib/athena/brand-context";` and delete 
 In `app/api/categories/suggest/route.ts`, replace the `brand_profiles` query (line 47-48) with a session-brand lookup, keeping the existing "no business name" guard intact:
 
 ```ts
-import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 ```
 
 ```ts
-    const brandRow = await requireActiveBrand(user.id);
-    if (!brandRow.business_name?.trim()) {
+    const brandRow = await getActiveBrand(user.id);
+    if (!brandRow?.business_name?.trim()) {
       return NextResponse.json(
         { error: "Add your business name in brand setup first — a suggestion needs something to build on." },
         { status: 400 });
     }
 ```
 
-The `BrandContext` literal built below it stays exactly as-is — `brandRow` still has every field it reads.
+Route Handler, so `getActiveBrand` — the existing guard already returns the right 400, and a brandless account now falls into it naturally. The `BrandContext` literal built below stays exactly as-is: `brandRow` still has every field it reads.
 
 - [ ] **Step 4: draft/style-ref route — session brand**
 
-In `app/api/categories/draft/style-ref/route.ts`, replace the `brand_profiles` query at line 41 with:
+In `app/api/categories/draft/style-ref/route.ts`, replace the `brand_profiles` query at line 41. Route Handler, so `getActiveBrand`:
 
 ```ts
-import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { getActiveBrand } from "@/lib/auth/active-brand";
 ```
 
 ```ts
-        const brandRow = await requireActiveBrand(user.id);
+        const brandRow = await getActiveBrand(user.id);
+        if (!brandRow) {
+          return NextResponse.json({ error: "Set up a brand first." }, { status: 400 });
+        }
 ```
 
-Keep the surrounding field mapping unchanged.
+Keep the surrounding field mapping unchanged. If the enclosing block is not positioned to return a response, throw `new Error("no brand")` instead and let the route's existing catch turn it into its usual error shape — match whatever that route already does.
 
 - [ ] **Step 5: Confirm no account-scoped brand reads remain**
 
