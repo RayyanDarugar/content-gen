@@ -2067,7 +2067,15 @@ function ScheduleItem({ row, withTime }: { row: ScheduleRow; withTime?: boolean 
     >
       {withTime && (
         <span className="shrink-0 text-xs text-muted-foreground">
-          {new Date(post.scheduled_at!).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          {/* timeZone: "UTC" is load-bearing. A trailing Z pins how the string
+              is PARSED, not how it is FORMATTED — without an explicit zone,
+              toLocaleTimeString uses the host process's default, so the same
+              post renders differently depending on which machine served it,
+              and drifts out of agreement with the UTC date key the rows are
+              grouped under. */}
+          {new Date(post.scheduled_at!).toLocaleTimeString(undefined, {
+            timeZone: "UTC", hour: "numeric", minute: "2-digit",
+          })}
         </span>
       )}
       <span className="truncate text-sm">{post.caption || post.category_key}</span>
@@ -2113,7 +2121,9 @@ export default async function SchedulePage() {
     <div className="max-w-3xl space-y-8">
       <div>
         <h1 className="text-2xl font-bold">Schedule</h1>
-        <p className="text-sm text-muted-foreground">Every brand, in one place.</p>
+        {/* Dates and times on this page are UTC, and say so. Showing a time
+            without naming its zone is how someone misses a post going out. */}
+        <p className="text-sm text-muted-foreground">Every brand, in one place. Times in UTC.</p>
       </div>
 
       {scheduled.length === 0 && queued.length === 0 && (
@@ -2123,8 +2133,10 @@ export default async function SchedulePage() {
       {scheduled.map((day) => (
         <section key={day.date} className="space-y-2">
           <h2 className="text-sm font-semibold">
+            {/* Same reason as the row times: the heading must be formatted in
+                UTC, because day.date is a raw UTC date slice. */}
             {new Date(`${day.date}T00:00:00Z`).toLocaleDateString(undefined, {
-              weekday: "long", month: "short", day: "numeric",
+              timeZone: "UTC", weekday: "long", month: "short", day: "numeric",
             })}
           </h2>
           {day.rows.map((row) => <ScheduleItem key={row.post.id} row={row} withTime />)}
