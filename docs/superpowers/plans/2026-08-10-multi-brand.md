@@ -1378,9 +1378,51 @@ and delete the `brand_profiles` query entirely, passing `brand` where `brandRow`
       />
 ```
 
-- [ ] **Step 2: Apply the chosen layout**
+- [ ] **Step 2: Apply the chosen layout — treatment B, tinted brand panel**
 
-Reorganise the JSX into the account band and brand band the user picked in Step 0, with the brand band headed by `{brand.business_name}`.
+The human reviewed three treatments and chose **B**: two bordered panels, with the brand panel tinted and accented so "I am inside a brand" registers before you read anything. Structure:
+
+```tsx
+    <div className="max-w-3xl space-y-6">
+      <h1 className="text-2xl font-bold">Config</h1>
+
+      {/* Account band — yours, shared by every brand */}
+      <section className="space-y-4 rounded-2xl border p-4">
+        <h2 className="text-sm font-semibold text-muted-foreground">Account settings</h2>
+        <KeysSection status={status} />
+        <ConnectionsSection groups={groups} />
+        <div className="flex justify-end gap-4">
+          <Link href="/config/formats" className="text-sm text-primary underline-offset-4 hover:underline">
+            Format library
+          </Link>
+          <Link href="/onboarding" className="text-sm text-primary underline-offset-4 hover:underline">
+            Run setup again
+          </Link>
+        </div>
+      </section>
+
+      {/* Brand band — belongs to whichever brand the switcher has active */}
+      <section className="space-y-4 rounded-2xl border border-primary/40 bg-primary/5 p-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">{brand.business_name}</h2>
+          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold tracking-wide text-primary">
+            BRAND
+          </span>
+        </div>
+        <BrandSection brand={brand} />
+        <CategoryManager
+          categories={(data ?? []) as Category[]}
+          groups={groups}
+          brandDone={Boolean(brand.business_name.trim())}
+          hasKieKey={status.kie}
+        />
+      </section>
+    </div>
+```
+
+Keep every child component's props exactly as they are today apart from the `brand`/`categories` values already described in Step 1. Do not restyle the child components themselves — the panels are the only new chrome.
+
+**On `requireActiveBrand` vs `getActiveBrand` here.** Task 6 left this page on `getActiveBrand` with null-tolerant rendering, because at that point the page still had to survive a brandless account. It should now move to `requireActiveBrand`: `/config` is meaningless without a brand, and unlike the layout it does not wrap `/onboarding`, so redirecting there is correct and cannot loop. Because `brand` is then non-null, the `brand?.` chains Task 6 introduced on this page collapse back to `brand.` — do that rather than leaving defensive optional chaining that can no longer fire.
 
 - [ ] **Step 3: Verify**
 
