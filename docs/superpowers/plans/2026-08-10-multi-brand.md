@@ -2008,16 +2008,73 @@ export function bucketSchedule(rows: ScheduleRow[]): ScheduleBuckets {
 Run: `npx vitest run tests/schedule.test.ts`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Build the page**
+- [ ] **Step 5: Add a brand colour**
 
-Create `app/(app)/schedule/page.tsx`, in the layout chosen in Step 0:
+Treatment C identifies each brand by a coloured left rail, so brand reads as a shape before any text is parsed. Mirror the existing per-category scheme rather than inventing a second one — `lib/category-colors.ts` already hashes a key into a small palette for exactly this purpose.
+
+Add to `lib/category-colors.ts`:
+
+```ts
+// Brands get their own palette, deliberately distinct from the category
+// colours above: on the cross-brand schedule a brand rail and a category dot
+// can appear in the same row, and two different things sharing one colour
+// language would read as a relationship that doesn't exist.
+const BRAND_PALETTE = [
+  "oklch(0.62 0.16 55)",  // the app's own primary — the default brand usually lands here
+  "oklch(0.55 0.14 250)", // indigo
+  "oklch(0.58 0.13 150)", // green
+  "oklch(0.60 0.15 300)", // violet
+  "oklch(0.60 0.14 25)",  // rust
+];
+
+export function brandColor(brandId: string): string {
+  let hash = 0;
+  for (let i = 0; i < brandId.length; i++) hash = (hash * 31 + brandId.charCodeAt(i)) >>> 0;
+  return BRAND_PALETTE[hash % BRAND_PALETTE.length];
+}
+```
+
+`ScheduleRow` therefore carries the brand's id as well as its name, so the page can colour a row without a second lookup:
+
+```ts
+export type ScheduleRow = { post: Post; brandName: string; brandId: string };
+```
+
+Update the Step 1 test's `row()` helper to supply `brandId` — `bucketSchedule` does not read it, so no assertion changes.
+
+- [ ] **Step 6: Build the page**
+
+Create `app/(app)/schedule/page.tsx` in **treatment C**: date-grouped and chronological, each row carrying a 3px coloured left rail plus a brand badge on the right, and the Buffer-queue bucket rendered the same way inside a dashed container.
 
 ```tsx
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { bucketSchedule, type ScheduleRow } from "@/lib/schedule";
+import { brandColor } from "@/lib/category-colors";
 import { Badge } from "@/components/ui/badge";
 import type { Post } from "@/lib/types";
+
+// Treatment C: a coloured left rail carries the brand, so a row's owner
+// registers as a shape before any text is read, while the list keeps its true
+// chronological order. The badge repeats the brand in words — colour alone is
+// never the only channel carrying the information.
+function ScheduleItem({ row, withTime }: { row: ScheduleRow; withTime?: boolean }) {
+  const { post, brandName, brandId } = row;
+  return (
+    <div
+      className="flex items-center gap-3 rounded-xl border border-l-[3px] p-3"
+      style={{ borderLeftColor: brandColor(brandId) }}
+    >
+      {withTime && (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {new Date(post.scheduled_at!).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+        </span>
+      )}
+      <span className="truncate text-sm">{post.caption || post.category_key}</span>
+      <Badge variant="outline" className="ml-auto shrink-0">{brandName}</Badge>
+    </div>
+  );
+}
 
 // The one page that ignores the brand switcher (spec §9): its whole purpose
 // is answering "is anything going out for Kana this week?" without switching.
@@ -2033,19 +2090,23 @@ export default async function SchedulePage() {
   const brandById = new Map(
     ((brandData ?? []) as { id: string; business_name: string }[]).map((b) => [b.id, b.business_name]),
   );
+  // category_key -> the owning brand, resolved once so each row can be
+  // coloured and labelled without a per-row lookup.
   const brandByKey = new Map(
-    ((catData ?? []) as { key: string; brand_id: string }[])
-      .map((c) => [c.key, brandById.get(c.brand_id) ?? "—"]),
+    ((catData ?? []) as { key: string; brand_id: string }[]).map((c) => [
+      c.key,
+      { id: c.brand_id, name: brandById.get(c.brand_id) ?? "—" },
+    ]),
   );
 
   const { data: postData } = await supabase
     .from("posts").select("*").neq("status", "failed")
     .order("scheduled_at", { ascending: true }).limit(200);
 
-  const rows: ScheduleRow[] = ((postData ?? []) as Post[]).map((post) => ({
-    post,
-    brandName: brandByKey.get(post.category_key) ?? "—",
-  }));
+  const rows: ScheduleRow[] = ((postData ?? []) as Post[]).map((post) => {
+    const brand = brandByKey.get(post.category_key);
+    return { post, brandName: brand?.name ?? "—", brandId: brand?.id ?? "" };
+  });
   const { scheduled, queued } = bucketSchedule(rows);
 
   return (
@@ -2066,30 +2127,17 @@ export default async function SchedulePage() {
               weekday: "long", month: "short", day: "numeric",
             })}
           </h2>
-          {day.rows.map(({ post, brandName }) => (
-            <div key={post.id} className="flex items-center gap-3 rounded-xl border p-3">
-              <Badge variant="outline">{brandName}</Badge>
-              <span className="text-xs text-muted-foreground">
-                {new Date(post.scheduled_at!).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-              </span>
-              <span className="truncate text-sm">{post.caption || post.category_key}</span>
-            </div>
-          ))}
+          {day.rows.map((row) => <ScheduleItem key={row.post.id} row={row} withTime />)}
         </section>
       ))}
 
       {queued.length > 0 && (
-        <section className="space-y-2">
+        <section className="space-y-2 rounded-xl border border-dashed p-3">
           <h2 className="text-sm font-semibold">In Buffer&rsquo;s queue</h2>
           <p className="text-xs text-muted-foreground">
             Buffer picks the time for these — no fixed slot is stored here.
           </p>
-          {queued.map(({ post, brandName }) => (
-            <div key={post.id} className="flex items-center gap-3 rounded-xl border p-3">
-              <Badge variant="outline">{brandName}</Badge>
-              <span className="truncate text-sm">{post.caption || post.category_key}</span>
-            </div>
-          ))}
+          {queued.map((row) => <ScheduleItem key={row.post.id} row={row} />)}
         </section>
       )}
     </div>
@@ -2097,7 +2145,7 @@ export default async function SchedulePage() {
 }
 ```
 
-- [ ] **Step 6: Add the nav entry**
+- [ ] **Step 7: Add the nav entry**
 
 In `app/(app)/nav-links.tsx`, add to the `nav` array after Post, importing `CalendarDays` from `lucide-react`:
 
@@ -2105,14 +2153,14 @@ In `app/(app)/nav-links.tsx`, add to the `nav` array after Post, importing `Cale
   { href: "/schedule", label: "Schedule", icon: CalendarDays },
 ```
 
-- [ ] **Step 7: Verify**
+- [ ] **Step 8: Verify**
 
 Run: `npx tsc --noEmit && npx vitest run`, then `npm run dev` and load `/schedule`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add lib/schedule.ts tests/schedule.test.ts "app/(app)/schedule/page.tsx" "app/(app)/nav-links.tsx"
+git add lib/schedule.ts lib/category-colors.ts tests/schedule.test.ts "app/(app)/schedule/page.tsx" "app/(app)/nav-links.tsx"
 git commit -m "feat: cross-brand schedule page"
 ```
 
