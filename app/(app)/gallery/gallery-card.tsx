@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { buildSlideView } from "@/lib/athena/slide-view";
 import { publishedImageUrl } from "@/lib/athena/published-image";
+import { attachmentUrl } from "@/lib/download-url";
 import type { Generation } from "@/lib/types";
 import type { IdeaWithGenerations } from "./page";
 
@@ -201,6 +202,23 @@ export function GalleryCard({
                 </Button>
               </DialogContent>
             </Dialog>
+          )}
+          {current?.status === "succeeded" && publishedImageUrl(current) && (
+            <a
+              href={attachmentUrl(publishedImageUrl(current)!, idea.concept)}
+              download
+              className="text-xs underline text-muted-foreground"
+            >
+              Download{isCarousel ? ` slide ${active + 1}` : ""}
+            </a>
+          )}
+          {isCarousel && allSucceeded && (
+            <a
+              href={`/api/posts/${idea.id}/download`}
+              className="text-xs underline text-muted-foreground"
+            >
+              Download all {slideCount}
+            </a>
           )}
           {superseded.length > 0 && (
             <Dialog>
