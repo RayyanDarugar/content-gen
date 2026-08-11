@@ -490,15 +490,101 @@ export async function clearOverlayFillForUser(
 
 Note the `upsert` here is correct and is not the B1 landmine: it conflicts on `(idea_id, overlay_id)` — the natural key of exactly the row being written — not on a tenant id that could match a different row.
 
-- [ ] **Step 2: Verify**
+- [ ] **Step 2: Pin the guards with a test**
 
-Run: `npx tsc --noEmit && npx vitest run`
-Expected: PASS. No test in this task — these are thin, tenant-filtered queries with no branching logic worth pinning; the behaviour that matters is covered by Task 2's pure tests and by the ownership checks a reviewer reads directly.
+`setOverlayFillForUser` has three refusal paths, and this is the exact class of code where B1 shipped a tenant-isolation bug. Create `tests/overlay-fill-mutations.test.ts`, following the Supabase-mocking pattern already used by `tests/brand-profile.test.ts`:
 
-- [ ] **Step 3: Commit**
+```ts
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+// What each table lookup should return this test. Set per case.
+const rows: Record<string, unknown> = {};
+const writes: { op: string; payload: unknown }[] = [];
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminSupabase: () => ({
+    from(table: string) {
+      const chain = {
+        select() { return chain; },
+        eq() { return chain; },
+        maybeSingle: async () => ({ data: rows[table] ?? null }),
+        upsert(payload: unknown) {
+          writes.push({ op: `upsert:${table}`, payload });
+          return { then: (r: (v: { error: null }) => void) => r({ error: null }) };
+        },
+        delete() {
+          writes.push({ op: `delete:${table}`, payload: null });
+          return chain;
+        },
+        then(resolve: (v: { error: null }) => void) { resolve({ error: null }); },
+      };
+      return chain;
+    },
+  }),
+}));
+
+import { setOverlayFillForUser } from "@/lib/overlay-fill-mutations";
+
+beforeEach(() => {
+  writes.length = 0;
+  rows.ideas = { id: "i1" };
+  rows.category_overlays = { id: "o1", is_slot: true };
+});
+
+describe("setOverlayFillForUser", () => {
+  it("writes the fill when the idea and slot both belong to the caller", async () => {
+    await setOverlayFillForUser("u1", "i1", "o1", "https://x.test/a.jpg");
+    expect(writes.map((w) => w.op)).toEqual(["upsert:idea_overlay_fills"]);
+    expect(writes[0].payload).toEqual({
+      user_id: "u1", idea_id: "i1", overlay_id: "o1", image_url: "https://x.test/a.jpg",
+    });
+  });
+
+  // Both ids arrive from the client, and the admin client bypasses RLS.
+  it("refuses an idea the caller does not own", async () => {
+    rows.ideas = null;
+    await expect(setOverlayFillForUser("u1", "other", "o1", "https://x.test/a.jpg"))
+      .rejects.toThrow(/unknown idea/);
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses an overlay the caller does not own", async () => {
+    rows.category_overlays = null;
+    await expect(setOverlayFillForUser("u1", "i1", "other", "https://x.test/a.jpg"))
+      .rejects.toThrow(/unknown overlay/);
+    expect(writes).toEqual([]);
+  });
+
+  // Filling a fixed overlay would silently override the logo configured on the
+  // category for this one idea — a different feature, quietly.
+  it("refuses an overlay that is not a slot", async () => {
+    rows.category_overlays = { id: "o1", is_slot: false };
+    await expect(setOverlayFillForUser("u1", "i1", "o1", "https://x.test/a.jpg"))
+      .rejects.toThrow(/not a slot/);
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a blank image url", async () => {
+    await expect(setOverlayFillForUser("u1", "i1", "o1", "   "))
+      .rejects.toThrow(/image/i);
+    expect(writes).toEqual([]);
+  });
+});
+```
+
+Every refusal case asserts `writes` is empty — a guard that throws *after* writing would pass a message-only assertion.
+
+If the mock's chain shape does not match how the real client is used, fix the mock's mechanics — but do not weaken an assertion, and do not change the payload assertion, which is what pins the enumerate-don't-spread rule.
+
+- [ ] **Step 3: Verify**
+
+Run: `npx vitest run tests/overlay-fill-mutations.test.ts && npx tsc --noEmit && npx vitest run`
+Expected: PASS, 5 new tests.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add lib/overlay-fill-mutations.ts
+git add lib/overlay-fill-mutations.ts tests/overlay-fill-mutations.test.ts
 git commit -m "feat: per-idea overlay fill storage"
 ```
 
