@@ -103,7 +103,7 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
         anchor: { taskId: json.taskId, status: "pending" }, fanout: null,
       };
       setRun(initial);
-      const done = await pollTask(json.taskId);
+      const done = await pollTask(json.taskId, { categoryId, role: json.slides[0].role });
       setRun((p) => p && {
         ...p,
         anchor: { ...p.anchor, status: done.ok ? "done" : "failed", url: done.url, error: done.error },
@@ -141,7 +141,10 @@ export function PreviewPane({ categoryId, postType, styleRefUrl, isPersisted, ha
         taskIds.map(async (taskId, i) => {
           let done: { ok: boolean; url?: string; error?: string };
           try {
-            done = await pollTask(taskId);
+            const role = run.slides[i + 1]?.role;
+            done = role
+              ? await pollTask(taskId, { categoryId, role })
+              : { ok: false, error: "no slide role for this task" };
           } catch (e) {
             done = { ok: false, error: e instanceof Error ? e.message : String(e) };
           }

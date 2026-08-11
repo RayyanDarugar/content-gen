@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import sharp from "sharp";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireKieKey } from "@/lib/settings/user-secrets";
@@ -6,6 +7,8 @@ import { getKieRecord } from "@/lib/athena/kie";
 import {
   generateSamplePreviewIdea, submitPreviewAnchor, submitPreviewFanout,
 } from "@/lib/athena/preview";
+import { compositeOverlays } from "@/lib/athena/overlay-composite";
+import { listOverlaysForCategory } from "@/lib/overlay-mutations";
 import type { Category, Slide } from "@/lib/types";
 import { friendlyLlmError } from "@/lib/llm-errors";
 
@@ -92,6 +95,33 @@ export async function GET(request: NextRequest) {
   try {
     const kieKey = await requireKieKey(user.id);
     const record = await getKieRecord(kieKey, taskId);
+
+    // Compositing only when the caller names both a category and a role.
+    // A poll missing either behaves exactly as before — which is what keeps
+    // style-reference generation (no slide role, and a template asset rather
+    // than a published post) from ever getting an overlay.
+    const categoryId = request.nextUrl.searchParams.get("categoryId");
+    const role = request.nextUrl.searchParams.get("role");
+    if (record.state === "success" && record.resultUrl && categoryId && role) {
+      try {
+        const overlays = await listOverlaysForCategory(categoryId, user.id);
+        const res = await fetch(record.resultUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const composited = await compositeOverlays(
+          Buffer.from(await res.arrayBuffer()), overlays, role as Slide["role"],
+        );
+        if (composited) {
+          return NextResponse.json({
+            ...record,
+            resultUrl: `data:image/jpeg;base64,${(await sharp(composited).jpeg({ quality: 90 }).toBuffer()).toString("base64")}`,
+          });
+        }
+      } catch (e) {
+        // A preview that shows the un-composited image beats a preview that
+        // errors — the point of Test Run is seeing the generation at all.
+        console.error("preview compositing failed:", e);
+      }
+    }
     return NextResponse.json(record);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

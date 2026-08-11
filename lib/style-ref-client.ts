@@ -21,12 +21,20 @@ export interface PollResult {
 // until it succeeds, fails, or times out. Shared by the test-run flow and
 // by style-ref generation — both are "create a Kie task, wait for it"
 // operations against the exact same polling contract.
-export async function pollTask(taskId: string): Promise<PollResult> {
+export async function pollTask(
+  taskId: string,
+  composite?: { categoryId: string; role: string },
+): Promise<PollResult> {
   let consecutiveErrors = 0;
   let lastError: string | undefined;
   for (let i = 0; i < 60; i++) {
     try {
-      const res = await fetch(`/api/categories/draft/preview?taskId=${encodeURIComponent(taskId)}`);
+      const params = new URLSearchParams({ taskId });
+      if (composite) {
+        params.set("categoryId", composite.categoryId);
+        params.set("role", composite.role);
+      }
+      const res = await fetch(`/api/categories/draft/preview?${params}`);
       const json = await res.json().catch(() => null);
       if (!res.ok || json == null) {
         lastError = json?.error ?? `HTTP ${res.status}`;
