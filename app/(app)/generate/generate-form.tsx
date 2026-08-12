@@ -9,6 +9,28 @@ import {
 } from "@/components/ui/select";
 import type { Category } from "@/lib/types";
 
+export interface GenerateResult {
+  inserted: number;
+  rejectedByFilter?: number;
+  droppedForShape?: number;
+  filterFailed?: boolean;
+  filteredOut?: number;
+}
+
+// The two ways an idea disappears need different fixes — the reviewer
+// rejecting it is a brand/style-guide problem, malformed slides are a prompt
+// problem — so name them separately rather than summing them into one number.
+export function describeResult(r: GenerateResult): string {
+  const parts: string[] = [];
+  if (r.rejectedByFilter) parts.push(`${r.rejectedByFilter} rejected by the quality filter`);
+  if (r.droppedForShape) parts.push(`${r.droppedForShape} malformed`);
+  const detail = parts.length ? ` (${parts.join(", ")})` : "";
+  const caveat = r.filterFailed
+    ? " The quality filter errored, so these were kept without review."
+    : "";
+  return `Inserted ${r.inserted} idea${r.inserted === 1 ? "" : "s"}${detail}.${caveat}`;
+}
+
 export function GenerateForm({ categories }: { categories: Pick<Category, "key" | "name">[] }) {
   const [categoryKey, setCategoryKey] = useState("ALL");
   const [count, setCount] = useState(5);
@@ -26,7 +48,7 @@ export function GenerateForm({ categories }: { categories: Pick<Category, "key" 
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? res.statusText);
-      setResult(`Inserted ${json.inserted} ideas (${json.filteredOut} filtered out).`);
+      setResult(describeResult(json));
       router.refresh();
     } catch (e) {
       setResult(`Failed: ${e instanceof Error ? e.message : String(e)}`);

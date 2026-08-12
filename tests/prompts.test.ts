@@ -48,9 +48,34 @@ describe("buildIdeaSystemPrompt", () => {
 
 describe("buildFilterSystemPrompt", () => {
   it("frames the quality check around the brand", () => {
-    const p = buildFilterSystemPrompt(brand);
+    const p = buildFilterSystemPrompt(brand, cats);
     expect(p).toContain("Athena");
     expect(p).toContain("Parents of high-schoolers");
+  });
+
+  // The reviewer used to see only the brand block, so it rejected any
+  // category whose style guide deliberately departs from the brand's
+  // default look — the guide told the generator to do exactly the thing
+  // the reviewer then called off-brand. It must judge against the same
+  // brief the generator was given.
+  it("carries each category's style guide", () => {
+    const p = buildFilterSystemPrompt(brand, cats);
+    expect(p).toContain("MYTH");
+    expect(p).toContain("Bold headline over a flat illustration.");
+  });
+
+  it("says a category guide is a deliberate override, not a brand violation", () => {
+    const p = buildFilterSystemPrompt(brand, cats);
+    expect(p.toLowerCase()).toContain("override");
+    expect(p.toLowerCase()).toContain("do not reject");
+  });
+
+  it("degrades gracefully when a category has no style guide", () => {
+    const p = buildFilterSystemPrompt(brand, [
+      { ...cats[0], style_guide: "", output_format: "" },
+    ]);
+    expect(p).toContain("MYTH");
+    expect(p).not.toContain("undefined");
   });
 });
 

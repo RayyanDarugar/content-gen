@@ -9,7 +9,7 @@ import {
 } from "@/lib/athena/prompts";
 import { loadBrandContext } from "@/lib/athena/brand-context";
 import { requireAnthropicKey } from "@/lib/settings/user-secrets";
-import { applyFilterDecisions } from "@/lib/athena/filter";
+import { filterWithFallback } from "@/lib/athena/filter";
 import { validateSlideShape } from "@/lib/athena/slides";
 import type { Category, Slide } from "@/lib/types";
 
@@ -25,6 +25,16 @@ const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 // up again, switch this call to messages.stream() rather than raising this
 // constant past ~21000.
 const IDEA_GENERATION_MAX_TOKENS = 16000;
+
+// The filter's budget is SHARED WITH EXTENDED THINKING. At the old 2000 the
+// model routinely spent ~1500 of it thinking and got cut off mid-JSON
+// (observed: stop_reason "max_tokens", 1494 thinking tokens, 1301 characters
+// of a truncated object), which makes messages.parse() throw and — before
+// filterWithFallback — discarded the entire paid generation call. How much
+// the model thinks varies run to run, so this failed nondeterministically.
+// Sized for the worst case instead: 12 copy-mode ideas (COPY_MODE_MAX_IDEAS)
+// with a couple of sentences of reasoning each, on top of the thinking.
+const FILTER_MAX_TOKENS = 8000;
 
 export async function generateIdeas(
   userId: string,
@@ -107,19 +117,20 @@ export async function generateIdeas(
     }));
   if (!raw.length) throw new Error("Claude returned zero usable ideas");
 
-  // Call 2: self-filter
-  const filterResponse = await anthropicFilter.messages.parse({
-    model: MODEL,
-    max_tokens: 2000,
-    system: buildFilterSystemPrompt(brand),
-    messages: [{
-      role: "user",
-      content: "Review and filter these ideas:\n" + JSON.stringify(raw, null, 2),
-    }],
-    output_config: { format: zodOutputFormat(FilterOutput) },
+  // Call 2: self-filter. Fails open — see filterWithFallback.
+  const { merged, filterFailed } = await filterWithFallback(raw, async () => {
+    const filterResponse = await anthropicFilter.messages.parse({
+      model: MODEL,
+      max_tokens: FILTER_MAX_TOKENS,
+      system: buildFilterSystemPrompt(brand, cats),
+      messages: [{
+        role: "user",
+        content: "Review and filter these ideas:\n" + JSON.stringify(raw, null, 2),
+      }],
+      output_config: { format: zodOutputFormat(FilterOutput) },
+    });
+    return filterResponse.parsed_output?.decisions ?? [];
   });
-  const decisions = filterResponse.parsed_output?.decisions ?? [];
-  const merged = applyFilterDecisions(raw, decisions);
 
   const kept = merged.filter((i) => i.ai_keep);
   const batchId = randomUUID();
@@ -140,5 +151,16 @@ export async function generateIdeas(
     );
     if (insErr) throw new Error(`insert failed: ${insErr.message}`);
   }
-  return { inserted: kept.length, filteredOut: merged.length - kept.length + droppedForShape, batchId };
+  // Reported separately: a batch lost to malformed slides is a prompt problem,
+  // one lost to the reviewer is a taste problem, and they need different
+  // fixes. Summing them into a single "filtered out" hid which was happening.
+  const rejectedByFilter = merged.length - kept.length;
+  return {
+    inserted: kept.length,
+    filteredOut: rejectedByFilter + droppedForShape,
+    rejectedByFilter,
+    droppedForShape,
+    filterFailed,
+    batchId,
+  };
 }

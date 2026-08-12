@@ -158,13 +158,37 @@ export function buildIdeaUserPrompt(count: number, activeKeys: string[]): string
     : `Generate exactly ${count} content ideas distributed roughly evenly across: ${activeKeys.join(", ")}.`;
 }
 
-export function buildFilterSystemPrompt(brand: BrandContext): string {
+// The reviewer must see the SAME brief the generator was given. Judging on
+// the brand block alone made it reject any category whose style guide
+// deliberately departs from the brand's default look — the guide told the
+// generator to do the very thing the reviewer then called off-brand, so
+// those categories were filtered to zero every batch.
+export function buildFilterSystemPrompt(
+  brand: BrandContext,
+  categories: { key: string; style_guide: string; output_format: string }[],
+): string {
+  const guides = categories
+    .map((c) => {
+      const parts = [`=== ${c.key} ===`, c.style_guide.trim() || "[No style guide set]"];
+      if (c.output_format.trim()) parts.push(`OUTPUT FORMAT: ${c.output_format}`);
+      return parts.join("\n");
+    })
+    .join("\n\n");
+
   return [
     "You are a strict content quality reviewer for this business's social content. For each idea evaluate:",
     `1. Does it align with the brand? ${brandBlock(brand)}`,
     "2. Would it genuinely resonate with the target audience?",
     "3. Is it fresh and not a tired cliché?",
     "",
+    "THE BRIEF EACH IDEA WAS WRITTEN TO — every idea names its category, and that category's guide is the brief it was commissioned under:",
+    guides,
+    "",
+    "A category's style guide is a deliberate override of the brand defaults, not a violation of them. A series may be given its own visual register, its own voice, or its own structure that departs from the brand's usual look — that is the brand's own choice, and an idea that follows its category's guide is on-brand BY DEFINITION.",
+    "So: do NOT reject an idea for doing what its category's guide asked of it. Judge whether it executes that brief well.",
+    "Reject for genuine failures: it ignores or contradicts its own category guide, it is a tired cliché, it makes a claim the brand cannot back, or it leads with something the brand's 'avoid' list rules out.",
+    "",
+    "Keep the reason for each decision to one or two sentences.",
     "Return a decision for every idea, same idea_id values as the input.",
   ].join("\n");
 }
