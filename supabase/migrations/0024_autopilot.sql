@@ -62,11 +62,17 @@ create table autopilot_runs (
   -- tick), so measuring the image-stall deadline from created_at would fail a
   -- carousel minutes after paying for it.
   awaiting_images_since timestamptz,
-  -- Set when a run was found abandoned in `publishing` with no posts rows to
-  -- prove what happened. Its idea is then permanently off-limits to autopilot
-  -- sourcing, because re-posting it could duplicate a live Buffer post that
-  -- nothing in this database records. A human clears it by posting (or not)
-  -- from the composer, which this flag does not touch.
+  -- Set when a run found abandoned in `publishing` is resolved and its idea
+  -- must never be offered to autopilot again. Two cases, both permanent:
+  --   * no posts rows at all — nothing in this database records what happened,
+  --     so re-posting could duplicate a live Buffer post;
+  --   * the post demonstrably landed — an idea that went out is finished, and
+  --     post_images may be missing (it is written AFTER the Buffer call), so
+  --     the usual "already posted" signal cannot be trusted here.
+  -- NOT set when every channel failed: that outcome is on record as having
+  -- published nothing, and the retry tier depends on reusing it.
+  -- This flag is scoped to autopilot sourcing only — a human can still post
+  -- the idea from the composer, which never reads it.
   idea_quarantined boolean not null default false,
   error text not null default '',
   -- Append-only [{at, step, detail}] display log, so the UI can say what
