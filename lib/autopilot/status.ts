@@ -34,6 +34,15 @@ const STEP_WORDS: Record<string, string> = {
   publishing: "sending to Buffer",
 };
 
+// "attempt 2 of 3 (from 2026-08-13) — sending to Buffer". The period only
+// appears when the live run belongs to an earlier one, which is the straggler
+// case the tick's own unfiltered live-run query creates.
+function liveLabel(input: StatusInput, live: NonNullable<StatusInput["live"]>): string {
+  const step = STEP_WORDS[live.state] ?? live.state;
+  const from = live.periodStart === input.currentPeriod ? "" : ` (from ${live.periodStart})`;
+  return `attempt ${live.attemptNo} of ${input.maxAttempts}${from} — ${step}`;
+}
+
 // One sentence for the whole state of a workflow. Order matters: off beats
 // everything (a paused workflow is doing nothing regardless of its counts),
 // then a met quota, then live work, then the attempt cap.
@@ -42,16 +51,22 @@ export function describeWorkflowStatus(input: StatusInput): WorkflowStatus {
     return { tone: "off", label: input.pausedReason ? `paused: ${input.pausedReason}` : "off" };
   }
   if (input.landedGroups >= input.postsPerPeriod) {
-    return { tone: "done", label: `posted ${input.landedGroups}/${input.postsPerPeriod}` };
+    const posted = `posted ${input.landedGroups}/${input.postsPerPeriod}`;
+    // A met quota does NOT mean the workflow has stopped. tickWorkflow advances
+    // a live run before it ever measures the gap, so a run still live past a
+    // satisfied quota is about to publish a post that takes the category OVER
+    // its stated rate. Reported by composing the two facts rather than by
+    // reordering the branches: the count is still true and still shown, but the
+    // tone and the trailing clause say the work is not finished. "posted 1/1"
+    // on its own reads as settled, which is the same lie as "waiting to start"
+    // reading as idle.
+    if (input.live) {
+      return { tone: "working", label: `${posted} · ${liveLabel(input, input.live)}` };
+    }
+    return { tone: "done", label: posted };
   }
   if (input.live) {
-    const step = STEP_WORDS[input.live.state] ?? input.live.state;
-    const from =
-      input.live.periodStart === input.currentPeriod ? "" : ` (from ${input.live.periodStart})`;
-    return {
-      tone: "working",
-      label: `attempt ${input.live.attemptNo} of ${input.maxAttempts}${from} — ${step}`,
-    };
+    return { tone: "working", label: liveLabel(input, input.live) };
   }
   if (input.attemptsUsed >= input.maxAttempts) {
     return {

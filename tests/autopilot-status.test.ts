@@ -23,6 +23,18 @@ describe("describeWorkflowStatus", () => {
     expect(s.label).toBe("posted 1/1");
   });
 
+  it("does not call a workflow settled while a run is still live past its quota", () => {
+    // tickWorkflow advances a live run BEFORE it measures the gap, so a run
+    // still live past a satisfied quota is about to publish a post that takes
+    // the category OVER its stated rate. "posted 1/1" with the done tone would
+    // read as finished — the same lie as "waiting to start" reading as idle.
+    const s = describeWorkflowStatus({
+      ...base, landedGroups: 1, live: live("publishing", 2),
+    });
+    expect(s.tone).toBe("working");
+    expect(s.label).toBe("posted 1/1 · attempt 2 of 3 — sending to Buffer");
+  });
+
   it("names the step a live run is on, with its own attempt number", () => {
     const s = describeWorkflowStatus({
       ...base, live: live("awaiting_images", 2), attemptsUsed: 2,

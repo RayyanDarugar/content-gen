@@ -356,6 +356,10 @@ async function advanceRun(
 //   posts rows this attempt wrote → the write side ran; settle from them.
 //   none                          → nothing proves the post did not land.
 //                                   Fail, say so plainly, and quarantine.
+//
+// Both settlements that mean "something reached Buffer" quarantine the idea.
+// Only the every-channel-failed settlement leaves it available, because that
+// is the one outcome on record as having published nothing.
 async function resolvePublishingRun(
   supabase: SupabaseClient,
   run: AutopilotRun,
@@ -408,12 +412,26 @@ async function resolvePublishingRun(
         });
         return;
       }
+      // Quarantined even though this settles as a SUCCESS, because the tick
+      // died somewhere inside createPostForUser and the writes that normally
+      // mark an idea as spent come after the one that proves it published:
+      // the `posts` row lands first, then `post_images`, then
+      // `ideas.status = "posted"`. Killed between the first and the second and
+      // the carousel is live with post_images empty — so postedGenerationIds
+      // finds nothing, hasNonFailedPost stays false, the idea is still
+      // `generated`, and isPostable still says yes. Today the queued `posts`
+      // row hides that through countLandedGroups, but the quota resets next
+      // period and tier 2 would re-select the same idea and publish it a
+      // second time. An idea that demonstrably went out must never be offered
+      // to autopilot again — the same reasoning that makes the quarantine
+      // unbounded on the no-rows branch.
       await patchRun(supabase, run, {
         state: "succeeded",
+        idea_quarantined: true,
         error: failures.length
           ? `partial: ${failures.map((f) => f.error).filter(Boolean).join("; ")}`
           : "",
-        steps: appendStep(run, "recover", detail),
+        steps: appendStep(run, "recover", `${detail} — idea retired from autopilot`),
       });
       return;
     }

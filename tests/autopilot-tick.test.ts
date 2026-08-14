@@ -331,8 +331,55 @@ describe("runAutopilotTick", () => {
     expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
     const settled = updatesTo("autopilot_runs").find((u) => u.state === "succeeded");
     expect(settled).toBeDefined();
-    expect(settled!.idea_quarantined).toBeUndefined();
+    // Something reached Buffer, so the idea is retired from autopilot whether
+    // or not the writes that normally mark it spent got as far as landing.
+    expect(settled!.idea_quarantined).toBe(true);
     expect(summary.errors).toEqual([]);
+    expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
+  });
+
+  it("retires an idea recovered as succeeded even though post_images never got written", async () => {
+    // Kill point 5. createPostForUser writes in this order: posts row (proof
+    // it published) → post_images → ideas.status = "posted". Killed between
+    // the first and the second, the carousel is LIVE while every signal that
+    // normally retires an idea is still saying it is fresh: post_images is
+    // empty so postedGenerationIds finds nothing and hasNonFailedPost is
+    // false, and the idea is still `generated`. The queued posts row hides
+    // that today through countLandedGroups — but the quota resets next period
+    // and tier 2 would publish the same carousel a second time.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [{ ...RUN, state: "publishing", post_group_id: "pg-1" }];
+    db.rows.ideas = [IDEA];
+    db.rows.generations = [GENERATION];
+    db.rows.post_images = [];
+    db.rows.posts = [{
+      post_group_id: "pg-1", user_id: "user-1", status: "queued", error: "",
+      created_at: "2026-08-14T12:00:02Z",
+    }];
+    db.runState = "publishing";
+
+    const first = await runAutopilotTick(NOW);
+
+    const settled = updatesTo("autopilot_runs").find((u) => u.state === "succeeded");
+    expect(settled?.idea_quarantined).toBe(true);
+    expect(first.errors).toEqual([]);
+
+    // Now the period rolls: the quota window no longer covers that post, so
+    // the gap reopens and sourcing runs again against the very same idea —
+    // still `generated`, still fully imaged, still with no post_images. Only
+    // the quarantine stands between it and a duplicate live post.
+    db.queries = [];
+    db.runState = "";
+    db.rows.posts = [];
+    db.rows.autopilot_runs = [{
+      ...RUN, state: "succeeded", post_group_id: "pg-1", idea_quarantined: true,
+    }];
+    db.generateIdeas.mockResolvedValue({ inserted: 0, filteredOut: 3, batchId: "b-1" });
+
+    const second = await runAutopilotTick(NOW);
+
+    expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
+    expect(second.errors).toEqual([]);
     expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
   });
 
