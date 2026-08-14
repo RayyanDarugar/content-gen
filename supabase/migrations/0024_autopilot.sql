@@ -57,6 +57,17 @@ create table autopilot_runs (
   -- run that published it.
   idea_id uuid references ideas(id) on delete set null,
   post_group_id uuid,
+  -- When the run ENTERED awaiting_images, not when it was created. A run can
+  -- sit in `sourcing` for many ticks (the app-wide tier-4 slot is one per
+  -- tick), so measuring the image-stall deadline from created_at would fail a
+  -- carousel minutes after paying for it.
+  awaiting_images_since timestamptz,
+  -- Set when a run was found abandoned in `publishing` with no posts rows to
+  -- prove what happened. Its idea is then permanently off-limits to autopilot
+  -- sourcing, because re-posting it could duplicate a live Buffer post that
+  -- nothing in this database records. A human clears it by posting (or not)
+  -- from the composer, which this flag does not touch.
+  idea_quarantined boolean not null default false,
   error text not null default '',
   -- Append-only [{at, step, detail}] display log, so the UI can say what
   -- happened rather than only where it stopped. Never read for control flow.
@@ -75,6 +86,10 @@ create index autopilot_runs_live_idx on autopilot_runs(workflow_id)
 -- Claim check during sourcing: "is this idea already spoken for?"
 create index autopilot_runs_idea_idx on autopilot_runs(idea_id)
   where state in ('sourcing', 'awaiting_images', 'posting', 'publishing');
+-- The other sourcing exclusion: "is this idea quarantined by an abandoned
+-- publish?" Read on every sourcing tick, so it gets its own partial index.
+create index autopilot_runs_quarantine_idx on autopilot_runs(user_id, idea_id)
+  where idea_quarantined;
 -- The sweep's ordering: least-recently-ticked first, nulls (never ticked) ahead
 -- of everything.
 create index autopilot_workflows_sweep_idx

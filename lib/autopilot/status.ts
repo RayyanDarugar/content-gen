@@ -5,7 +5,17 @@ export interface StatusInput {
   landedGroups: number;
   attemptsUsed: number;
   maxAttempts: number;
-  liveState: string | null;
+  // The period the page is reporting on, so a straggler run opened in an
+  // earlier one can be labelled as such rather than silently renumbered.
+  currentPeriod: string;
+  // The run the tick would advance right now, whatever period it belongs to —
+  // runAutopilotTick's own live-run query has no period filter, so neither can
+  // this. A run opened just before a rollover stays live across it and keeps
+  // being advanced (and posted); reporting only the new period's runs would
+  // show "waiting to start" for a workflow that is actively spending money.
+  // Its own attempt_no and period_start are carried here rather than reusing
+  // the current period's attempt count, which would be a different run's.
+  live: { state: string; attemptNo: number; periodStart: string } | null;
 }
 
 export interface WorkflowStatus {
@@ -34,11 +44,13 @@ export function describeWorkflowStatus(input: StatusInput): WorkflowStatus {
   if (input.landedGroups >= input.postsPerPeriod) {
     return { tone: "done", label: `posted ${input.landedGroups}/${input.postsPerPeriod}` };
   }
-  if (input.liveState) {
-    const step = STEP_WORDS[input.liveState] ?? input.liveState;
+  if (input.live) {
+    const step = STEP_WORDS[input.live.state] ?? input.live.state;
+    const from =
+      input.live.periodStart === input.currentPeriod ? "" : ` (from ${input.live.periodStart})`;
     return {
       tone: "working",
-      label: `attempt ${input.attemptsUsed} of ${input.maxAttempts} — ${step}`,
+      label: `attempt ${input.live.attemptNo} of ${input.maxAttempts}${from} — ${step}`,
     };
   }
   if (input.attemptsUsed >= input.maxAttempts) {

@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { decideAwaitingImages, IMAGE_DEADLINE_MINUTES } from "@/lib/autopilot/run-step";
 
+// When the run ENTERED awaiting_images — not when it was created. The two are
+// far apart whenever sourcing deferred for a while first.
 const startedAt = "2026-08-14T12:00:00Z";
 const base = {
   slideCount: 3,
   readySlideIndexes: [] as number[],
   hasInFlightGeneration: true,
-  runCreatedAt: startedAt,
+  awaitingSince: startedAt,
   now: new Date("2026-08-14T12:05:00Z"),
 };
 
@@ -58,6 +60,31 @@ describe("decideAwaitingImages", () => {
       hasInFlightGeneration: false,
       now: new Date(Date.parse(startedAt) + (IMAGE_DEADLINE_MINUTES + 1) * 60_000),
     })).toEqual({ action: "post" });
+  });
+
+  it("measures the deadline from the submission, not from a long-deferred run's birth", () => {
+    // The regression: a run created at T can sit in `sourcing` for hours (the
+    // tier-4 slot is one per tick, app-wide) before it pays for images. If the
+    // deadline were measured from creation, the very first check after
+    // submitting would already be "stalled" and would discard a carousel paid
+    // for seconds earlier.
+    const bornLongAgo = "2026-08-14T11:00:00Z";
+    const submittedJustNow = "2026-08-14T12:04:00Z";
+    expect(decideAwaitingImages({
+      ...base,
+      readySlideIndexes: [0],
+      hasInFlightGeneration: false,
+      awaitingSince: submittedJustNow,
+      now: new Date("2026-08-14T12:05:00Z"),
+    })).toEqual({ action: "wait" });
+    // Same clock, same run, measured from birth instead: a false stall.
+    expect(decideAwaitingImages({
+      ...base,
+      readySlideIndexes: [0],
+      hasInFlightGeneration: false,
+      awaitingSince: bornLongAgo,
+      now: new Date("2026-08-14T12:05:00Z"),
+    }).action).toBe("fail");
   });
 
   it("returns the same decision when called twice on the same state", () => {

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireActiveBrand } from "@/lib/auth/active-brand";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -15,6 +16,71 @@ export const dynamic = "force-dynamic";
 // included, since that is the claim state a run holds while Buffer is being
 // called and a page loaded mid-post would otherwise show it as idle.
 const LIVE_STATES = ["sourcing", "awaiting_images", "posting", "publishing"];
+
+type LiveRunRow = { state: string; attempt_no: number; period_start: string };
+
+// A `succeeded` run carrying an `error` is the partial multi-channel case
+// (spec §6): one channel queued, another was rejected. The quota counted it
+// and autopilot deliberately does not retry the failed channel, so it must
+// read as a WARNING — rendering it the same way as a failed run tells a human
+// nothing went out when something did.
+function outcomeOf(run: AutopilotRun): { text: string; className: string } {
+  if (run.state === "failed") {
+    return { text: run.error || "failed", className: "text-destructive" };
+  }
+  if (run.state === "succeeded" && run.error) {
+    return { text: `warning: ${run.error}`, className: "text-amber-600 dark:text-amber-500" };
+  }
+  return { text: run.state.replaceAll("_", " "), className: "text-muted-foreground" };
+}
+
+function RunRow({ run }: { run: AutopilotRun }) {
+  const outcome = outcomeOf(run);
+  const steps = run.steps ?? [];
+  return (
+    <div className="space-y-1.5 rounded-xl border p-3 text-sm">
+      <div className="flex items-center gap-3">
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {run.period_start} · attempt {run.attempt_no}
+        </span>
+        <span className="truncate">{run.category_key}</span>
+        {run.source && <Badge variant="outline">{run.source.replaceAll("_", " ")}</Badge>}
+        <span className={`ml-auto shrink-0 truncate text-xs ${outcome.className}`}>
+          {outcome.text}
+        </span>
+      </div>
+      {/* Spec §8 asks the feed to say WHAT happened, not only where it
+          stopped. This is the only reader of `steps`, which six call sites in
+          the tick write — without it the column is write-only. */}
+      {steps.length > 0 && (
+        <ol className="space-y-0.5 text-xs text-muted-foreground">
+          {steps.map((s, i) => (
+            <li key={`${s.at}-${i}`} className="truncate">
+              <span className="font-medium">{s.step}</span> · {s.detail}
+            </li>
+          ))}
+        </ol>
+      )}
+      {(run.idea_id || run.post_group_id) && (
+        <div className="flex gap-3 text-xs">
+          {run.idea_id && (
+            <Link href={`/post/${run.idea_id}`} className="text-primary hover:underline">
+              open the idea
+            </Link>
+          )}
+          {/* There is no post-group-scoped route in this app, so the group's
+              home is the schedule — the only surface that lists posts. The id
+              is shown so it can be matched there (and in Buffer) by eye. */}
+          {run.post_group_id && (
+            <Link href="/schedule" className="text-primary hover:underline">
+              post group {run.post_group_id.slice(0, 8)}
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default async function AutopilotPage() {
   const user = await requireUser();
@@ -45,7 +111,7 @@ export default async function AutopilotPage() {
         postsPerPeriod: 1, period: "day" as const, timezone: "",
         status: describeWorkflowStatus({
           active: false, pausedReason: "", postsPerPeriod: 1, landedGroups: 0,
-          attemptsUsed: 0, maxAttempts: 3, liveState: null,
+          attemptsUsed: 0, maxAttempts: 3, currentPeriod: "", live: null,
         }),
       };
     }
@@ -55,37 +121,55 @@ export default async function AutopilotPage() {
       .from("posts").select("post_group_id")
       .eq("category_key", c.key).neq("status", "failed").gte("created_at", from);
     const landed = new Set((postRows ?? []).map((r) => (r as { post_group_id: string }).post_group_id)).size;
-    // Counted straight from autopilot_runs for THIS workflow and period,
-    // never derived from the recent-runs feed below. That feed is a fixed
-    // display budget shared by every category, so a busy brand can push a
-    // workflow's own attempts out of it — and a workflow that has exhausted
-    // its cap would then read "attempt 2 of 3" instead of "gave up for this
-    // period", which is exactly the false "still working" this page exists to
-    // prevent. The live-state lookup has the same provenance and is sourced
-    // the same way for the same reason.
+    // Both facts come straight from autopilot_runs for THIS workflow, never
+    // from the recent-runs feed below. That feed is a fixed display budget
+    // shared by every category, so a busy brand can push a workflow's own
+    // attempts out of it — and a workflow that has exhausted its cap would
+    // then read "attempt 2 of 3" instead of "gave up for this period", which
+    // is exactly the false "still working" this page exists to prevent.
     //
-    // One query serves both facts: `count` is authoritative for the attempt
-    // number, and the rows carry the live state. Fetching the rows is cheap
-    // because the set is bounded — max_attempts_per_period is capped at 10 by
-    // the column's own check constraint, and quotaGap never opens an attempt
-    // past it. Ordered oldest-first so the live run picked here is the same
-    // one runAutopilotTick advances.
-    const { data: runRows, count: attemptCount } = await supabase
+    // TWO queries, because the two facts have different scopes:
+    //
+    //  - The attempt count is genuinely per-period: max_attempts_per_period
+    //    resets at every rollover, so counting anything else would misreport
+    //    how much budget is left.
+    //  - The live run is NOT. runAutopilotTick's own live-run query
+    //    (lib/autopilot/tick.ts) has no period filter by design: a run opened
+    //    just before a rollover stays live across it and keeps being advanced
+    //    — up to and including a Buffer post. Filtering by period here would
+    //    show "waiting to start (0/1 posted)" for a workflow the tick is
+    //    actively spending on. Ordered oldest-first and limited to one so the
+    //    run picked is the same one the tick advances, and it carries its own
+    //    attempt_no and period_start so a straggler reads honestly.
+    const { count: attemptCount } = await supabase
       .from("autopilot_runs")
-      .select("state", { count: "exact" })
+      .select("id", { count: "exact", head: true })
       .eq("workflow_id", wf.id)
-      .eq("period_start", period)
-      .order("created_at", { ascending: true });
-    const periodRuns = (runRows ?? []) as { state: string }[];
+      .eq("period_start", period);
+    const { data: liveRows } = await supabase
+      .from("autopilot_runs")
+      .select("state, attempt_no, period_start")
+      .eq("workflow_id", wf.id)
+      .in("state", LIVE_STATES)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const liveRun = ((liveRows ?? []) as LiveRunRow[])[0] ?? null;
     return {
       categoryId: c.id, categoryName: c.name, workflowId: wf.id, active: wf.active,
       postsPerPeriod: wf.posts_per_period, period: wf.period, timezone: wf.timezone,
       status: describeWorkflowStatus({
         active: wf.active, pausedReason: wf.paused_reason,
         postsPerPeriod: wf.posts_per_period, landedGroups: landed,
-        attemptsUsed: attemptCount ?? periodRuns.length,
+        attemptsUsed: attemptCount ?? 0,
         maxAttempts: wf.max_attempts_per_period,
-        liveState: periodRuns.find((r) => LIVE_STATES.includes(r.state))?.state ?? null,
+        currentPeriod: period,
+        live: liveRun
+          ? {
+              state: liveRun.state,
+              attemptNo: liveRun.attempt_no,
+              periodStart: liveRun.period_start,
+            }
+          : null,
       }),
     };
   }));
@@ -113,18 +197,7 @@ export default async function AutopilotPage() {
         {runs.length === 0 && (
           <p className="text-sm text-muted-foreground">Nothing has run yet.</p>
         )}
-        {runs.map((run: AutopilotRun) => (
-          <div key={run.id} className="flex items-center gap-3 rounded-xl border p-3 text-sm">
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {run.period_start} · attempt {run.attempt_no}
-            </span>
-            <span className="truncate">{run.category_key}</span>
-            {run.source && <Badge variant="outline">{run.source.replaceAll("_", " ")}</Badge>}
-            <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
-              {run.error || run.state}
-            </span>
-          </div>
-        ))}
+        {runs.map((run: AutopilotRun) => <RunRow key={run.id} run={run} />)}
       </section>
     </div>
   );

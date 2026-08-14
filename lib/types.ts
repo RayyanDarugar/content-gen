@@ -292,6 +292,14 @@ export interface AutopilotRun {
   source: AutopilotSource;
   idea_id: string | null;
   post_group_id: string | null;
+  // When the run entered awaiting_images — the anchor for the image-stall
+  // deadline. Null until it gets there, which is why readers fall back to
+  // created_at.
+  awaiting_images_since: string | null;
+  // True when the run was found abandoned in `publishing` with no posts rows
+  // to prove whether Buffer received the carousel. Its idea is excluded from
+  // autopilot sourcing from then on.
+  idea_quarantined: boolean;
   error: string;
   steps: AutopilotRunStep[];
   created_at: string;

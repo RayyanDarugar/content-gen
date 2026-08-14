@@ -32,6 +32,17 @@ export function validateWorkflowSettings(s: WorkflowSettings): void {
   if (!Number.isInteger(s.autoPauseAfterFailedPeriods) || s.autoPauseAfterFailedPeriods < 1) {
     throw new Error("auto-pause threshold must be at least 1");
   }
+  // No DB constraint covers this pair, but the combination can never meet
+  // quota: one run is one post, so N posts need at least N attempts. Left
+  // unchecked it would look like it was working, miss every period, and
+  // auto-pause with "missed quota 3 periods running" — a message that says
+  // nothing about the setting that made it impossible.
+  if (s.postsPerPeriod > s.maxAttemptsPerPeriod) {
+    throw new Error(
+      `${s.postsPerPeriod} posts per period needs at least ${s.postsPerPeriod} attempts, ` +
+      `but the attempt cap is ${s.maxAttemptsPerPeriod}`,
+    );
+  }
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: s.timezone });
   } catch {

@@ -8,7 +8,11 @@ export interface AwaitingInput {
   slideCount: number;
   readySlideIndexes: number[];
   hasInFlightGeneration: boolean;
-  runCreatedAt: string;
+  // When the run ENTERED awaiting_images, never when it was created. A run
+  // deferred in `sourcing` (the tier-4 slot is one per tick, app-wide) can be
+  // hours old before it submits anything, and measuring from creation would
+  // fail a carousel minutes after paying for it.
+  awaitingSince: string;
   now: Date;
 }
 
@@ -29,7 +33,7 @@ export function decideAwaitingImages(input: AwaitingInput): AwaitingDecision {
   // has landed and the poll cron has not yet fanned out.
   if (input.hasInFlightGeneration) return { action: "wait" };
 
-  const elapsedMs = input.now.getTime() - Date.parse(input.runCreatedAt);
+  const elapsedMs = input.now.getTime() - Date.parse(input.awaitingSince);
   if (elapsedMs < IMAGE_DEADLINE_MINUTES * 60_000) return { action: "wait" };
 
   // The RUN fails; the idea does not. The poll cron deliberately leaves a

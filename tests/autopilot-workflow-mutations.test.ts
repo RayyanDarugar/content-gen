@@ -29,6 +29,19 @@ describe("validateWorkflowSettings", () => {
     expect(() => validateWorkflowSettings({ ...ok, autoPauseAfterFailedPeriods: 0 })).toThrow(/at least 1/);
   });
 
+  it("rejects a rate the attempt cap can never satisfy", () => {
+    // One run is one post, so 3 posts need at least 3 attempts. Left
+    // permitted, the workflow would miss every period and auto-pause with
+    // "missed quota 3 periods running" — a message that says nothing about
+    // the setting that made the quota unreachable.
+    expect(() => validateWorkflowSettings({
+      ...ok, postsPerPeriod: 3, maxAttemptsPerPeriod: 2,
+    })).toThrow(/attempt cap is 2/);
+    expect(() => validateWorkflowSettings({
+      ...ok, postsPerPeriod: 3, maxAttemptsPerPeriod: 3,
+    })).not.toThrow();
+  });
+
   it("rejects a timezone the runtime does not know", () => {
     // Caught here rather than at 3am inside the cron, where an invalid zone
     // would throw on every tick for this workflow and pause it for the wrong

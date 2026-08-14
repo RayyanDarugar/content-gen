@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { generateIdeas } from "@/lib/athena/generate-ideas";
@@ -20,15 +21,34 @@ export const WORKFLOW_TICK_CAP = 20;
 // How many ideas are considered as sourcing candidates per workflow.
 const CANDIDATE_LIMIT = 50;
 
-// Every state a run can be advanced from — `publishing` included, so a run
-// abandoned mid-post by a crash is picked up again rather than sitting live
-// forever and blocking the workflow's next attempt.
+// Every state a run can be live in — `publishing` included, so a run abandoned
+// mid-post by a crash is picked up rather than sitting live forever and
+// blocking the workflow's next attempt. Picked up to be RESOLVED, never
+// re-posted: see resolvePublishingRun.
 const LIVE_STATES = ["sourcing", "awaiting_images", "posting", "publishing"];
+
+// The route's maxDuration is 120s. Being killed mid-loop is what manufactures
+// an abandoned `publishing` run in the first place — a tick cut off between
+// Buffer's response and the terminal write leaves a carousel published that
+// nothing in this database records — so the sweep stops itself well short of
+// the platform's own axe. Rotation via last_ticked_at makes an early break
+// harmless: the workflows not reached keep their place at the front.
+const SWEEP_BUDGET_MS = 90_000;
+// Separately and much earlier, the app-wide tier-4 slot is withdrawn.
+// generateIdeas makes two Anthropic calls with thinking and no per-call
+// timeout override (the SDK default is 10 minutes), and the spec budgets ~90s
+// for it. Past this mark, starting one could run the clock out over a Buffer
+// post that another workflow is about to make.
+const IDEA_GENERATION_CUTOFF_MS = 20_000;
 
 export interface TickSummary {
   workflowsExamined: number;
   runsOpened: number;
   runsAdvanced: number;
+  // True when the sweep broke on its wall-clock budget rather than running out
+  // of workflows. Surfaced so a tick that is chronically running out of time
+  // is visible in the cron's own response body instead of being inferred.
+  stoppedEarly: boolean;
   errors: string[];
 }
 
@@ -36,8 +56,9 @@ type WorkflowRow = AutopilotWorkflow & { category: Category | null };
 
 export async function runAutopilotTick(now: Date = new Date()): Promise<TickSummary> {
   const supabase = createAdminSupabase();
+  const startedAt = Date.now();
   const summary: TickSummary = {
-    workflowsExamined: 0, runsOpened: 0, runsAdvanced: 0, errors: [],
+    workflowsExamined: 0, runsOpened: 0, runsAdvanced: 0, stoppedEarly: false, errors: [],
   };
 
   // The one query with no tenant predicate, and deliberately so: this is the
@@ -67,16 +88,25 @@ export async function runAutopilotTick(now: Date = new Date()): Promise<TickSumm
   const budget = { ideaGenerations: 1 };
 
   for (const row of (data ?? []) as WorkflowRow[]) {
+    // Checked BEFORE stampTicked, so a workflow the sweep never got to keeps
+    // its null/oldest last_ticked_at and is first in line on the next tick.
+    if (Date.now() - startedAt >= SWEEP_BUDGET_MS) {
+      summary.stoppedEarly = true;
+      break;
+    }
     const { category, ...workflow } = row;
-    // Stamped for EVERY row the sweep pulled, before the inactive-category
-    // skip and before any work — otherwise a workflow that is always skipped,
-    // or always throws, would keep its place at the front of the ordering and
-    // consume a slot on every tick, which is the starvation this ordering
-    // exists to prevent.
-    await stampTicked(supabase, workflow, now);
-    if (!category?.active) continue;
-    summary.workflowsExamined++;
     try {
+      // Stamped for EVERY row the sweep examined, before the inactive-category
+      // skip and before any work — otherwise a workflow that is always
+      // skipped, or always throws, would keep its place at the front of the
+      // ordering and consume a slot on every tick, which is the starvation
+      // this ordering exists to prevent. Inside the try like everything else
+      // in this loop: it is an await, and an await with no net under it can
+      // abort the whole sweep.
+      await stampTicked(supabase, workflow, now);
+      if (!category?.active) continue;
+      summary.workflowsExamined++;
+      if (Date.now() - startedAt >= IDEA_GENERATION_CUTOFF_MS) budget.ideaGenerations = 0;
       await tickWorkflow(supabase, workflow, category, now, budget, summary);
     } catch (e) {
       // One tenant's broken workflow must never stop the sweep.
@@ -263,6 +293,22 @@ async function advanceRun(
 ): Promise<void> {
   // `current` tracks the freshest view of the row so the catch below appends
   // its failure to the steps a step function already persisted.
+  // A run READ as `publishing` is one a previous tick left behind mid-post.
+  // It is resolved from the record, never advanced: the only way to leave this
+  // state is to find out what happened, because the alternative is a second,
+  // un-unpostable Buffer post of the same carousel.
+  //
+  // Handled OUTSIDE the try below on purpose. That catch turns a throw into a
+  // plain failRun — which would drop the run to `failed` still carrying its
+  // idea_id, and tier 1 would then re-select exactly the carousel this
+  // function exists to protect. Letting the throw reach the sweep's
+  // per-workflow catch instead leaves the run in `publishing`, so the next
+  // tick tries to resolve it again and nothing is ever re-posted.
+  if (run.state === "publishing") {
+    await resolvePublishingRun(supabase, run);
+    return;
+  }
+
   let current = run;
   try {
     if (current.state === "sourcing") {
@@ -273,7 +319,7 @@ async function advanceRun(
       const next = await stepAwaitingImages(supabase, workflow, current, now);
       if (!next) return;
       current = next;
-    } else if (current.state !== "posting" && current.state !== "publishing") {
+    } else if (current.state !== "posting") {
       return;
     }
     // The only chained transition allowed in one tick: material that is
@@ -292,6 +338,108 @@ async function advanceRun(
     const message = e instanceof Error ? e.message : String(e);
     await failRun(supabase, current, message);
   }
+}
+
+// Settles a run that a previous tick abandoned in `publishing` — the state it
+// holds across the one irreversible call in this whole system.
+//
+// This is deliberately FAIL-SAFE rather than retry-safe. `claimRun` cannot
+// help here: re-claiming a `publishing` run means `.eq("state","publishing")`
+// against a row already in `publishing`, a predicate that always matches. And
+// the `hasNonFailedPost` backstop reads post_images, which createPostForUser
+// writes AFTER postToBuffer returns — blind in exactly the window this
+// function exists to cover.
+//
+// What is NOT blind is the run's own post_group_id, minted and written in the
+// claim update before the Buffer call (see stepPosting). So:
+//
+//   posts rows this attempt wrote → the write side ran; settle from them.
+//   none                          → nothing proves the post did not land.
+//                                   Fail, say so plainly, and quarantine.
+async function resolvePublishingRun(
+  supabase: SupabaseClient,
+  run: AutopilotRun,
+): Promise<void> {
+  if (run.post_group_id) {
+    const { data, error } = await supabase
+      .from("posts")
+      .select("status, error, created_at")
+      .eq("post_group_id", run.post_group_id)
+      .eq("user_id", run.user_id);
+    // A read failure leaves the run in `publishing` for the next tick rather
+    // than resolving it either way. It must not be mistaken for "no rows
+    // exist" (which quarantines an idea permanently), and it must not become
+    // an ordinary run failure either (which would hand the idea back to tier
+    // 1). Staying live costs the workflow its attempt slot until the read
+    // succeeds, and spends nothing.
+    if (error) {
+      console.error(
+        `autopilot: abandoned-publish lookup failed for run ${run.id}: ${error.message}`,
+      );
+      return;
+    }
+    const all = (data ?? []) as { status: string; error: string; created_at: string }[];
+
+    // Only rows THIS attempt could have written count as evidence. A tier-1
+    // retry deliberately reuses the prior attempt's post group, and
+    // createPostForUser's cleanup only removes prior rows that are `failed`
+    // AND on the same channel — so a leftover (a category whose Buffer channel
+    // changed between attempts, or a cleanup delete that errored and was only
+    // logged) would otherwise read as "the write side ran" for an attempt that
+    // never got that far, and tier 1 would retry a carousel that may already
+    // be live. The claim update is this run's last write before the Buffer
+    // call, so its updated_at is the floor; both timestamps are the database's
+    // own clock, and the insert strictly follows the claim in real time.
+    const claimedAt = Date.parse(run.updated_at);
+    const rows = Number.isFinite(claimedAt)
+      ? all.filter((r) => Date.parse(r.created_at) >= claimedAt)
+      : all;
+
+    if (rows.length) {
+      const failures = rows.filter((r) => r.status === "failed");
+      const detail = `recovered ${rows.length - failures.length} of ${rows.length} channels queued`;
+      if (failures.length === rows.length) {
+        // Every channel is on record as rejected, so tier 1 may safely reuse
+        // this idea and this post group on the next attempt.
+        await patchRun(supabase, run, {
+          state: "failed",
+          error: failures.map((f) => f.error).filter(Boolean).join("; ") || "every channel failed",
+          steps: appendStep(run, "recover", detail),
+        });
+        return;
+      }
+      await patchRun(supabase, run, {
+        state: "succeeded",
+        error: failures.length
+          ? `partial: ${failures.map((f) => f.error).filter(Boolean).join("; ")}`
+          : "",
+        steps: appendStep(run, "recover", detail),
+      });
+      return;
+    }
+  }
+
+  // The irreducible window: killed between Buffer's response and any DB write
+  // at all. Failing the run is not enough on its own — the failed attempt
+  // still carries idea_id, and tier 1 would re-select the same idea through
+  // the same blind hasNonFailedPost check, so the automated path has to be
+  // shut off for that idea explicitly. The flag has no period bound on
+  // purpose: the risk of a duplicate live post does not expire when the
+  // calendar day does, and tier 2 would pick the same shelved carousel up
+  // again tomorrow. A human clears it by checking Buffer and posting (or not)
+  // from the composer, which this flag does not affect.
+  console.error(
+    `autopilot: run ${run.id} was abandoned mid-publish with no post rows — ` +
+    `quarantining idea ${run.idea_id ?? "(none)"}`,
+  );
+  await patchRun(supabase, run, {
+    state: "failed",
+    idea_quarantined: true,
+    error:
+      "abandoned mid-publish — check Buffer before retrying; " +
+      "this carousel may already be live and autopilot will not offer it again",
+    steps: appendStep(run, "recover", "no post rows for this run's group — idea quarantined"),
+  });
 }
 
 // Returns the run to post immediately, or null when this tick is done with it.
@@ -337,11 +485,16 @@ async function stepSourcing(
   }
 
   if (decision.action === "submit_images") {
-    await submitGenerations(workflow.user_id, [decision.ideaId]);
+    const submission = await submitGenerations(workflow.user_id, [decision.ideaId]);
+    if (!submission.submitted) {
+      await failRun(supabase, run, submissionError(submission));
+      return null;
+    }
     await patchRun(supabase, run, {
       state: "awaiting_images",
       source: decision.source,
       idea_id: decision.ideaId,
+      awaiting_images_since: new Date().toISOString(),
       steps: appendStep(run, "submit", `approved idea ${decision.ideaId.slice(0, 8)}`),
     });
     return null;
@@ -385,11 +538,19 @@ async function stepSourcing(
     .eq("user_id", workflow.user_id);
   if (apprErr) throw new Error(`auto-approve failed: ${apprErr.message}`);
 
-  await submitGenerations(workflow.user_id, [chosen]);
+  const submission = await submitGenerations(workflow.user_id, [chosen]);
+  if (!submission.submitted) {
+    // The idea id rides along because this run never got as far as recording
+    // it on the row — the newly-approved idea is still on the shelf for the
+    // next attempt's tier 3, and the message is the only thing that says so.
+    await failRun(supabase, run, `${submissionError(submission)} (idea ${chosen.slice(0, 8)})`);
+    return null;
+  }
   await patchRun(supabase, run, {
     state: "awaiting_images",
     source: decision.source,
     idea_id: chosen,
+    awaiting_images_since: new Date().toISOString(),
     steps: appendStep(
       run, "generate",
       `${result.inserted} ideas kept, approved ${chosen.slice(0, 8)}, submitted anchor`,
@@ -418,7 +579,12 @@ async function stepAwaitingImages(
     slideCount: state.slideCount,
     readySlideIndexes: state.readySlideIndexes,
     hasInFlightGeneration: state.hasInFlightGeneration,
-    runCreatedAt: run.created_at,
+    // Falls back to created_at only for a row that somehow reached this state
+    // without the stamp; the two transitions into awaiting_images both write
+    // it. Never the other way round — created_at can be hours older than the
+    // submission, because sourcing defers whenever the app-wide tier-4 slot is
+    // already spent.
+    awaitingSince: run.awaiting_images_since ?? run.created_at,
     now,
   });
   if (decision.action === "wait") return null;
@@ -477,16 +643,29 @@ async function stepPosting(
   }
 
   // Claim the run before spending anything irreversible. The update matches
-  // the state this tick READ, so of two overlapping ticks holding the same
-  // row only one can win it; the loser sees no affected rows and stops.
-  // Without this, both would call Buffer and the carousel would go out twice —
-  // scheduleValidatedPost's own idea-status check cannot prevent that, since
-  // both ticks read the pre-post status before either wrote it.
-  const claimed = await claimRun(supabase, run, "publishing");
+  // the state this tick READ (`posting`), so of two overlapping ticks holding
+  // the same row only one can win it; the loser sees no affected rows and
+  // stops. Without this, both would call Buffer and the carousel would go out
+  // twice — scheduleValidatedPost's own idea-status check cannot prevent that,
+  // since both ticks read the pre-post status before either wrote it.
+  //
+  // The post group id is minted HERE and written in the same update, before
+  // the Buffer call rather than after it. That is what gives a run later found
+  // abandoned in `publishing` something to ask `posts` about: every row
+  // createPostForUser writes carries this id, so "no rows for this group"
+  // means the write side never ran. Everything else the recovery path could
+  // consult (posts, post_images) is written after postToBuffer returns and is
+  // therefore blind in exactly that window. Tier 1's carried group is reused
+  // when there is one, so the retry replaces its failed rows rather than
+  // stacking new ones beside them.
+  const postGroupId = run.post_group_id ?? randomUUID();
+  const claimed = await claimRun(supabase, run, "publishing", postGroupId);
   if (!claimed) return;
 
   const caption = state.postText || category.post_caption || "";
-  const { postGroupId, results, allFailed } = await scheduleValidatedPost(workflow.user_id, {
+  // The returned group id is deliberately not destructured: scheduleValidatedPost
+  // only mints one when it is given none, and it is now always given ours.
+  const { results, allFailed } = await scheduleValidatedPost(workflow.user_id, {
     categoryKey: category.key,
     generationIds,
     channels: [{
@@ -498,14 +677,15 @@ async function stepPosting(
     caption,
     // null → Buffer's own queue decides the publish time (spec §2).
     scheduledAt: null,
-    postGroupId: claimed.post_group_id,
+    postGroupId,
   });
 
   const failures = results.filter((r) => r.status === "failed");
   if (allFailed) {
-    // post_group_id is recorded even on failure: the next attempt's tier-1
-    // sourcing reuses it so the retry replaces these failed rows rather than
-    // stacking new ones beside them.
+    // post_group_id is re-stated even on failure — the claim already wrote it,
+    // and it must survive to the terminal row because the next attempt's
+    // tier-1 sourcing reuses it so the retry replaces these failed rows rather
+    // than stacking new ones beside them.
     await patchRun(supabase, claimed, {
       state: "failed",
       post_group_id: postGroupId,
@@ -645,7 +825,26 @@ async function loadCandidates(
     ((claimRows ?? []) as { idea_id: string | null }[]).map((r) => r.idea_id).filter(Boolean),
   );
 
-  return ideas.map((idea) => {
+  // Ideas belonging to a run that was abandoned mid-publish with nothing in
+  // `posts` to say whether Buffer received the carousel. Dropped from the
+  // candidate list entirely rather than marked on the candidate, because
+  // "maybe already live" disqualifies an idea from EVERY tier, not just the
+  // ones isPostable covers — and isPostable's own hasNonFailedPost signal is
+  // precisely the thing that is blind in this case. Deliberately not scoped to
+  // a period: the duplicate-post risk does not expire at midnight, and tier 2
+  // would otherwise pick the same shelved carousel up again tomorrow.
+  const { data: quarantineRows, error: quarantineErr } = await supabase
+    .from("autopilot_runs")
+    .select("idea_id")
+    .eq("user_id", userId)
+    .eq("idea_quarantined", true)
+    .in("idea_id", ideaIds);
+  if (quarantineErr) throw new Error(`quarantine query failed: ${quarantineErr.message}`);
+  const quarantined = new Set(
+    ((quarantineRows ?? []) as { idea_id: string | null }[]).map((r) => r.idea_id).filter(Boolean),
+  );
+
+  return ideas.filter((idea) => !quarantined.has(idea.id)).map((idea) => {
     const siblings = gens.filter((g) => g.idea_id === idea.id);
     const slideCount = (idea.slides ?? []).length || 1;
     const resolved = resolveValidSlides(slideCount, siblings);
@@ -685,6 +884,20 @@ async function loadPriorAttempt(
   return { ideaId: prior.idea_id, postGroupId: prior.post_group_id };
 }
 
+// submitGenerations REPORTS rather than throws: an ineligible idea is counted
+// as `skipped`, and a per-idea failure is caught inside its own loop and
+// pushed onto `errors`. Discarding that result would move the run to
+// awaiting_images with nothing in flight, and the reason a human needs would
+// be replaced 30 minutes later by "images stalled: 0 of N slides ready" — a
+// symptom, not the cause. Spec §4 makes the run's `error` the thing that makes
+// a 3am failure visible, and auto-pause quotes it verbatim.
+function submissionError(result: { failed: number; skipped: number; errors: string[] }): string {
+  const reason = result.errors.filter(Boolean).join("; ");
+  if (reason) return `image submission failed: ${reason}`;
+  if (result.skipped) return "image submission skipped this idea as ineligible";
+  return "image submission produced nothing";
+}
+
 function appendStep(run: AutopilotRun, step: string, detail: string): AutopilotRunStep[] {
   return [...(run.steps ?? []), { at: new Date().toISOString(), step, detail }];
 }
@@ -693,7 +906,11 @@ async function patchRun(
   supabase: SupabaseClient,
   run: AutopilotRun,
   values: Partial<
-    Pick<AutopilotRun, "state" | "error" | "idea_id" | "post_group_id" | "steps">
+    Pick<
+      AutopilotRun,
+      "state" | "error" | "idea_id" | "post_group_id" | "steps"
+      | "awaiting_images_since" | "idea_quarantined"
+    >
   > & { source?: AutopilotSource },
 ): Promise<AutopilotRun> {
   const { error } = await supabase
@@ -705,10 +922,14 @@ async function patchRun(
   return { ...run, ...values } as AutopilotRun;
 }
 
-// Moves a run to `next` only if its stored state is still the one this tick
-// read, and reports whether it won. The `.eq("state", …)` is the whole point:
-// Postgres evaluates it against the committed row, so exactly one of two
-// overlapping ticks can match, and `.select()` tells us which one we were.
+// Moves a run to `next`, and records the post group it is about to publish
+// under, only if its stored state is still the one this tick read — reporting
+// whether it won. The `.eq("state", …)` is the whole point: Postgres evaluates
+// it against the committed row, so exactly one of two overlapping ticks can
+// match, and `.select()` tells us which one we were. It is only a real
+// predicate because the caller is in `posting` and asking for `publishing`;
+// re-claiming a run already in `publishing` would compare a value with itself,
+// which is why that path resolves instead (see resolvePublishingRun).
 //
 // Deliberately writes no step entry, so a caller holding the pre-claim run
 // object can still append to `steps` without dropping one.
@@ -716,10 +937,13 @@ async function claimRun(
   supabase: SupabaseClient,
   run: AutopilotRun,
   next: AutopilotRunState,
+  postGroupId: string,
 ): Promise<AutopilotRun | null> {
+  // Columns enumerated, never spread — same rule as every other write here.
+  const values = { state: next, post_group_id: postGroupId };
   const { data, error } = await supabase
     .from("autopilot_runs")
-    .update({ state: next })
+    .update(values)
     .eq("id", run.id)
     .eq("user_id", run.user_id)
     .eq("state", run.state)
@@ -729,7 +953,7 @@ async function claimRun(
     console.warn(`autopilot: run ${run.id} was already claimed by another tick`);
     return null;
   }
-  return { ...run, state: next };
+  return { ...run, ...values };
 }
 
 async function failRun(

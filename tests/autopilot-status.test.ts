@@ -8,8 +8,13 @@ const base = {
   landedGroups: 0,
   attemptsUsed: 0,
   maxAttempts: 3,
-  liveState: null as string | null,
+  currentPeriod: "2026-08-14",
+  live: null as { state: string; attemptNo: number; periodStart: string } | null,
 };
+
+function live(state: string, attemptNo: number, periodStart = "2026-08-14") {
+  return { state, attemptNo, periodStart };
+}
 
 describe("describeWorkflowStatus", () => {
   it("reports a met quota", () => {
@@ -18,9 +23,9 @@ describe("describeWorkflowStatus", () => {
     expect(s.label).toBe("posted 1/1");
   });
 
-  it("names the step a live run is on, with its attempt number", () => {
+  it("names the step a live run is on, with its own attempt number", () => {
     const s = describeWorkflowStatus({
-      ...base, liveState: "awaiting_images", attemptsUsed: 2,
+      ...base, live: live("awaiting_images", 2), attemptsUsed: 2,
     });
     expect(s.tone).toBe("working");
     expect(s.label).toBe("attempt 2 of 3 — generating images");
@@ -30,9 +35,23 @@ describe("describeWorkflowStatus", () => {
     // `publishing` was added to AutopilotRunState after this helper's first
     // draft. Without an entry it would fall through to the raw column value,
     // which is the one state a human is most likely to see mid-post.
-    const s = describeWorkflowStatus({ ...base, liveState: "publishing", attemptsUsed: 1 });
+    const s = describeWorkflowStatus({ ...base, live: live("publishing", 1), attemptsUsed: 1 });
     expect(s.tone).toBe("working");
     expect(s.label).toBe("attempt 1 of 3 — sending to Buffer");
+  });
+
+  it("says which period a straggler run came from", () => {
+    // The regression: a run opened just before a rollover stays live across it
+    // and keeps being advanced — the tick's live-run query has no period
+    // filter. This period has zero attempts of its own, so numbering the
+    // straggler from the current period's count would print "attempt 0", and
+    // dropping it entirely would print "waiting to start" for a workflow about
+    // to call Buffer.
+    const s = describeWorkflowStatus({
+      ...base, attemptsUsed: 0, live: live("posting", 2, "2026-08-13"),
+    });
+    expect(s.tone).toBe("working");
+    expect(s.label).toBe("attempt 2 of 3 (from 2026-08-13) — posting");
   });
 
   it("says it is waiting when no run is live and attempts remain", () => {

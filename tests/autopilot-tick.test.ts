@@ -8,17 +8,44 @@ interface Query {
   table: string;
   op: "select" | "update" | "insert";
   filters: [string, unknown][];
+  // The same filters with their method kept, used to actually narrow the
+  // fixture rows. `filters` stays flat because unscopedQueries and filterOn
+  // read it.
+  applied: { method: string; column: string; value: unknown }[];
   values: Record<string, unknown> | null;
 }
 
 const db = vi.hoisted(() => ({
-  rows: {} as Record<string, unknown[]>,
+  rows: {} as Record<string, Record<string, unknown>[]>,
   // The run's committed state, so the stub can honour a conditional update the
   // way Postgres would — this is what makes the claim test meaningful.
   runState: "",
   queries: [] as Query[],
   scheduleValidatedPost: vi.fn(),
+  generateIdeas: vi.fn(),
+  submitGenerations: vi.fn(),
 }));
+
+// Selects NARROW the fixture rows rather than returning all of them. Without
+// this, a query for "runs that quarantined this idea" and a query for "runs
+// holding a live claim on it" would come back identical, and a test could not
+// tell which mechanism excluded a candidate. Columns no fixture row declares
+// are not filtered on: the fixtures are deliberately partial.
+function applyFilters(rows: Record<string, unknown>[], q: Query): Record<string, unknown>[] {
+  let out = rows;
+  for (const f of q.applied) {
+    if (!out.some((row) => f.column in row)) continue;
+    out = out.filter((row) => {
+      const v = row[f.column];
+      if (f.method === "eq") return v === f.value;
+      if (f.method === "neq") return v !== f.value;
+      if (f.method === "in") return (f.value as unknown[]).includes(v);
+      if (f.method === "lt") return String(v) < String(f.value);
+      return String(v) >= String(f.value);
+    });
+  }
+  return out;
+}
 
 function resolveQuery(q: Query): { data: unknown[]; error: null; count: number } {
   if (q.op === "update") {
@@ -44,7 +71,7 @@ function resolveQuery(q: Query): { data: unknown[]; error: null; count: number }
       count: 1,
     };
   }
-  const rows = db.rows[q.table] ?? [];
+  const rows = applyFilters(db.rows[q.table] ?? [], q);
   return { data: rows, error: null, count: rows.length };
 }
 
@@ -52,7 +79,7 @@ function resolveQuery(q: Query): { data: unknown[]; error: null; count: number }
 // query so the test can assert on what the tick asked for as well as what it
 // wrote. A fresh builder per from() call keeps one query's filters separate.
 function builderFor(table: string) {
-  const q: Query = { table, op: "select", filters: [], values: null };
+  const q: Query = { table, op: "select", filters: [], applied: [], values: null };
   db.queries.push(q);
   const builder: Record<string, unknown> = {};
   const chain = () => builder;
@@ -62,6 +89,7 @@ function builderFor(table: string) {
   for (const m of ["eq", "in", "neq", "gte", "lt"]) {
     builder[m] = vi.fn((col: string, value: unknown) => {
       q.filters.push([col, value]);
+      q.applied.push({ method: m, column: col, value });
       return builder;
     });
   }
@@ -86,8 +114,8 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/app/api/posts/create/route", () => ({
   scheduleValidatedPost: db.scheduleValidatedPost,
 }));
-vi.mock("@/lib/athena/generate-ideas", () => ({ generateIdeas: vi.fn() }));
-vi.mock("@/lib/athena/submit-generations", () => ({ submitGenerations: vi.fn() }));
+vi.mock("@/lib/athena/generate-ideas", () => ({ generateIdeas: db.generateIdeas }));
+vi.mock("@/lib/athena/submit-generations", () => ({ submitGenerations: db.submitGenerations }));
 
 import { runAutopilotTick } from "@/lib/autopilot/tick";
 
@@ -109,7 +137,8 @@ const WORKFLOW = {
 const RUN = {
   id: "run-1", user_id: "user-1", workflow_id: "wf-1", category_key: "cat1",
   period_start: "2026-08-14", attempt_no: 1, state: "posting", source: "ready_images",
-  idea_id: "idea-1", post_group_id: null, error: "", steps: [],
+  idea_id: "idea-1", post_group_id: null, awaiting_images_since: null,
+  idea_quarantined: false, error: "", steps: [],
   created_at: "2026-08-14T12:00:00Z", updated_at: "2026-08-14T12:00:00Z",
 };
 
@@ -160,6 +189,10 @@ describe("runAutopilotTick", () => {
     db.queries = [];
     db.runState = "";
     db.scheduleValidatedPost.mockReset();
+    db.generateIdeas.mockReset();
+    db.submitGenerations.mockReset();
+    // The ordinary outcome; the tests that care about a bad submission say so.
+    db.submitGenerations.mockResolvedValue({ submitted: 1, failed: 0, skipped: 0, errors: [] });
     // failRun and claimRun log on purpose; silenced so a passing run's output
     // stays clean. The summary.errors assertions below are what guard against
     // a real exception hiding behind this.
@@ -244,16 +277,104 @@ describe("runAutopilotTick", () => {
     expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
   });
 
-  it("refuses to re-post a run abandoned mid-publish whose carousel already went out", async () => {
-    // The crash path: a tick died between the Buffer call and its terminal
-    // write, leaving the run claimed. No competing claim exists to lose, so
-    // the images' own post history is the only thing standing between this
-    // run and a duplicate live post.
+  it("mints the post group id BEFORE calling Buffer, not after", async () => {
+    // The whole recovery story rests on this: a run found abandoned in
+    // `publishing` can only ask `posts` what happened if the group it was
+    // publishing under was already on the row when the tick died. Everything
+    // createPostForUser writes (posts, post_images) lands AFTER postToBuffer
+    // returns, so nothing written by the post itself can close that window.
     db.rows.autopilot_workflows = [WORKFLOW];
-    db.rows.autopilot_runs = [{ ...RUN, state: "publishing" }];
+    db.rows.autopilot_runs = [RUN];
+    db.rows.ideas = [IDEA];
+    db.rows.generations = [GENERATION];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+    db.runState = "posting";
+    let groupsOnRowWhenBufferWasCalled: unknown[] = [];
+    db.scheduleValidatedPost.mockImplementation(async () => {
+      groupsOnRowWhenBufferWasCalled = updatesTo("autopilot_runs")
+        .map((u) => u.post_group_id)
+        .filter(Boolean);
+      return { postGroupId: "pg-new", results: [{ status: "queued", error: "" }], allFailed: false };
+    });
+
+    const summary = await runAutopilotTick(NOW);
+
+    const claim = updatesTo("autopilot_runs").find((u) => u.state === "publishing");
+    expect(claim?.post_group_id).toEqual(expect.any(String));
+    // Already persisted at the moment of the irreversible call, not merely
+    // present by the end of the tick.
+    expect(groupsOnRowWhenBufferWasCalled).toContain(claim!.post_group_id);
+    expect(db.scheduleValidatedPost).toHaveBeenCalledWith("user-1", expect.objectContaining({
+      postGroupId: claim!.post_group_id,
+    }));
+    expect(summary.errors).toEqual([]);
+  });
+
+  it("settles a run abandoned in publishing from its own post group, without re-posting", async () => {
+    // The tick was killed after createPostForUser wrote its rows. Those rows
+    // are the record of what Buffer did, so the run is closed from them.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [{ ...RUN, state: "publishing", post_group_id: "pg-1" }];
     db.rows.ideas = [IDEA];
     db.rows.generations = [GENERATION];
     db.rows.post_images = [{ generation_id: "gen-1", post: { status: "queued" } }];
+    db.rows.posts = [{
+      post_group_id: "pg-1", user_id: "user-1", status: "queued", error: "",
+      // After the claim (RUN.updated_at), so it is this attempt's own row.
+      created_at: "2026-08-14T12:00:02Z",
+    }];
+    db.runState = "publishing";
+
+    const summary = await runAutopilotTick(NOW);
+
+    expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
+    const settled = updatesTo("autopilot_runs").find((u) => u.state === "succeeded");
+    expect(settled).toBeDefined();
+    expect(settled!.idea_quarantined).toBeUndefined();
+    expect(summary.errors).toEqual([]);
+    expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
+  });
+
+  it("does not accept a PRIOR attempt's row in a reused group as proof this one posted", async () => {
+    // Tier 1 reuses the failed attempt's post_group_id on purpose, and
+    // createPostForUser's cleanup only deletes prior FAILED rows on the SAME
+    // channel. A leftover — a category whose Buffer channel changed between
+    // attempts, or a cleanup delete that errored and was only logged — would
+    // otherwise look like this attempt's own record, settle the run as
+    // "every channel failed", and hand tier 1 a carousel that may be live.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [{
+      ...RUN, state: "publishing", post_group_id: "pg-1", source: "retry_images",
+    }];
+    db.rows.ideas = [IDEA];
+    db.rows.generations = [GENERATION];
+    db.rows.post_images = [];
+    db.rows.posts = [{
+      post_group_id: "pg-1", user_id: "user-1", status: "failed",
+      error: "the channel rejected it", created_at: "2026-08-14T11:40:00Z",
+    }];
+    db.runState = "publishing";
+
+    const summary = await runAutopilotTick(NOW);
+
+    const failed = updatesTo("autopilot_runs").find((u) => u.state === "failed");
+    expect(String(failed?.error)).toMatch(/abandoned mid-publish/i);
+    expect(failed?.idea_quarantined).toBe(true);
+    expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
+    expect(summary.errors).toEqual([]);
+  });
+
+  it("never re-posts a run abandoned in publishing with nothing on record, and quarantines its idea", async () => {
+    // The irreducible window: killed between Buffer's response and any DB
+    // write at all. post_images is empty and posts has no row for the group,
+    // so nothing here can prove the carousel did NOT go out — and a Buffer
+    // post cannot be un-posted. Fail loudly; never retry.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [{ ...RUN, state: "publishing", post_group_id: "pg-1" }];
+    db.rows.ideas = [IDEA];
+    db.rows.generations = [GENERATION];
+    db.rows.post_images = [];
     db.rows.posts = [];
     db.runState = "publishing";
 
@@ -261,9 +382,133 @@ describe("runAutopilotTick", () => {
 
     expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
     const failed = updatesTo("autopilot_runs").find((u) => u.state === "failed");
-    expect(String(failed?.error)).toMatch(/already has a live post/i);
+    expect(String(failed?.error)).toMatch(/abandoned mid-publish/i);
+    expect(failed?.idea_quarantined).toBe(true);
     expect(summary.errors).toEqual([]);
     expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
+  });
+
+  it("will not source a quarantined idea again, even though its carousel is ready and unposted", async () => {
+    // The second half of the Critical: failing the abandoned run is not
+    // enough on its own. The idea is still `generated`, still fully imaged,
+    // still carries no non-failed post — so tiers 1 and 2 would hand the same
+    // carousel to Buffer on the next attempt. Fixtures are IDENTICAL to the
+    // "opens an attempt, sources a ready carousel, and posts it" test above
+    // except for the quarantine flag, which is what makes that test this
+    // one's control.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [{
+      ...RUN, id: "run-0", state: "failed", idea_quarantined: true,
+      error: "abandoned mid-publish — check Buffer before retrying",
+    }];
+    db.rows.ideas = [IDEA];
+    db.rows.generations = [GENERATION];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+    // Sourcing falls all the way through to tier 4 rather than posting; make
+    // that terminate cleanly instead of on an unstubbed mock.
+    db.generateIdeas.mockResolvedValue({ inserted: 0, filteredOut: 3, batchId: "b-1" });
+
+    const summary = await runAutopilotTick(NOW);
+
+    expect(db.scheduleValidatedPost).not.toHaveBeenCalled();
+    expect(summary.errors).toEqual([]);
+    expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
+  });
+
+  it("fails the run with the submission's own reason instead of waiting out the image deadline", async () => {
+    // submitGenerations REPORTS rather than throws. Discarding its result
+    // moved the run to awaiting_images with nothing in flight, and 30 minutes
+    // later a human got "images stalled: 0 of 1 slides ready" — the symptom,
+    // with the cause thrown away.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [];
+    db.rows.ideas = [{ ...IDEA, status: "approved" }];
+    db.rows.generations = [];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+    db.submitGenerations.mockResolvedValue({
+      submitted: 0, failed: 1, skipped: 0, errors: ["no Kie API key on file"],
+    });
+
+    const summary = await runAutopilotTick(NOW);
+
+    const states = updatesTo("autopilot_runs").map((u) => u.state);
+    expect(states).not.toContain("awaiting_images");
+    const failed = updatesTo("autopilot_runs").find((u) => u.state === "failed");
+    expect(String(failed?.error)).toMatch(/no Kie API key on file/);
+    expect(summary.errors).toEqual([]);
+    expect(unscopedQueries()).toEqual(["autopilot_workflows.select"]);
+  });
+
+  it("stamps when a run entered awaiting_images, not just when it was created", async () => {
+    // The stall deadline is measured from this stamp. Measuring from
+    // created_at would fail a run that deferred in `sourcing` for longer than
+    // IMAGE_DEADLINE_MINUTES the moment it finally paid for images.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [];
+    db.rows.ideas = [{ ...IDEA, status: "approved" }];
+    db.rows.generations = [];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+
+    await runAutopilotTick(NOW);
+
+    const waiting = updatesTo("autopilot_runs").find((u) => u.state === "awaiting_images");
+    expect(waiting?.awaiting_images_since).toEqual(expect.any(String));
+  });
+
+  it("withdraws the tier-4 idea-generation slot once the tick has burned enough clock", async () => {
+    // generateIdeas makes two Anthropic calls with thinking and no per-call
+    // timeout override; the spec budgets ~90s for it. Starting one late in a
+    // 120s route is what leaves a run stranded in `publishing`.
+    db.rows.autopilot_workflows = [WORKFLOW];
+    db.rows.autopilot_runs = [];
+    db.rows.ideas = [];
+    db.rows.generations = [];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+    let t = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (t += 15_000));
+
+    const summary = await runAutopilotTick(NOW);
+
+    expect(db.generateIdeas).not.toHaveBeenCalled();
+    expect(summary.stoppedEarly).toBe(false);
+    expect(summary.errors).toEqual([]);
+    const deferred = updatesTo("autopilot_runs").find((u) => Array.isArray(u.steps));
+    expect(JSON.stringify(deferred?.steps)).toMatch(/defer/);
+    clock.mockRestore();
+  });
+
+  it("breaks the sweep on its own wall-clock budget rather than being killed by maxDuration", async () => {
+    // Being killed mid-loop is precisely what manufactures an abandoned
+    // `publishing` run. Rotation via last_ticked_at makes the break harmless:
+    // the workflow not reached keeps its place at the front of the queue, and
+    // it is deliberately not stamped.
+    db.rows.autopilot_workflows = [
+      WORKFLOW,
+      { ...WORKFLOW, id: "wf-2", category: { ...WORKFLOW.category, id: "c-2", key: "cat2" } },
+    ];
+    db.rows.autopilot_runs = [];
+    db.rows.ideas = [];
+    db.rows.generations = [];
+    db.rows.post_images = [];
+    db.rows.posts = [];
+    let t = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (t += 50_000));
+
+    const summary = await runAutopilotTick(NOW);
+
+    expect(summary.stoppedEarly).toBe(true);
+    expect(summary.workflowsExamined).toBe(1);
+    const stamped = db.queries.filter(
+      (q) => q.table === "autopilot_workflows" && q.op === "update"
+        && q.values && "last_ticked_at" in q.values,
+    );
+    expect(stamped).toHaveLength(1);
+    expect(summary.errors).toEqual([]);
+    clock.mockRestore();
   });
 
   it("does not post twice when a second tick advances the same run", async () => {
