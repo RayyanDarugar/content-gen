@@ -231,9 +231,14 @@ export async function createPostForUser(
 // (not duplicated in the MCP route) so the two callers can never silently
 // diverge. Any change to the HTTP route's validation above must be mirrored
 // here, and vice versa.
+// scheduledAt is `string | null`, not `string`: createPostForUser and
+// postToBuffer have always accepted "no time" to mean "ride the channel's
+// Buffer queue", and autopilot (lib/autopilot/tick.ts) posts that way by
+// design. Nothing else in the body changes — the value was already a
+// pass-through.
 export async function scheduleValidatedPost(
   userId: string,
-  input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string; postGroupId: string | null },
+  input: { categoryKey: string; generationIds: string[]; channels: ChannelInput[]; caption: string; scheduledAt: string | null; postGroupId: string | null },
 ): Promise<{ postGroupId: string; results: ChannelResult[]; allFailed: boolean }> {
   const supabase = createAdminSupabase();
   const { data: category, error: catErr } = await supabase

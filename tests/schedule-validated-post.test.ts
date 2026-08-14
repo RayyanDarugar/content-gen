@@ -35,4 +35,24 @@ describe("scheduleValidatedPost", () => {
       }),
     ).rejects.toThrow(/duplicate channel/);
   });
+
+  it("accepts scheduledAt: null so a post can ride Buffer's own queue", async () => {
+    // Reaches the same duplicate-channel rejection as the case above, which
+    // proves null passed the type boundary and the call ran — the point here
+    // is that `scheduledAt: null` compiles and is forwarded, not that this
+    // particular submission succeeds.
+    await expect(
+      scheduleValidatedPost("user-1", {
+        categoryKey: "cat1",
+        generationIds: ["gen-1"],
+        channels: [
+          { connectionId: "conn-1", channelId: "chan-1", service: "instagram", caption: "hi" },
+          { connectionId: "conn-1", channelId: "chan-1", service: "instagram", caption: "hi again" },
+        ],
+        caption: "hi",
+        scheduledAt: null,
+        postGroupId: null,
+      }),
+    ).rejects.toThrow("duplicate channel in selection");
+  });
 });
