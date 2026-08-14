@@ -237,3 +237,55 @@ export interface BufferChannel {
   avatar: string;
   isQueuePaused: boolean;
 }
+
+export type AutopilotPeriod = "day" | "week";
+
+// One row per category (unique on category_id): "this category publishes
+// posts_per_period times per period, in this timezone."
+export interface AutopilotWorkflow {
+  id: string;
+  user_id: string;
+  category_id: string;
+  posts_per_period: number;
+  period: AutopilotPeriod;
+  timezone: string;
+  max_attempts_per_period: number;
+  auto_pause_after_failed_periods: number;
+  consecutive_failed_periods: number;
+  last_settled_period: string | null;
+  active: boolean;
+  paused_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AutopilotRunState =
+  | "sourcing" | "awaiting_images" | "posting" | "succeeded" | "failed";
+
+// "" only ever appears on a run still in `sourcing` — the tier is recorded
+// the moment one is chosen.
+export type AutopilotSource =
+  | "" | "retry_images" | "ready_images" | "approved_idea" | "generated";
+
+export interface AutopilotRunStep {
+  at: string;
+  step: string;
+  detail: string;
+}
+
+export interface AutopilotRun {
+  id: string;
+  user_id: string;
+  workflow_id: string;
+  category_key: string;
+  period_start: string;
+  attempt_no: number;
+  state: AutopilotRunState;
+  source: AutopilotSource;
+  idea_id: string | null;
+  post_group_id: string | null;
+  error: string;
+  steps: AutopilotRunStep[];
+  created_at: string;
+  updated_at: string;
+}
