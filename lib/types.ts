@@ -253,14 +253,22 @@ export interface AutopilotWorkflow {
   auto_pause_after_failed_periods: number;
   consecutive_failed_periods: number;
   last_settled_period: string | null;
+  // When the sweep last examined this workflow. The sweep orders by it (nulls
+  // first) so a fixed cap rotates through every workflow instead of pinning
+  // the same oldest N forever.
+  last_ticked_at: string | null;
   active: boolean;
   paused_reason: string;
   created_at: string;
   updated_at: string;
 }
 
+// `publishing` is the claim state: a tick moves the run into it with a
+// conditional update BEFORE calling Buffer, so a second tick that read the
+// same run finds the update affecting no rows and declines to post again.
+// Nothing else may transition a run out of `posting`.
 export type AutopilotRunState =
-  | "sourcing" | "awaiting_images" | "posting" | "succeeded" | "failed";
+  | "sourcing" | "awaiting_images" | "posting" | "publishing" | "succeeded" | "failed";
 
 // "" only ever appears on a run still in `sourcing` — the tier is recorded
 // the moment one is chosen.

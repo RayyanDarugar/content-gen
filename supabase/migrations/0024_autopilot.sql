@@ -22,6 +22,11 @@ create table autopilot_workflows (
   -- The last local period this workflow was judged for. Null on a brand-new
   -- workflow, which is why the first sighting settles without judging.
   last_settled_period date,
+  -- When the sweep last examined this workflow. The tick orders by it (nulls
+  -- first) and stamps every workflow it pulls, so a fixed per-tick cap rotates
+  -- through all of them; ordering by created_at instead would examine only the
+  -- oldest N forever and starve the tail permanently once the cap is exceeded.
+  last_ticked_at timestamptz,
   active boolean not null default true,
   paused_reason text not null default '',
   created_at timestamptz not null default now(),
@@ -40,8 +45,12 @@ create table autopilot_runs (
   category_key text not null,
   period_start date not null,
   attempt_no int not null,
+  -- 'publishing' is the claim state: the tick conditionally moves a run into it
+  -- before calling Buffer, so an overlapping tick that read the same run finds
+  -- the update matching no rows and declines to post the carousel twice.
   state text not null
-    check (state in ('sourcing', 'awaiting_images', 'posting', 'succeeded', 'failed')),
+    check (state in
+      ('sourcing', 'awaiting_images', 'posting', 'publishing', 'succeeded', 'failed')),
   source text not null default ''
     check (source in ('', 'retry_images', 'ready_images', 'approved_idea', 'generated')),
   -- set null, never cascade: deleting an idea must not erase the record of the
@@ -62,10 +71,14 @@ create index autopilot_runs_workflow_period_idx
   on autopilot_runs(workflow_id, period_start);
 -- The tick's hottest read: "does this workflow have a run in flight?"
 create index autopilot_runs_live_idx on autopilot_runs(workflow_id)
-  where state in ('sourcing', 'awaiting_images', 'posting');
+  where state in ('sourcing', 'awaiting_images', 'posting', 'publishing');
 -- Claim check during sourcing: "is this idea already spoken for?"
 create index autopilot_runs_idea_idx on autopilot_runs(idea_id)
-  where state in ('sourcing', 'awaiting_images', 'posting');
+  where state in ('sourcing', 'awaiting_images', 'posting', 'publishing');
+-- The sweep's ordering: least-recently-ticked first, nulls (never ticked) ahead
+-- of everything.
+create index autopilot_workflows_sweep_idx
+  on autopilot_workflows(last_ticked_at nulls first) where active;
 
 alter table autopilot_workflows enable row level security;
 create policy "owner all" on autopilot_workflows for all to authenticated
