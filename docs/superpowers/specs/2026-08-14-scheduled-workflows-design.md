@@ -91,7 +91,9 @@ Per tick, over active workflows whose category is also `active` (cap: 20 workflo
 
 Every step is one fast DB read plus at most one paid call, so a tick never approaches its budget.
 
-The tick sweeps **every tenant's** workflows, not one user's — it is a system cron with no session. Paid calls therefore resolve BYOK credentials from `workflow.user_id` (`requireAnthropicKey`, `requireKieKey`), the same way `submitGenerations` already does. A user with no key configured fails every attempt with that message and auto-pauses after three periods, which is the correct outcome.
+**One cron job, app-wide.** The operator registers it once, the way the poll job already is; tenants never configure anything. A single tick sweeps **every tenant's** workflows through the admin client, exactly as the poll route sweeps every tenant's in-flight generations.
+
+Because that tick has no session, paid calls resolve each tenant's own Anthropic and Kie keys from `workflow.user_id` (`requireAnthropicKey`, `requireKieKey`), the same way `submitGenerations` does. This changes where a missing key shows up: today it is an error message in front of someone clicking a button, and under autopilot it is a 3am failure nobody sees. That is what §7's auto-pause and the run's recorded `error` exist to make visible.
 
 ## 5. Sourcing — four tiers, in order
 
