@@ -55,14 +55,36 @@ export default async function AutopilotPage() {
       .from("posts").select("post_group_id")
       .eq("category_key", c.key).neq("status", "failed").gte("created_at", from);
     const landed = new Set((postRows ?? []).map((r) => (r as { post_group_id: string }).post_group_id)).size;
-    const periodRuns = runs.filter((r) => r.workflow_id === wf.id && r.period_start === period);
+    // Counted straight from autopilot_runs for THIS workflow and period,
+    // never derived from the recent-runs feed below. That feed is a fixed
+    // display budget shared by every category, so a busy brand can push a
+    // workflow's own attempts out of it — and a workflow that has exhausted
+    // its cap would then read "attempt 2 of 3" instead of "gave up for this
+    // period", which is exactly the false "still working" this page exists to
+    // prevent. The live-state lookup has the same provenance and is sourced
+    // the same way for the same reason.
+    //
+    // One query serves both facts: `count` is authoritative for the attempt
+    // number, and the rows carry the live state. Fetching the rows is cheap
+    // because the set is bounded — max_attempts_per_period is capped at 10 by
+    // the column's own check constraint, and quotaGap never opens an attempt
+    // past it. Ordered oldest-first so the live run picked here is the same
+    // one runAutopilotTick advances.
+    const { data: runRows, count: attemptCount } = await supabase
+      .from("autopilot_runs")
+      .select("state", { count: "exact" })
+      .eq("workflow_id", wf.id)
+      .eq("period_start", period)
+      .order("created_at", { ascending: true });
+    const periodRuns = (runRows ?? []) as { state: string }[];
     return {
       categoryId: c.id, categoryName: c.name, workflowId: wf.id, active: wf.active,
       postsPerPeriod: wf.posts_per_period, period: wf.period, timezone: wf.timezone,
       status: describeWorkflowStatus({
         active: wf.active, pausedReason: wf.paused_reason,
         postsPerPeriod: wf.posts_per_period, landedGroups: landed,
-        attemptsUsed: periodRuns.length, maxAttempts: wf.max_attempts_per_period,
+        attemptsUsed: attemptCount ?? periodRuns.length,
+        maxAttempts: wf.max_attempts_per_period,
         liveState: periodRuns.find((r) => LIVE_STATES.includes(r.state))?.state ?? null,
       }),
     };
@@ -97,7 +119,7 @@ export default async function AutopilotPage() {
               {run.period_start} · attempt {run.attempt_no}
             </span>
             <span className="truncate">{run.category_key}</span>
-            {run.source && <Badge variant="outline">{run.source.replace("_", " ")}</Badge>}
+            {run.source && <Badge variant="outline">{run.source.replaceAll("_", " ")}</Badge>}
             <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
               {run.error || run.state}
             </span>

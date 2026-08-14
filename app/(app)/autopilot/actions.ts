@@ -27,6 +27,15 @@ export async function setWorkflowActive(workflowId: string, active: boolean) {
 // same defaults; an existing workflow keeps its own rate only if the caller
 // passes its current settings, so the UI sends per-category settings rather
 // than assuming.
+//
+// Deliberately not atomic: a throw part-way leaves the earlier entries saved
+// and the caller sees one error. That is the accepted behaviour rather than an
+// oversight — upsertWorkflowForUser is idempotent (same conflict target, same
+// values), so pressing the button again converges, and every entry is
+// authorization-checked on its own, so a partial run can never have written
+// something the user was not entitled to write. Wrapping the loop in a
+// transaction would mean an RPC, which is a lot of machinery for a button
+// whose failure mode is "press it again".
 export async function saveWorkflows(
   entries: { categoryId: string; settings: WorkflowSettings }[],
 ) {
