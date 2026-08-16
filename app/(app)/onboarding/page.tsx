@@ -1,6 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { getActiveBrand } from "@/lib/auth/active-brand";
+import { getKeyStatus } from "@/lib/settings/user-secrets";
 import { OnboardingSteps } from "./onboarding-steps";
 import type { Category } from "@/lib/types";
 
@@ -16,6 +17,7 @@ export default async function OnboardingPage({
   const supabase = await createServerSupabase();
 
   const brand = await getActiveBrand(user.id);
+  const keyStatus = await getKeyStatus(user.id);
 
   // brand may legitimately be null: an account with zero brands reaches this
   // page via requireActiveBrand's redirect elsewhere, and this page is the
@@ -40,8 +42,10 @@ export default async function OnboardingPage({
   // In create-a-second-brand mode (?new=1), `brand`/`categories`/`ideaCount`
   // above describe the ACTIVE brand — some other, already-set-up brand. None
   // of that progress belongs to the brand this visit is creating, so the
-  // checklist is forced back to step 1 rather than reporting a stranger's
-  // completion state as this new brand's.
+  // brand-scoped steps are forced back to incomplete rather than reporting a
+  // stranger's completion state as this new brand's. The keys step is NOT
+  // reset with them: API keys are account-level, so an account adding a
+  // second brand has genuinely already done that step.
   const brandDone = creatingBrand ? false : Boolean(brand?.business_name?.trim());
   const categoryDone = creatingBrand ? false : categories.length > 0;
   const ideasDone = creatingBrand ? false : (ideaCount ?? 0) > 0;
@@ -51,11 +55,13 @@ export default async function OnboardingPage({
       <div>
         <h1 className="text-2xl font-bold">Set up your content engine</h1>
         <p className="text-muted-foreground">
-          Three quick steps — tell us about your brand, draft a post type, and generate your first ideas.
+          Four quick steps — connect your AI keys, tell us about your brand, draft a post type, and generate
+          your first ideas.
         </p>
       </div>
       <OnboardingSteps
         brand={brand}
+        keyStatus={keyStatus}
         brandDone={brandDone}
         categoryDone={categoryDone}
         ideasDone={ideasDone}

@@ -92,6 +92,10 @@ export async function saveApiKeys(
   const { error } = await supabase.from("user_settings").upsert(patch, { onConflict: "user_id" });
   if (error) return { error: error.message };
   revalidatePath("/config");
+  // /onboarding's first step reports key status too, and its later steps stay
+  // locked until the Anthropic key lands — without this it would keep serving
+  // the pre-save "not set" state after a successful save.
+  revalidatePath("/onboarding");
   return { ok: true };
 }
 
