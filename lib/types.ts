@@ -237,3 +237,71 @@ export interface BufferChannel {
   avatar: string;
   isQueuePaused: boolean;
 }
+
+export type AutopilotPeriod = "day" | "week";
+
+// One row per category (unique on category_id): "this category publishes
+// posts_per_period times per period, in this timezone."
+export interface AutopilotWorkflow {
+  id: string;
+  user_id: string;
+  category_id: string;
+  posts_per_period: number;
+  period: AutopilotPeriod;
+  timezone: string;
+  max_attempts_per_period: number;
+  auto_pause_after_failed_periods: number;
+  consecutive_failed_periods: number;
+  last_settled_period: string | null;
+  // When the sweep last examined this workflow. The sweep orders by it (nulls
+  // first) so a fixed cap rotates through every workflow instead of pinning
+  // the same oldest N forever.
+  last_ticked_at: string | null;
+  active: boolean;
+  paused_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// `publishing` is the claim state: a tick moves the run into it with a
+// conditional update BEFORE calling Buffer, so a second tick that read the
+// same run finds the update affecting no rows and declines to post again.
+// Nothing else may transition a run out of `posting`.
+export type AutopilotRunState =
+  | "sourcing" | "awaiting_images" | "posting" | "publishing" | "succeeded" | "failed";
+
+// "" only ever appears on a run still in `sourcing` — the tier is recorded
+// the moment one is chosen.
+export type AutopilotSource =
+  | "" | "retry_images" | "ready_images" | "approved_idea" | "generated";
+
+export interface AutopilotRunStep {
+  at: string;
+  step: string;
+  detail: string;
+}
+
+export interface AutopilotRun {
+  id: string;
+  user_id: string;
+  workflow_id: string;
+  category_key: string;
+  period_start: string;
+  attempt_no: number;
+  state: AutopilotRunState;
+  source: AutopilotSource;
+  idea_id: string | null;
+  post_group_id: string | null;
+  // When the run entered awaiting_images — the anchor for the image-stall
+  // deadline. Null until it gets there, which is why readers fall back to
+  // created_at.
+  awaiting_images_since: string | null;
+  // True when the run was found abandoned in `publishing` with no posts rows
+  // to prove whether Buffer received the carousel. Its idea is excluded from
+  // autopilot sourcing from then on.
+  idea_quarantined: boolean;
+  error: string;
+  steps: AutopilotRunStep[];
+  created_at: string;
+  updated_at: string;
+}
