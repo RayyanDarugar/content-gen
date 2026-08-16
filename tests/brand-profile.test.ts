@@ -25,7 +25,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
-import { saveBrandProfileForUser, createBrandForUser } from "@/lib/brand-profile";
+import {
+  saveBrandProfileForUser,
+  createBrandForUser,
+  saveOrCreateBrandForUser,
+} from "@/lib/brand-profile";
 
 const fields = {
   business_name: "  Rewire  ", business_description: "", audience: "", voice: "", avoid: "",
@@ -59,5 +63,31 @@ describe("createBrandForUser", () => {
     const id = await createBrandForUser("user-1", fields);
     expect(calls[0].op).toBe("insert");
     expect(id).toBe("new-brand");
+  });
+});
+
+describe("saveOrCreateBrandForUser", () => {
+  it("updates in place when the account already has a brand", async () => {
+    const result = await saveOrCreateBrandForUser("user-1", "brand-9", fields);
+    expect(calls[0].op).toBe("update");
+    expect(calls[0].filters).toEqual([["id", "brand-9"], ["user_id", "user-1"]]);
+    expect(result).toEqual({ brandId: "brand-9", created: false });
+  });
+
+  // The onboarding bug this function exists to fix: a brand-new account has no
+  // brand to update, and the save path used to resolve that by redirecting —
+  // silently discarding an entire filled-in (often extraction-populated) form
+  // and writing nothing. A save with no brand to save into is a create.
+  it("creates the brand when the account has none", async () => {
+    const result = await saveOrCreateBrandForUser("user-1", null, fields);
+    expect(calls[0].op).toBe("insert");
+    expect(result).toEqual({ brandId: "new-brand", created: true });
+  });
+
+  it("still rejects a blank name on the create path", async () => {
+    await expect(
+      saveOrCreateBrandForUser("user-1", null, { ...fields, business_name: "  " }),
+    ).rejects.toThrow(/name/i);
+    expect(calls).toHaveLength(0);
   });
 });

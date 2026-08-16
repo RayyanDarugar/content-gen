@@ -37,6 +37,30 @@ export async function saveBrandProfileForUser(
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Save a brand form when the account may not have a brand yet.
+ *
+ * /onboarding's brand step is the one place a save can arrive with nothing to
+ * update: a brand-new account has zero brands. That case used to be "resolved"
+ * by requireActiveBrand's redirect() — a page-only helper (see
+ * lib/auth/active-brand.ts) fired from a server action, which threw
+ * NEXT_REDIRECT past the action's own try/catch. The user got no error, the
+ * form remounted empty, every extracted field was discarded, and nothing was
+ * ever written. A save with no brand to save into is a create; say so here,
+ * once, rather than making each call site remember which action to post to.
+ */
+export async function saveOrCreateBrandForUser(
+  userId: string,
+  brandId: string | null,
+  fields: BrandProfileFields,
+): Promise<{ brandId: string; created: boolean }> {
+  if (brandId) {
+    await saveBrandProfileForUser(userId, brandId, fields);
+    return { brandId, created: false };
+  }
+  return { brandId: await createBrandForUser(userId, fields), created: true };
+}
+
 export async function createBrandForUser(
   userId: string,
   fields: BrandProfileFields,

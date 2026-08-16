@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireActiveBrand } from "@/lib/auth/active-brand";
+import { getActiveBrand, requireActiveBrand } from "@/lib/auth/active-brand";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { uploadImageToCloudinary, uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { addBufferConnection, removeBufferConnection } from "@/lib/settings/buffer";
@@ -19,7 +19,7 @@ import {
   createOverlayForUser, updateOverlayForUser, deleteOverlayForUser,
 } from "@/lib/overlay-mutations";
 import type { OverlayFields } from "@/lib/overlays";
-import { saveBrandProfileForUser, createBrandForUser } from "@/lib/brand-profile";
+import { createBrandForUser, saveOrCreateBrandForUser } from "@/lib/brand-profile";
 import { setActiveBrand } from "@/app/(app)/brand-actions";
 
 // Everything exported from this file is a "use server" action — i.e. a public
@@ -140,14 +140,21 @@ export async function uploadBrandDocument(
   }
 }
 
+// getActiveBrand, NOT requireActiveBrand: this is a server action, and
+// requireActiveBrand is documented page-only because it resolves "no brand" by
+// calling redirect(). Thrown from here that became NEXT_REDIRECT escaping past
+// the try/catch below — no error surfaced, the form remounted empty, and a
+// brand-new account's whole filled-in brand step (extraction results included)
+// was silently discarded without ever writing a row. A brandless account is
+// not an error state on this path: it means create.
 export async function saveBrandProfile(
   _prev: { error?: string; ok?: boolean } | undefined,
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
   const user = await requireUser();
-  const brand = await requireActiveBrand(user.id);
+  const brand = await getActiveBrand(user.id);
   try {
-    await saveBrandProfileForUser(user.id, brand.id, {
+    const { brandId, created } = await saveOrCreateBrandForUser(user.id, brand?.id ?? null, {
       business_name: String(formData.get("business_name") ?? "").trim(),
       business_description: String(formData.get("business_description") ?? "").trim(),
       audience: String(formData.get("audience") ?? "").trim(),
@@ -159,10 +166,17 @@ export async function saveBrandProfile(
       fonts: parseBrandList(formData.get("fonts")),
       visual_notes: String(formData.get("visual_notes") ?? "").trim(),
     });
+    // Same pairing createBrandAction makes: a brand the user isn't looking at
+    // is a confusing outcome, and without this the account would still resolve
+    // to no active brand right after successfully creating one.
+    if (created) await setActiveBrand(brandId);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   revalidatePath("/config");
+  // The onboarding checklist reads brand completion too, and this action is
+  // what completes its brand step.
+  revalidatePath("/onboarding");
   return { ok: true };
 }
 
